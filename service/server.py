@@ -13,7 +13,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # Load .env from service directory
-load_dotenv(pathlib.Path(__file__).parent / ".env")
+load_dotenv(pathlib.Path(__file__).parent / ".env", override=True)
 
 import aiohttp
 from aiohttp import web
@@ -92,11 +92,18 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
     )
 
     raw = response.content[0].text.strip()
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]  # remove ```json line
+        raw = raw.rsplit("```", 1)[0]  # remove closing ```
+        raw = raw.strip()
+
     # Parse the JSON response
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
         # Fallback if the model doesn't return clean JSON
+        print(f"[eval] Failed to parse JSON: {raw[:200]}")
         result = {dim: 0.0 for dim in DIMENSIONS}
         result["reaction"] = "I'm confused"
 
@@ -112,7 +119,7 @@ async def broadcast(data: dict):
             await ws.send_str(msg)
         except (ConnectionResetError, ConnectionError):
             dead.add(ws)
-    connected_ws -= dead
+    connected_ws.difference_update(dead)
 
 
 # --- HTTP Handlers ---
