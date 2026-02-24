@@ -10,6 +10,10 @@ import json
 import os
 import pathlib
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load .env from service directory
+load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 import aiohttp
 from aiohttp import web
@@ -53,7 +57,7 @@ Text to evaluate:
 
 # --- State ---
 connected_ws: set[web.WebSocketResponse] = set()
-client = anthropic.Anthropic()
+client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 
 def build_system_prompt() -> str:
