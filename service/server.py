@@ -184,6 +184,14 @@ async def handle_dashboard(request: web.Request) -> web.Response:
     return web.FileResponse(DASHBOARD_PATH)
 
 
+VIEWER_PATH = pathlib.Path(__file__).parent / "viewer.html"
+
+
+async def handle_viewer(request: web.Request) -> web.Response:
+    """Serve the 3D viewer HTML."""
+    return web.FileResponse(VIEWER_PATH)
+
+
 async def handle_test(request: web.Request) -> web.Response:
     """Quick test endpoint to verify the service is running."""
     return web.json_response({
@@ -200,6 +208,7 @@ def create_app() -> web.Application:
     app.router.add_post("/evaluate", handle_evaluate)
     app.router.add_get("/ws", handle_websocket)
     app.router.add_get("/", handle_dashboard)
+    app.router.add_get("/viewer", handle_viewer)
     app.router.add_get("/health", handle_test)
     return app
 
@@ -207,6 +216,7 @@ def create_app() -> web.Application:
 if __name__ == "__main__":
     print(f"Rubber Duck service starting on http://localhost:{PORT}")
     print(f"Dashboard: http://localhost:{PORT}")
+    print(f"3D Viewer: http://localhost:{PORT}/viewer")
     print(f"Dimensions: {', '.join(DIMENSIONS.keys())}")
     print()
     web.run_app(create_app(), port=PORT, print=None)
