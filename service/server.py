@@ -2,14 +2,25 @@
 Rubber Duck Evaluation Service
 
 Receives Claude Code hook payloads, evaluates them using Claude API
-on multiple dimensions, and pushes results to a browser dashboard via WebSocket.
+on multiple dimensions, and pushes results to all connected outputs:
+  - Browser dashboard + 3D viewer (WebSocket)
+  - Teensy hardware (Serial)
+  - macOS desktop widget (WebSocket)
+  - Voice reactions (TTS via speech engine)
+
+Also handles:
+  - Voice input → Claude Code (via tmux bridge)
+  - Permission requests → voice approval gate
 """
 
+import argparse
 import asyncio
 import json
 import os
 import pathlib
+import signal
 import subprocess
+import sys
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -26,9 +37,9 @@ import serial.tools.list_ports
 PORT = 3333
 SERIAL_BAUD = 9600
 SERIAL_PORT = None  # Auto-detect, or set to e.g. "/dev/tty.usbmodem*"
-TTS_ENABLED = True
-TTS_VOICE = "Boing"
 DASHBOARD_PATH = pathlib.Path(__file__).parent / "dashboard.html"
+VIEWER_PATH = pathlib.Path(__file__).parent / "viewer.html"
+PID_PATH = pathlib.Path(__file__).parent / ".pid"
 
 # Evaluation dimensions and their descriptions for the LLM prompt
 DIMENSIONS = {
@@ -66,6 +77,7 @@ Text to evaluate:
 connected_ws: set[web.WebSocketResponse] = set()
 serial_port: serial.Serial = None
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+speech_engine = None  # SpeechEngine instance, set in main
 
 
 # --- Serial ---
@@ -117,6 +129,8 @@ def send_to_teensy(scores: dict, source: str):
         serial_port = None
 
 
+# --- Evaluation ---
+
 def build_system_prompt() -> str:
     dim_text = "\n".join(f"- {k}: {v}" for k, v in DIMENSIONS.items())
     return EVAL_SYSTEM_PROMPT.format(dimensions=dim_text)
@@ -167,16 +181,8 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
     return result
 
 
-def speak(text: str):
-    """Speak the duck's reaction via macOS say (non-blocking)."""
-    if not TTS_ENABLED or not text:
-        return
-    safe = text.replace('"', '\\"')
-    subprocess.Popen(["say", "-v", TTS_VOICE, safe])
-
-
 async def broadcast(data: dict):
-    """Push evaluation result to all connected dashboard clients."""
+    """Push data to all connected WebSocket clients."""
     msg = json.dumps(data)
     dead = set()
     for ws in connected_ws:
@@ -208,6 +214,7 @@ async def handle_evaluate(request: web.Request) -> web.Response:
     scores = await evaluate(text, source, user_context)
 
     result = {
+        "type": "eval",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "source": source,
         "text_preview": text[:150] + ("..." if len(text) > 150 else ""),
@@ -215,14 +222,15 @@ async def handle_evaluate(request: web.Request) -> web.Response:
         "scores": scores,
     }
 
-    # Broadcast to dashboard
+    # Broadcast to all connected clients (dashboard, widget, viewer)
     await broadcast(result)
 
     # Send to Teensy (non-blocking, fails gracefully)
     send_to_teensy(scores, source)
 
-    # Speak the duck's reaction (non-blocking)
-    speak(scores.get("reaction", ""))
+    # Speak the duck's reaction
+    if speech_engine:
+        speech_engine.speak(scores.get("reaction", ""))
 
     print(f"[{source}] {scores.get('reaction', '...')}  |  "
           + "  ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if k != "reaction"))
@@ -230,19 +238,79 @@ async def handle_evaluate(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def handle_permission(request: web.Request) -> web.Response:
+    """Handle permission request — blocks until voice approval or timeout.
+
+    Called by on-permission-request.sh hook. The hook blocks waiting for
+    this response, and Claude Code blocks waiting for the hook.
+
+    Flow: Claude Code → hook → POST /permission → voice ask → voice response → reply
+    """
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    tool_name = body.get("tool_name", "unknown")
+    tool_input = body.get("tool_input", "{}")
+    session_id = body.get("session_id", "")
+
+    print(f"[permission] Request: {tool_name}")
+
+    # Broadcast permission pending to widget/dashboard
+    await broadcast({
+        "type": "permission",
+        "status": "pending",
+        "tool_name": tool_name,
+        "tool_input": str(tool_input)[:200],
+    })
+
+    # Ask user via voice and wait for response
+    if speech_engine:
+        loop = asyncio.get_event_loop()
+        approved = await loop.run_in_executor(
+            None,
+            lambda: speech_engine.request_permission(tool_name, timeout=30.0),
+        )
+    else:
+        # No speech engine — don't block, let Claude Code's own UI handle it
+        print("[permission] No speech engine — skipping voice gate")
+        return web.json_response({})
+
+    decision = "allow" if approved else "deny"
+
+    # Broadcast result
+    await broadcast({
+        "type": "permission",
+        "status": decision,
+        "tool_name": tool_name,
+    })
+
+    return web.json_response({"decision": decision})
+
+
 async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
-    """WebSocket endpoint for the dashboard."""
+    """WebSocket endpoint for dashboard, widget, and viewer clients."""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     connected_ws.add(ws)
-    print(f"[dashboard] client connected ({len(connected_ws)} total)")
+    print(f"[ws] Client connected ({len(connected_ws)} total)")
 
     try:
         async for msg in ws:
-            pass  # We only push, never receive
+            # Accept commands from widget (e.g., toggle TTS, change voice)
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    cmd = data.get("command")
+                    if cmd == "set_voice" and speech_engine:
+                        speech_engine.voice = data.get("voice", speech_engine.voice)
+                        print(f"[ws] Voice set to {speech_engine.voice}")
+                except json.JSONDecodeError:
+                    pass
     finally:
         connected_ws.discard(ws)
-        print(f"[dashboard] client disconnected ({len(connected_ws)} total)")
+        print(f"[ws] Client disconnected ({len(connected_ws)} total)")
 
     return ws
 
@@ -252,21 +320,23 @@ async def handle_dashboard(request: web.Request) -> web.Response:
     return web.FileResponse(DASHBOARD_PATH)
 
 
-VIEWER_PATH = pathlib.Path(__file__).parent / "viewer.html"
-
-
 async def handle_viewer(request: web.Request) -> web.Response:
     """Serve the 3D viewer HTML."""
     return web.FileResponse(VIEWER_PATH)
 
 
-async def handle_test(request: web.Request) -> web.Response:
-    """Quick test endpoint to verify the service is running."""
-    return web.json_response({
+async def handle_health(request: web.Request) -> web.Response:
+    """Health check / status endpoint."""
+    status = {
         "status": "ok",
         "connected_clients": len(connected_ws),
         "dimensions": list(DIMENSIONS.keys()),
-    })
+        "speech_engine": speech_engine is not None,
+        "serial": serial_port is not None,
+    }
+    if speech_engine and speech_engine._tmux_session:
+        status["tmux_target"] = f"{speech_engine._tmux_session}:{speech_engine._tmux_pane}"
+    return web.json_response(status)
 
 
 # --- App ---
@@ -274,21 +344,114 @@ async def handle_test(request: web.Request) -> web.Response:
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_post("/evaluate", handle_evaluate)
+    app.router.add_post("/permission", handle_permission)
     app.router.add_get("/ws", handle_websocket)
     app.router.add_get("/", handle_dashboard)
     app.router.add_get("/viewer", handle_viewer)
-    app.router.add_get("/health", handle_test)
+    app.router.add_get("/health", handle_health)
     return app
 
 
-if __name__ == "__main__":
-    print(f"Rubber Duck service starting on http://localhost:{PORT}")
-    print(f"Dashboard: http://localhost:{PORT}")
-    print(f"3D Viewer: http://localhost:{PORT}/viewer")
-    print(f"Dimensions: {', '.join(DIMENSIONS.keys())}")
+def write_pid():
+    """Write current process PID for lifecycle management."""
+    PID_PATH.write_text(str(os.getpid()))
 
-    # Try to connect to Teensy (optional — runs fine without it)
+
+def cleanup_pid():
+    """Remove PID file on shutdown."""
+    try:
+        PID_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def handle_signal(signum, frame):
+    """Graceful shutdown on SIGTERM/SIGINT."""
+    print("\n[duck] Shutting down...")
+    if speech_engine:
+        speech_engine.stop()
+    cleanup_pid()
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Rubber Duck Evaluation Service")
+    parser.add_argument("--voice", default="Boing", help="macOS TTS voice (default: Boing)")
+    parser.add_argument("--wake-word", default="ducky", help="Wake word (default: ducky)")
+    parser.add_argument("--mic", type=int, default=None, help="Microphone device index")
+    parser.add_argument("--list-mics", action="store_true", help="List mics and exit")
+    parser.add_argument("--no-speech", action="store_true", help="Disable speech engine")
+    parser.add_argument("--tmux-session", default="duck", help="tmux session name for voice bridge")
+    parser.add_argument("--tmux-pane", default="claude.0", help="tmux pane for Claude Code input")
+    parser.add_argument("--port", type=int, default=PORT, help="HTTP server port")
+    args = parser.parse_args()
+
+    PORT = args.port
+
+    if args.list_mics:
+        from speech import SpeechEngine
+        print("Available microphones:")
+        SpeechEngine.list_mics()
+        sys.exit(0)
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    # Write PID file
+    write_pid()
+
+    print("=" * 50)
+    print("  RUBBER DUCK — Evaluation Service")
+    print(f"  Dashboard:  http://localhost:{PORT}")
+    print(f"  3D Viewer:  http://localhost:{PORT}/viewer")
+    print(f"  Voice:      {args.voice}")
+    print(f"  Wake word:  \"{args.wake_word}\"")
+    print("=" * 50)
+    print()
+
+    # Try to connect to Teensy (optional)
     connect_serial()
+
+    # Initialize speech engine
+    if not args.no_speech:
+        try:
+            from speech import SpeechEngine
+
+            # Auto-detect Teensy mic if available
+            mic_idx = args.mic
+            if mic_idx is None:
+                teensy_mic = SpeechEngine.find_teensy_mic()
+                if teensy_mic is not None:
+                    mic_idx = teensy_mic
+                    print(f"[speech] Auto-detected Teensy mic at index {mic_idx}")
+
+            speech_engine = SpeechEngine(
+                mic_index=mic_idx,
+                voice=args.voice,
+                wake_word=args.wake_word,
+            )
+            speech_engine.calibrate()
+            speech_engine.set_tmux_target(args.tmux_session, args.tmux_pane)
+            speech_engine.start()  # Background wake word listener
+
+            # Greeting
+            speech_engine.speak("What are we up to?")
+
+        except ImportError as e:
+            print(f"[speech] Missing dependency: {e}")
+            print("[speech] Install with: pip install SpeechRecognition PyAudio")
+            print("[speech] Running without voice.")
+        except Exception as e:
+            print(f"[speech] Failed to initialize: {e}")
+            print("[speech] Running without voice.")
+    else:
+        print("[speech] Disabled via --no-speech")
 
     print()
     web.run_app(create_app(), port=PORT, print=None)
+
+    # Cleanup
+    if speech_engine:
+        speech_engine.stop()
+    cleanup_pid()

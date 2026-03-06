@@ -1,55 +1,66 @@
 # Rubber Duck — TODO
 
+## ✅ Done
+
+- [x] **PermissionRequest hook** — voice-gated permissions (say "yes" to approve)
+- [x] **Unified speech engine** (`service/speech.py`) — swappable STT/TTS backend
+- [x] **Voice → Claude Code bridge** — say "ducky [command]" → tmux send-keys
+- [x] **tmux session launcher** (`scripts/duck-session`)
+- [x] **USB Audio firmware** — Teensy mic (A0) → USB Audio → Mac
+- [x] **macOS floating widget** — SwiftUI yellow cube with expression engine
+- [x] **Mac `say` TTS** — Boing voice for duck reactions
+- [x] **Plugin script structure** (`scripts/`) — portable hooks
+
+## 🔮 Next: Realtime API Migration
+
+Replace Google STT + macOS `say` with a unified Realtime API backend:
+- Implement `RealtimeBackend` in `speech.py` conforming to existing interface
+- Bidirectional streaming: speak naturally, duck responds in real-time
+- Tool use: duck takes actions (approve permissions, relay to Claude, control hardware)
+- The duck becomes a conversational intermediary with its own agency
+- Single config change swaps the backend
+
+## 🔮 Next: ESP32-S3 Standalone
+
+ESP32-S3 variant that connects to Realtime API directly over WiFi:
+- No Mac needed — the duck IS the device
+- Built-in mic + speaker + WiFi
+- Serial still works for servo/LED/piezo control
+- Could run alongside Teensy or replace it entirely
+
 ## Speech / Audio Output
 
-Explore speech output from the duck device itself. Three approaches to evaluate:
-
 ### Option A: Talkie Library (on-device LPC synthesis)
-- 1980s Speak & Spell style speech synthesis running directly on Teensy
+- 1980s Speak & Spell style speech running directly on Teensy
 - ~1000 word vocabulary (sp_GOOD, sp_BAD, sp_DANGER, etc.)
-- Output through piezo or small speaker on PWM pin
-- Lo-fi, robotic, extremely charming — fits the rubber duck character perfectly
-- Teensy 4.0 has no DAC, must use PWM pin (pin 9 works)
+- Output through piezo or small speaker on PWM pin (pin 9)
+- Lo-fi, robotic, charming — fits the rubber duck character
 - Libraries: [PaulStoffregen/Talkie](https://github.com/PaulStoffregen/Talkie) or [ArminJo/Talkie](https://github.com/ArminJo/Talkie)
-- Limitation: fixed vocabulary, can't say arbitrary text
 - Could map eval dimensions to word sequences: "GOOD CODE" / "DANGER" / "ERROR"
-
-### Option B: Mac `say` command (host-side TTS)
-- Full arbitrary text-to-speech via macOS
-- Fun novelty voices: Boing, Zarvox, Whisper, Good News, Bad News, Jester
-- Can speak the duck's reaction quote verbatim
-- Plays through Mac speakers, not the duck device itself
-- Zero latency, zero dependencies
 
 ### Option C: Bluetooth audio from Mac → device
 - Pipe Mac TTS audio over Bluetooth to a speaker on the duck
-- Would give arbitrary speech coming FROM the physical duck
-- Requires: Bluetooth audio receiver module (e.g. BT board with I2S/analog out) + small amplifier + speaker
-- Teensy 4.0 doesn't have native Bluetooth — would need an add-on module (HC-05, ESP32 as co-processor, or standalone BT audio receiver board)
-- More hardware complexity but the most immersive result
-- Alternative: USB audio gadget mode (Teensy as USB audio device receiving from Mac)
-
-### Recommendation
-Start with **Option A (Talkie) + Option B (Mac say) running simultaneously**. The duck speaks lo-fi keywords through its own speaker while the Mac provides the full reaction quote. Evaluate whether Bluetooth (Option C) is worth the added complexity later.
-
-## Voice Input (Microphone)
-- Teensy has mic on A0 (proven in metro_0.1 tuner mode)
-- Could detect ambient audio energy, typing patterns, voice tone
-- macOS dictation already works for voice → text → Claude Code input
-- Explore: duck listens and reacts to audio environment independent of text eval
-
-## Permission Hook
-- Add `PermissionRequest` hook to capture when Claude asks for permissions
-- Duck could react nervously / excitedly when Claude wants to do something risky
+- Requires: BT receiver module + amplifier + speaker
+- Most immersive result but more hardware complexity
+- Alternative: USB audio bidirectional (Teensy receives audio from Mac)
 
 ## Three.js Viewer Refinement
 - Improve beak geometry on servo duck
 - Improve PCB details on LED duck
 - Tune reducer mappings for more expressive animation
 - Add sound to Three.js LED duck to match hardware chirps
+- Add permission state visualization
+
+## Widget Refinement
+- Tooltip showing reaction text on hover
+- Right-click context menu (settings, quit, toggle TTS)
+- Menubar icon alternative mode
+- Localization: add more languages to String Catalog
+- Custom duck face expressions (more eye/beak states)
 
 ## Hardware
 - Test Talkie library on Teensy 4.0 with piezo
 - Consider upgrading piezo to small speaker + amp for better audio
 - Test external 5V servo power with full eval loop
+- Test USB Audio quality from Teensy mic
 - Explore adding Bluetooth module for audio streaming

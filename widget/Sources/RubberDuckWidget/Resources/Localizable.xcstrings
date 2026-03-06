@@ -1,0 +1,56 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "duck.greeting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What are we up to?"
+          }
+        }
+      }
+    },
+    "duck.permission.ask": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude wants to use %@. Allow it?"
+          }
+        }
+      }
+    },
+    "duck.permission.approved": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Got it, proceeding."
+          }
+        }
+      }
+    },
+    "duck.permission.denied": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocked it."
+          }
+        }
+      }
+    },
+    "duck.disconnected": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not connected to eval service"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

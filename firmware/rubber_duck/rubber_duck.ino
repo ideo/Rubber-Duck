@@ -9,6 +9,10 @@
 //   C,0.20,0.70,0.00,0.60,-0.30    (claude evaluation)
 //   Order: creativity, soundness, ambition, elegance, risk
 //
+// USB Audio: Set USB Type to "Serial + MIDI + Audio" in Arduino IDE
+//   Tools → USB Type → Serial + MIDI + Audio
+//   This makes the Teensy appear as both a serial device AND a USB microphone.
+//
 // Compatible with Teensy 4.0 / 3.x / Arduino boards
 // ============================================================
 
@@ -50,11 +54,15 @@ void setup() {
     Serial.println("[duck] Piezo enabled on pin " + String(PIEZO_PIN));
   }
 
+  // USB Audio bridge (mic → USB)
+  setupAudioBridge();
+
   // Startup animation
   startupAnimation();
 
   Serial.println("[duck] Ready. Waiting for evaluations...");
   Serial.println("[duck] Protocol: {U|C},creativity,soundness,ambition,elegance,risk");
+  Serial.println("[duck] Audio cmds: G,<gain> M,<0|1> V");
 }
 
 void loop() {
@@ -92,6 +100,9 @@ void loop() {
     lastLEDUpdate = now;
     updateLEDs();
   }
+
+  // USB Audio bridge
+  updateAudioBridge();
 }
 
 // --- Startup animation: sweep servo + fill LEDs ---
