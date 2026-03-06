@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import pathlib
+import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -25,6 +26,8 @@ import serial.tools.list_ports
 PORT = 3333
 SERIAL_BAUD = 9600
 SERIAL_PORT = None  # Auto-detect, or set to e.g. "/dev/tty.usbmodem*"
+TTS_ENABLED = True
+TTS_VOICE = "Boing"
 DASHBOARD_PATH = pathlib.Path(__file__).parent / "dashboard.html"
 
 # Evaluation dimensions and their descriptions for the LLM prompt
@@ -164,6 +167,14 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
     return result
 
 
+def speak(text: str):
+    """Speak the duck's reaction via macOS say (non-blocking)."""
+    if not TTS_ENABLED or not text:
+        return
+    safe = text.replace('"', '\\"')
+    subprocess.Popen(["say", "-v", TTS_VOICE, safe])
+
+
 async def broadcast(data: dict):
     """Push evaluation result to all connected dashboard clients."""
     msg = json.dumps(data)
@@ -209,6 +220,9 @@ async def handle_evaluate(request: web.Request) -> web.Response:
 
     # Send to Teensy (non-blocking, fails gracefully)
     send_to_teensy(scores, source)
+
+    # Speak the duck's reaction (non-blocking)
+    speak(scores.get("reaction", ""))
 
     print(f"[{source}] {scores.get('reaction', '...')}  |  "
           + "  ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if k != "reaction"))
