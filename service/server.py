@@ -18,9 +18,13 @@ load_dotenv(pathlib.Path(__file__).parent / ".env", override=True)
 import aiohttp
 from aiohttp import web
 import anthropic
+import serial
+import serial.tools.list_ports
 
 # --- Config ---
 PORT = 3333
+SERIAL_BAUD = 9600
+SERIAL_PORT = None  # Auto-detect, or set to e.g. "/dev/tty.usbmodem*"
 DASHBOARD_PATH = pathlib.Path(__file__).parent / "dashboard.html"
 
 # Evaluation dimensions and their descriptions for the LLM prompt
@@ -57,7 +61,57 @@ Text to evaluate:
 
 # --- State ---
 connected_ws: set[web.WebSocketResponse] = set()
+serial_port: serial.Serial = None
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+
+# --- Serial ---
+
+def find_teensy_port():
+    """Auto-detect Teensy USB serial port."""
+    for port in serial.tools.list_ports.comports():
+        desc = (port.description or "").lower()
+        mfg = (port.manufacturer or "").lower()
+        if any(k in desc for k in ["teensy", "usb serial"]) or \
+           any(k in mfg for k in ["teensy", "pjrc"]):
+            return port.device
+    return None
+
+
+def connect_serial():
+    """Try to connect to Teensy. Non-blocking, fails gracefully."""
+    global serial_port
+    port_path = SERIAL_PORT or find_teensy_port()
+    if not port_path:
+        print("[serial] No Teensy found. Running without hardware.")
+        return False
+    try:
+        serial_port = serial.Serial(port_path, SERIAL_BAUD, timeout=0.1)
+        print(f"[serial] Connected to {port_path}")
+        return True
+    except serial.SerialException as e:
+        print(f"[serial] Failed to connect to {port_path}: {e}")
+        serial_port = None
+        return False
+
+
+def send_to_teensy(scores: dict, source: str):
+    """Send evaluation scores to Teensy over serial."""
+    global serial_port
+    if serial_port is None:
+        return
+
+    # Protocol: {U|C},creativity,soundness,ambition,elegance,risk\n
+    src_char = "U" if source == "user" else "C"
+    msg = f"{src_char},{scores.get('creativity', 0):.2f},{scores.get('soundness', 0):.2f}," \
+          f"{scores.get('ambition', 0):.2f},{scores.get('elegance', 0):.2f},{scores.get('risk', 0):.2f}\n"
+
+    try:
+        serial_port.write(msg.encode())
+        serial_port.flush()
+    except serial.SerialException:
+        print("[serial] Connection lost. Will retry on next eval.")
+        serial_port = None
 
 
 def build_system_prompt() -> str:
@@ -153,8 +207,8 @@ async def handle_evaluate(request: web.Request) -> web.Response:
     # Broadcast to dashboard
     await broadcast(result)
 
-    # TODO: eventually send to serial here
-    # await send_to_teensy(scores)
+    # Send to Teensy (non-blocking, fails gracefully)
+    send_to_teensy(scores, source)
 
     print(f"[{source}] {scores.get('reaction', '...')}  |  "
           + "  ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if k != "reaction"))
@@ -218,5 +272,9 @@ if __name__ == "__main__":
     print(f"Dashboard: http://localhost:{PORT}")
     print(f"3D Viewer: http://localhost:{PORT}/viewer")
     print(f"Dimensions: {', '.join(DIMENSIONS.keys())}")
+
+    # Try to connect to Teensy (optional — runs fine without it)
+    connect_serial()
+
     print()
     web.run_app(create_app(), port=PORT, print=None)
