@@ -4,7 +4,11 @@
 import SwiftUI
 
 struct DuckView: View {
+    @EnvironmentObject var serviceProcess: ServiceProcess
     @EnvironmentObject var evalService: EvalService
+    @EnvironmentObject var speechService: SpeechService
+    @EnvironmentObject var serialManager: SerialManager
+
     @State private var isBreathing = false
     @State private var expression = DuckExpression()
     @State private var showReaction = false
@@ -42,29 +46,62 @@ struct DuckView: View {
                     value: expression.scaleAmount
                 )
 
-            // Connection indicator
-            if !evalService.isConnected {
+            // "Heard you" overlay when wake word detected
+            if !speechService.lastHeard.isEmpty {
                 VStack {
+                    Text(speechService.lastHeard)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.6)))
+                        .lineLimit(1)
+                        .padding(.top, 4)
                     Spacer()
-                    Circle()
-                        .fill(Color.red.opacity(0.7))
-                        .frame(width: 6, height: 6)
-                        .padding(.bottom, 8)
                 }
+                .transition(.opacity)
+            }
+
+            // Status indicators (bottom edge)
+            VStack {
+                Spacer()
+                HStack(spacing: 4) {
+                    // Listening indicator
+                    if speechService.isListening {
+                        Circle()
+                            .fill(Color.green.opacity(0.7))
+                            .frame(width: 6, height: 6)
+                    }
+                    // Serial indicator
+                    if serialManager.isConnected {
+                        Circle()
+                            .fill(Color.blue.opacity(0.7))
+                            .frame(width: 6, height: 6)
+                    }
+                    // Disconnected indicator
+                    if !evalService.isConnected {
+                        Circle()
+                            .fill(Color.red.opacity(0.7))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .padding(.bottom, 8)
             }
         }
         .frame(width: DuckTheme.widgetSize, height: DuckTheme.widgetSize)
+        .contextMenu { duckContextMenu }
         .onAppear {
             isBreathing = true
         }
         .onChange(of: evalService.scores?.reaction) {
-            updateExpression()
-            flashReaction()
+            onNewEval()
         }
-        .onChange(of: evalService.permissionPending) {
+        .onChange(of: evalService.permissionRequestId) {
             updateExpression()
             if evalService.permissionPending {
                 startPermissionWobble()
+                speechService.askPermission(toolName: evalService.permissionTool,
+                                            options: evalService.permissionOptions)
             }
         }
     }
@@ -156,6 +193,62 @@ struct DuckView: View {
                 .frame(width: 16, height: 6)
                 .offset(y: 4 + expression.beakOpen * 6)
                 .animation(.spring(response: 0.2), value: expression.beakOpen)
+        }
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private var duckContextMenu: some View {
+        if speechService.isListening {
+            Button("Stop Listening") { speechService.stopListening() }
+        } else {
+            Button("Start Listening") { speechService.startListening() }
+        }
+
+        Divider()
+
+        Text("Mic: \(speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName)")
+
+        if serialManager.isConnected {
+            Text("Teensy: \(serialManager.portName)")
+        } else {
+            Text("Teensy: Disconnected")
+        }
+
+        Text("Service: \(serviceProcess.isRunning ? "Running" : "Stopped")")
+        Text("WebSocket: \(evalService.isConnected ? "Connected" : "Disconnected")")
+
+        if !serviceProcess.isRunning {
+            Button("Start Service") { serviceProcess.startService() }
+        }
+
+        Divider()
+
+        Button("Start Claude Session") { serviceProcess.startClaudeSession() }
+
+        Divider()
+
+        Button("Quit Duck") {
+            serviceProcess.stopService()
+            NSApp.terminate(nil)
+        }
+    }
+
+    // MARK: - Eval Reaction
+
+    private func onNewEval() {
+        updateExpression()
+        flashReaction()
+
+        // Send to Teensy via serial
+        if let scores = evalService.scores {
+            serialManager.sendScores(scores, source: evalService.source)
+        }
+
+        // Speak the reaction
+        if !evalService.reaction.isEmpty {
+            speechService.speak(evalService.reaction)
         }
     }
 

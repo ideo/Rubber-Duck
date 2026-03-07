@@ -16,9 +16,14 @@
     <string>1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
+    <!-- Regular app: shows in Dock, has menu bar, Cmd+Q works -->
+    <!-- Set LSUIElement true to hide from Dock (accessory mode) -->
+    <!-- <key>LSUIElement</key><true/> -->
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Rubber Duck needs microphone access to listen for voice commands.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Rubber Duck uses speech recognition to transcribe your voice into Claude Code.</string>
 </dict>
 </plist>

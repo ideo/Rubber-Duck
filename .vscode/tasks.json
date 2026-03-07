@@ -1,0 +1,71 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "widget-run",
+            "type": "shell",
+            "command": "make run",
+            "options": {
+                "cwd": "${workspaceFolder}/widget"
+            },
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "widget-build",
+            "type": "shell",
+            "command": "make build",
+            "options": {
+                "cwd": "${workspaceFolder}/widget"
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "service-start",
+            "type": "shell",
+            "command": "./scripts/start-service.sh",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "service-stop",
+            "type": "shell",
+            "command": "./scripts/stop-service.sh",
+            "group": "none",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "duck-session",
+            "type": "shell",
+            "command": "./scripts/duck-session",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            }
+        }
+    ]
+}

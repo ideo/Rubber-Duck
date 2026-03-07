@@ -23,6 +23,7 @@ struct EvalMessage: Codable {
     let scores: EvalScores?
     let status: String?
     let tool_name: String?
+    let option_labels: [String]?
 }
 
 // MARK: - Service
@@ -38,6 +39,8 @@ class EvalService: ObservableObject {
     // Permission state
     @Published var permissionPending: Bool = false
     @Published var permissionTool: String = ""
+    @Published var permissionOptions: [String] = []  // Human-readable option labels from service
+    @Published var permissionRequestId: Int = 0  // Increments on each new request to ensure .onChange fires
 
     // Computed expressions
     @Published var sentiment: Double = 0.0  // -1 to 1, overall mood
@@ -110,7 +113,12 @@ class EvalService: ObservableObject {
 
         if msgType == "permission" {
             permissionTool = msg.tool_name ?? "unknown"
-            permissionPending = (msg.status == "pending")
+            let isPending = (msg.status == "pending")
+            permissionPending = isPending
+            if isPending {
+                permissionOptions = msg.option_labels ?? []
+                permissionRequestId += 1  // Always increment so .onChange fires even if already pending
+            }
         } else if msgType == "eval", let newScores = msg.scores {
             scores = newScores
             reaction = newScores.reaction ?? ""
@@ -124,6 +132,45 @@ class EvalService: ObservableObject {
                 newScores.ambition * 0.15 -
                 newScores.risk * 0.1
             )
+        }
+    }
+
+    // MARK: - Send (widget → service)
+
+    /// Send transcribed voice text to the service for tmux bridging to Claude Code.
+    func sendVoiceInput(_ text: String) {
+        let payload: [String: String] = ["command": "voice_input", "text": text]
+        sendJSON(payload)
+    }
+
+    /// Send permission decision (from voice) to the service.
+    /// - index: 0 = allow once, 1+ = apply suggestion at that 1-based index, -1 = deny
+    func sendPermissionDecision(index: Int) {
+        struct Payload: Encodable {
+            let command: String
+            let decision: String
+            let suggestion_index: Int?
+        }
+        let payload = Payload(
+            command: "permission_response",
+            decision: index >= 0 ? "allow" : "deny",
+            suggestion_index: index > 0 ? index : nil
+        )
+        guard let data = try? JSONEncoder().encode(payload),
+              let text = String(data: data, encoding: .utf8) else { return }
+        webSocketTask?.send(.string(text)) { error in
+            if let error = error { print("[ws] Send error: \(error)") }
+        }
+        permissionPending = false
+    }
+
+    private func sendJSON(_ dict: [String: String]) {
+        guard let data = try? JSONEncoder().encode(dict),
+              let text = String(data: data, encoding: .utf8) else { return }
+        webSocketTask?.send(.string(text)) { error in
+            if let error = error {
+                print("[ws] Send error: \(error)")
+            }
         }
     }
 

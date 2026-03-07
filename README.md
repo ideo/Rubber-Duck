@@ -1,38 +1,46 @@
 # Rubber Duck
 
-A physical IoT companion that watches your Claude Code conversations and reacts with opinions. It evaluates both your prompts and Claude's responses on multiple dimensions, then expresses its judgment through physical actuators — a rotating beak, LED bar graph, or piezo chirps. You can also talk to it.
+A physical IoT companion for Claude Code. It watches your coding sessions, evaluates both your prompts and Claude's responses on multiple dimensions, then expresses its judgment through physical actuators, voice, and a desktop widget. You can talk to it — say "ducky" to give voice commands, and it'll approve or deny Claude's actions on your behalf.
 
 ## Architecture
 
 ```
                      You (speaking)
-                          │ voice
-                          ▼
-                    Teensy Mic (A0 → USB Audio)
-                          │
-Claude Code               │
-  ├─ UserPromptSubmit ─┐  │
-  ├─ Stop ─────────────┤  │
-  └─ PermissionRequest ┤  │
-                        ▼  ▼
-              ┌─── Eval Service ───┐
-              │  • Claude Haiku    │
-              │  • Speech Engine   │
-              │  • Permission Gate │
-              └──┬──┬──┬──┬───────┘
-                 │  │  │  │
-              Widget │  │  Teensy (serial)
-            (SwiftUI)│  │  servo/LED/piezo
-                     │  │
-              Dashboard  3D Viewer
-              (browser)  (browser)
+                          | voice
+                          v
+               .--- Widget (SwiftUI) ---.
+               |  * Apple Speech STT    |
+               |  * macOS say TTS       |
+               |  * SerialManager       |
+               |  * ServiceProcess      |
+               '---+-------+-------+----'
+                   |       |       |
+          voice/   |   WebSocket   |   serial
+       permission  |       |       |
+                   v       v       v
+Claude Code    Eval Service    Teensy 4.0
+  |            (Python :3333)  servo/LED/piezo
+  |-- hooks -----> |
+  |  UserPrompt    |
+  |  Stop          |
+  |  Permission    |
+  '<-- tmux -------'
+    (voice input)
 ```
+
+### Data Flow
+
+1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the eval service
+2. **Eval service** scores text via Claude Haiku on 5 dimensions, broadcasts results via WebSocket
+3. **Widget** receives scores, animates the duck face, speaks reactions via TTS, sends scores to Teensy via serial
+4. **Voice input**: say "ducky [command]" — widget transcribes, sends to service, which injects into Claude Code via tmux
+5. **Voice permissions**: when Claude needs approval, the duck asks you out loud. Say "yes" or "no".
 
 ## Voice Interface
 
-Say **"ducky"** to activate voice input. Your speech is transcribed and sent directly into Claude Code via tmux. The duck is the intermediary — it listens, relays to Claude, evaluates the conversation, and reacts.
+Say **"ducky"** to activate voice input. Your speech is transcribed and sent into Claude Code via tmux. The duck is the intermediary — it listens, relays to Claude, evaluates the conversation, and reacts.
 
-**Voice permissions**: When Claude wants to do something risky, the duck asks you out loud. Say "yes" or "no" to approve or deny.
+**Voice permissions**: When Claude wants to do something risky, the duck asks you out loud. Say "yes" or "no" to approve or deny. This works via the `PermissionRequest` hook — the hook blocks, the service broadcasts to the widget, the widget asks via voice, and the response flows back.
 
 ## Evaluation Dimensions
 
@@ -48,18 +56,30 @@ Plus a short gut-reaction quote from the duck.
 
 ## Components
 
+### Widget (`widget/`)
+SwiftUI macOS app — the duck's brain. Owns all I/O:
+- **SpeechService** — Apple Speech STT + macOS `say` TTS (Boing voice)
+- **SerialManager** — USB serial to Teensy for servo/LED/piezo
+- **EvalService** — WebSocket client receiving eval scores
+- **ServiceProcess** — auto-launches the Python eval service, health monitoring
+- **DuckView** — animated yellow cube with expression engine, context menu
+- Right-click menu: Start/Stop Listening, Start Claude Session, status info, Quit
+
+Build and run:
+```bash
+cd widget && make run
+```
+
 ### Scripts (`scripts/`)
 - `duck-session` — tmux launcher: starts Claude Code + eval service together
 - `on-user-prompt.sh` — hook: captures user input (UserPromptSubmit)
 - `on-claude-stop.sh` — hook: captures Claude's response (Stop)
-- `on-permission-request.sh` — hook: voice-gated permission approval
+- `on-permission-request.sh` — hook: voice-gated permission approval (blocking)
 - `start-service.sh` / `stop-service.sh` — service lifecycle management
 
 ### Service (`service/`)
-Python server on `localhost:3333`:
-- `server.py` — eval service, WebSocket broadcast, serial, permission gate
-- `speech.py` — unified speech engine (STT + TTS, swappable backend)
-- `voice.py` — standalone voice chat mode (legacy, being merged into speech.py)
+Python server on `localhost:3333`. Stateless eval + broadcast — no speech, no serial (widget owns those):
+- `server.py` — eval via Claude Haiku, WebSocket broadcast, permission gate, tmux bridge
 
 **Endpoints:**
 | Route | Description |
@@ -99,30 +119,31 @@ cd service
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-brew install portaudio tmux  # for voice + session management
+brew install tmux  # for voice input bridge
 
 # 2. Set API key
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-# 3. Start a duck session (tmux + Claude Code + voice)
+# 3. Launch the widget (builds + runs, auto-starts eval service)
+cd ../widget
+make run
+
+# 4. Or start a full duck session (tmux + Claude Code + service)
 cd ..
 ./scripts/duck-session
-
-# Or start the service alone (no voice, no tmux)
-python3 service/server.py --no-speech
 ```
+
+### Widget only (recommended)
+Launch the widget app — it auto-starts the eval service. Right-click the duck to start a Claude Code terminal session, toggle listening, or quit. Hooks fire automatically for any Claude Code session in this project directory.
 
 ### Without voice
 The hooks fire automatically in any Claude Code session running in this project directory. Kill the service to disable — hooks fail silently with zero overhead.
-
-### With voice
-Run `./scripts/duck-session` to get the full experience: tmux session with Claude Code in the top pane, eval service in the bottom. Say "ducky" to speak your prompts.
 
 ## Hardware
 
 - **Servo Duck**: MG90S servo on a rotating disc with rubber duck beak
 - **LED Duck**: 10-segment LED bar graph on PCB with piezo speaker
-- **Teensy 4.0** via USB (auto-detected by service)
+- **Teensy 4.0** via USB (auto-detected by widget's SerialManager)
 
 Flash `firmware/rubber_duck/` via Arduino IDE / PlatformIO with Teensyduino.
 
@@ -137,13 +158,3 @@ The universal evaluation stays rich (5 dimensions). Each output target has its o
 | creativity | angle weight | brightness | color shift |
 | ambition | speed | intensity | breathing |
 | risk | oscillation/wiggle | buzzy chirp | shake/wobble |
-
-## Speech Engine
-
-The speech engine (`service/speech.py`) has a swappable backend design:
-
-| Backend | STT | TTS | Status |
-|---------|-----|-----|--------|
-| Local | Google STT | macOS `say` (Boing) | ✅ Current |
-| Realtime API | Claude Realtime | Claude Realtime | 🔮 Future |
-| ElevenLabs | — | ElevenLabs API | 🔮 Future |
