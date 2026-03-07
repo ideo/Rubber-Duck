@@ -36,6 +36,7 @@ class SpeechService: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var isWaitingForPermissionResponse = false
     private var permissionOptionCount = 0
+    private var lastPermissionPrompt = ""
     private var pendingTranscript = ""
     private var restartAttempts = 0
     private let maxRestartAttempts = 5
@@ -246,40 +247,43 @@ class SpeechService: ObservableObject {
     private func processTranscript(_ transcript: String, isFinal: Bool) {
         let lower = transcript.lowercased()
 
-        // Permission response mode — respond immediately
+        // Permission response mode — match whole words only to avoid false positives
         if isWaitingForPermissionResponse {
-            let affirmatives = ["yes", "yeah", "yep", "sure", "allow", "go ahead",
-                                "approve", "ok", "okay", "proceed", "do it"]
-            let negatives = ["no", "nope", "deny", "block", "stop", "cancel", "don't"]
+            let words = Set(lower.components(separatedBy: .whitespacesAndNewlines)
+                .flatMap { $0.components(separatedBy: CharacterSet.punctuationCharacters) }
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty })
+
+            let affirmatives: Set<String> = ["yes", "yeah", "yep", "sure", "allow", "approve", "okay", "proceed"]
+            let negatives: Set<String> = ["no", "nope", "deny", "block", "stop", "cancel"]
+            let repeatWords: Set<String> = ["repeat", "what", "again", "options", "huh"]
+
+            // "Repeat" / "what?" — re-speak the prompt
+            if !words.isDisjoint(with: repeatWords) && words.isDisjoint(with: affirmatives) && words.isDisjoint(with: negatives) {
+                speak(lastPermissionPrompt)
+                return
+            }
 
             // Ordinal words for picking a numbered suggestion
             let ordinalWords = ["first", "second", "third", "fourth"]
             let numberWords = ["one", "two", "three", "four"]
 
-            // Check for numbered suggestion pick (e.g. "first", "option two", "2")
             for i in 0..<permissionOptionCount {
-                let n = i + 1
-                let matches = [
-                    ordinalWords[i],
-                    numberWords[i],
-                    "option \(n)",
-                    "number \(n)",
-                    "\(n)",
-                ]
-                if matches.contains(where: { lower.contains($0) }) {
+                if words.contains(ordinalWords[i]) || words.contains(numberWords[i]) {
                     isWaitingForPermissionResponse = false
-                    speak("Got it, option \(n).")
-                    onPermissionResponse?(n)
+                    speak("Got it, option \(i + 1).")
+                    onPermissionResponse?(i + 1)
                     return
                 }
             }
 
-            if affirmatives.contains(where: { lower.contains($0) }) {
+            // Yes / No — whole-word matching
+            if !words.isDisjoint(with: affirmatives) {
                 isWaitingForPermissionResponse = false
-                speak("Got it, proceeding.")
+                speak("Got it.")
                 onPermissionResponse?(0)
                 return
-            } else if negatives.contains(where: { lower.contains($0) }) {
+            } else if !words.isDisjoint(with: negatives) {
                 isWaitingForPermissionResponse = false
                 speak("Blocked it.")
                 onPermissionResponse?(-1)
@@ -376,17 +380,19 @@ class SpeechService: ObservableObject {
     func askPermission(toolName: String, options: [String] = []) {
         permissionOptionCount = options.count
 
-        var parts = ["Claude wants to use \(toolName)."]
-        parts.append("Say yes to allow once")
-
-        let ordinalWords = ["first", "second", "third", "fourth"]
-        for (i, label) in options.prefix(4).enumerated() {
-            parts.append("say \(ordinalWords[i]) to \(label)")
+        var prompt = "Claude wants to use \(toolName). Yes to allow"
+        if !options.isEmpty {
+            let ordinalWords = ["first", "second", "third", "fourth"]
+            let optionParts = options.prefix(4).enumerated().map { (i, label) in
+                "\(ordinalWords[i]) to \(label)"
+            }
+            prompt += ", \(optionParts.joined(separator: ", "))"
         }
-        parts.append("or no to deny.")
+        prompt += ", or no to deny."
 
+        lastPermissionPrompt = prompt
         isWaitingForPermissionResponse = true
-        speak(parts.joined(separator: ", "))
+        speak(prompt)
     }
 
     // MARK: - Mic Discovery

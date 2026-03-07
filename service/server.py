@@ -185,29 +185,34 @@ async def handle_evaluate(request: web.Request) -> web.Response:
 
 
 def describe_suggestion(suggestion: dict) -> str:
-    """Generate a short human-readable label for a permission suggestion."""
+    """Generate a short, TTS-friendly label for a permission suggestion.
+
+    Labels must sound natural when spoken aloud — no paths, globs, or special chars.
+    """
     stype = suggestion.get("type", "")
     dest = suggestion.get("destination", "session")
-    dest_label = "this session" if dest == "session" else "always"
+    scope = "for this session" if dest == "session" else "permanently"
 
     if stype == "addRules":
         rules = suggestion.get("rules", [])
         if rules:
-            rule = rules[0]
-            tool = rule.get("toolName", "this tool")
-            content = rule.get("ruleContent", "")
-            if content:
-                return f"always allow {tool}({content}) for {dest_label}"
-            return f"always allow {tool} for {dest_label}"
+            tool = rules[0].get("toolName", "this tool")
+            return f"always allow {tool} {scope}"
+        return f"add a rule {scope}"
     elif stype == "addDirectories":
-        dirs = suggestion.get("directories", [])
-        if dirs:
-            return f"allow all access in {dirs[0]} for {dest_label}"
-        return f"add directory for {dest_label}"
+        return f"allow this directory {scope}"
+    elif stype == "setMode":
+        mode = suggestion.get("mode", "")
+        if mode:
+            return f"switch to {mode} mode"
+        return "change the permission mode"
+    elif stype == "toolAlwaysAllow":
+        tool = suggestion.get("toolName", "this tool")
+        return f"always allow {tool}"
     elif stype == "acceptEdits":
         return "allow all file edits"
 
-    return stype or "unknown option"
+    return "apply a permission rule"
 
 
 async def handle_permission(request: web.Request) -> web.Response:
