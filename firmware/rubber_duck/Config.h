@@ -9,11 +9,13 @@
 
 #define ENABLE_SERVO_DUCK  true
 #define ENABLE_LED_DUCK    true
+#define ENABLE_USB_AUDIO   true   // Requires USB Type: "Serial + MIDI + Audio"
 
 // --- Pin Assignments (matching metro_0.1 layout) ---
 #define SERVO_PIN        3    // PWM servo output
 #define LED_PIN          6    // NeoPixel data line
 #define PIEZO_PIN        9    // Piezo speaker
+#define MIC_PIN          A0   // Electret mic analog input
 
 // --- Servo Config ---
 #define SERVO_CENTER     90   // Neutral position (degrees)
@@ -41,6 +43,9 @@
 // --- Piezo Config ---
 #define CHIRP_BASE_FREQ  400
 #define CHIRP_DURATION   250   // ms
+
+// --- USB Audio Config ---
+#define MIC_DEFAULT_GAIN 2.0f  // Pre-amp gain for mic signal
 
 // ============================================================
 // Data Structures

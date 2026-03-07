@@ -1,0 +1,96 @@
+#!/bin/bash
+# duck-session — Launch Claude Code with Rubber Duck voice bridge
+#
+# Starts a tmux session with:
+#   - Top pane: Claude Code (interactive)
+#   - Bottom pane: Eval service + speech engine
+#
+# Voice input is transcribed and injected into Claude Code via tmux send-keys.
+#
+# Usage:
+#   ./scripts/duck-session                  # default
+#   ./scripts/duck-session --voice Whisper  # custom TTS voice
+#   ./scripts/duck-session -- -p my-proj    # pass args to claude after --
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SERVICE_DIR="$PROJECT_DIR/service"
+SESSION="duck"
+VOICE="${DUCK_VOICE:-Boing}"
+WAKE_WORD="${DUCK_WAKE_WORD:-ducky}"
+MIC_INDEX="${DUCK_MIC:-}"
+
+# Parse our args (before --)
+CLAUDE_ARGS=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --voice)     VOICE="$2";     shift 2 ;;
+        --wake-word) WAKE_WORD="$2"; shift 2 ;;
+        --mic)       MIC_INDEX="$2"; shift 2 ;;
+        --)          shift; CLAUDE_ARGS="$*"; break ;;
+        *)           CLAUDE_ARGS="$*"; break ;;
+    esac
+done
+
+# Check dependencies
+if ! command -v tmux &>/dev/null; then
+    echo "❌ tmux is required. Install with: brew install tmux"
+    exit 1
+fi
+
+if ! command -v claude &>/dev/null; then
+    echo "❌ claude CLI not found. Install Claude Code first."
+    exit 1
+fi
+
+# Kill existing duck session if any
+tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+echo "🦆 Starting Rubber Duck session..."
+echo "   Voice: $VOICE"
+echo "   Wake word: $WAKE_WORD"
+echo ""
+
+# Create tmux session — Claude Code in main pane
+tmux new-session -d -s "$SESSION" -n "claude" -x 200 -y 50
+
+# Split horizontally: top = Claude Code (75%), bottom = service (25%)
+tmux split-window -v -t "$SESSION:claude" -p 25
+
+# Start eval service in bottom pane
+MIC_ARG=""
+if [ -n "$MIC_INDEX" ]; then
+    MIC_ARG="--mic $MIC_INDEX"
+fi
+
+tmux send-keys -t "$SESSION:claude.1" \
+    "cd '$SERVICE_DIR' && source venv/bin/activate 2>/dev/null; python3 server.py --voice '$VOICE' --wake-word '$WAKE_WORD' $MIC_ARG" Enter
+
+# Wait for service to be ready
+echo "   Waiting for service..."
+for i in $(seq 1 10); do
+    if curl -s http://localhost:3333/health > /dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+
+# Start Claude Code in top pane
+tmux send-keys -t "$SESSION:claude.0" \
+    "cd '$PROJECT_DIR' && claude $CLAUDE_ARGS" Enter
+
+# Select the Claude Code pane as active
+tmux select-pane -t "$SESSION:claude.0"
+
+echo "🦆 Duck session ready! Attaching to tmux..."
+echo "   Ctrl+B then D to detach"
+echo "   Say \"$WAKE_WORD\" to use voice"
+echo ""
+
+# Attach to the session
+tmux attach -t "$SESSION"
+
+# Cleanup when tmux session ends
+echo "🦆 Duck session ended."

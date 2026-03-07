@@ -10,6 +10,11 @@
 //   T   → trigger test eval (positive)
 //   X   → trigger test eval (negative)
 //   P   → ping (responds with "PONG")
+//
+// Audio commands (USB Audio bridge):
+//   G,0.8  → set mic gain (0.0-10.0)
+//   M,1    → mute mic (1=mute, 0=unmute)
+//   V      → report audio level (responds with "L,0.45")
 
 #define SERIAL_BUFFER_SIZE 128
 
@@ -54,6 +59,27 @@ void parseMessage(char *msg) {
     latestScores = {0.8, -0.9, 0.9, -0.8, 0.9, 'U', true};
     newEvalAvailable = true;
     Serial.println("[duck] Test eval: negative");
+    return;
+  }
+
+  // --- Audio commands ---
+  if (source == 'G' && msg[1] == ',') {
+    // Set mic gain: G,2.5
+    float gain = strtof(msg + 2, NULL);
+    setMicGain(gain);
+    return;
+  }
+
+  if (source == 'M' && msg[1] == ',') {
+    // Mute/unmute: M,1 or M,0
+    bool mute = (msg[2] == '1');
+    setMicMute(mute);
+    return;
+  }
+
+  if (source == 'V') {
+    // Report audio level
+    Serial.println("L," + String(getMicLevel(), 3));
     return;
   }
 
