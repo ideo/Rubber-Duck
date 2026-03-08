@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Rubber-Duck}/widget",
+            "name": "Debug RubberDuckWidget (widget)",
+            "program": "${workspaceFolder:Rubber-Duck}/widget/.build/debug/RubberDuckWidget",
+            "preLaunchTask": "swift: Build Debug RubberDuckWidget (widget)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Rubber-Duck}/widget",
+            "name": "Release RubberDuckWidget (widget)",
+            "program": "${workspaceFolder:Rubber-Duck}/widget/.build/release/RubberDuckWidget",
+            "preLaunchTask": "swift: Build Release RubberDuckWidget (widget)"
+        }
+    ]
+}
