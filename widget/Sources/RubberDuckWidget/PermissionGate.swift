@@ -33,7 +33,7 @@ actor PermissionGate {
     /// Called when the widget sends a permission response via WebSocket or local transport.
     func resolve(decision: String, suggestionIndex: Int? = nil) {
         let validDecision = (decision == "allow" || decision == "deny") ? decision : "deny"
-        print("[permission] Resolved: \(validDecision), suggestion_index=\(String(describing: suggestionIndex))")
+        DuckLog.log("[permission] Resolved: \(validDecision), suggestion_index=\(String(describing: suggestionIndex))")
 
         timeoutTask?.cancel()
         timeoutTask = nil
@@ -61,7 +61,7 @@ actor PermissionGate {
 
     private func handleTimeout() {
         guard let cont = continuation else { return }
-        print("[permission] Timeout — no response from widget")
+        DuckLog.log("[permission] Timeout — no response from widget")
         continuation = nil
         timeoutTask = nil
         cont.resume(returning: ("timeout", nil))

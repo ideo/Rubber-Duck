@@ -63,7 +63,7 @@ actor ClaudeEvaluator {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let body = String(data: data, encoding: .utf8) ?? ""
-            print("[eval] API error \(status): \(body.prefix(200))")
+            DuckLog.log("[eval] API error \(status): \(body.prefix(200))")
             return Self.fallbackScores()
         }
 
@@ -72,7 +72,7 @@ actor ClaudeEvaluator {
               let content = json["content"] as? [[String: Any]],
               let firstBlock = content.first,
               var raw = firstBlock["text"] as? String else {
-            print("[eval] Failed to extract text from API response")
+            DuckLog.log("[eval] Failed to extract text from API response")
             return Self.fallbackScores()
         }
 
@@ -92,7 +92,7 @@ actor ClaudeEvaluator {
         // Parse JSON scores
         guard let scoreData = raw.data(using: .utf8),
               let scoreDict = try? JSONSerialization.jsonObject(with: scoreData) as? [String: Any] else {
-            print("[eval] Failed to parse JSON: \(raw.prefix(200))")
+            DuckLog.log("[eval] Failed to parse JSON: \(raw.prefix(200))")
             return Self.fallbackScores()
         }
 
