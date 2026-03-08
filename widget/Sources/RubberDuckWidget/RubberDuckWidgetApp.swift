@@ -15,15 +15,30 @@ struct RubberDuckWidgetApp: App {
     @StateObject private var evalService = EvalService()
     @StateObject private var speechService = SpeechService()
     @StateObject private var serialManager = SerialManager()
+    @StateObject private var coordinator: DuckCoordinator
 
     init() {
-        // Regular app — shows in Dock, has menu bar, Cmd+Q works
-        // User can launch from Finder, close normally
+        // Create services first, then coordinator that wires them together.
+        // StateObject init closures capture the underlying objects.
+        let eval = EvalService()
+        let speech = SpeechService()
+        let serial = SerialManager()
+
+        _serviceProcess = StateObject(wrappedValue: ServiceProcess())
+        _evalService = StateObject(wrappedValue: eval)
+        _speechService = StateObject(wrappedValue: speech)
+        _serialManager = StateObject(wrappedValue: serial)
+        _coordinator = StateObject(wrappedValue: DuckCoordinator(
+            evalService: eval,
+            speechService: speech,
+            serialManager: serial
+        ))
     }
 
     var body: some Scene {
         WindowGroup {
             DuckView()
+                .environmentObject(coordinator)
                 .environmentObject(serviceProcess)
                 .environmentObject(evalService)
                 .environmentObject(speechService)

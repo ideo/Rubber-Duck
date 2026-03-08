@@ -1,37 +1,36 @@
 // Duck View — The visual rubber duck widget.
 // A yellow rounded cube with eyes, beak, and animated expressions.
+// Pure renderer — side effects are handled by DuckCoordinator.
 
 import SwiftUI
 
 struct DuckView: View {
+    @EnvironmentObject var coordinator: DuckCoordinator
     @EnvironmentObject var serviceProcess: ServiceProcess
     @EnvironmentObject var evalService: EvalService
     @EnvironmentObject var speechService: SpeechService
     @EnvironmentObject var serialManager: SerialManager
 
     @State private var isBreathing = false
-    @State private var expression = DuckExpression()
-    @State private var showReaction = false
-    @State private var permissionWobble = false
 
     var body: some View {
         ZStack {
             // Glow background
-            if expression.glowIntensity > 0 {
+            if coordinator.expression.glowIntensity > 0 {
                 RoundedRectangle(cornerRadius: DuckTheme.cornerRadius + 4)
-                    .fill(expression.glowColor)
+                    .fill(coordinator.expression.glowColor)
                     .blur(radius: 20)
-                    .opacity(expression.glowIntensity * 0.6)
+                    .opacity(coordinator.expression.glowIntensity * 0.6)
             }
 
             // Duck body
             duckBody
                 .scaleEffect(isBreathing ? 1.02 : 0.98)
-                .scaleEffect(expression.scaleAmount)
+                .scaleEffect(coordinator.expression.scaleAmount)
                 .rotationEffect(.degrees(
-                    permissionWobble
-                        ? expression.rotationAngle
-                        : -expression.rotationAngle
+                    coordinator.permissionWobble
+                        ? coordinator.expression.rotationAngle
+                        : -coordinator.expression.rotationAngle
                 ))
                 .animation(
                     .easeInOut(duration: DuckTheme.breathingDuration)
@@ -43,7 +42,7 @@ struct DuckView: View {
                         response: DuckTheme.springResponse,
                         dampingFraction: DuckTheme.springDamping
                     ),
-                    value: expression.scaleAmount
+                    value: coordinator.expression.scaleAmount
                 )
 
             // "Heard you" overlay when wake word detected
@@ -94,15 +93,10 @@ struct DuckView: View {
             isBreathing = true
         }
         .onChange(of: evalService.scores?.reaction) {
-            onNewEval()
+            coordinator.handleNewEval()
         }
         .onChange(of: evalService.permissionRequestId) {
-            updateExpression()
-            if evalService.permissionPending {
-                startPermissionWobble()
-                speechService.askPermission(toolName: evalService.permissionTool,
-                                            options: evalService.permissionOptions)
-            }
+            coordinator.handlePermissionChange()
         }
     }
 
@@ -119,7 +113,7 @@ struct DuckView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .hueRotation(.degrees(expression.hueShift))
+                .hueRotation(.degrees(coordinator.expression.hueShift))
                 .shadow(color: .black.opacity(0.2), radius: 4, x: 2, y: 3)
 
             // Face
@@ -129,7 +123,7 @@ struct DuckView: View {
                     duckEye
                     duckEye
                 }
-                .offset(y: expression.eyeOffsetY)
+                .offset(y: coordinator.expression.eyeOffsetY)
                 .padding(.top, 28)
 
                 // Beak
@@ -154,7 +148,7 @@ struct DuckView: View {
             }
 
             // Flash overlay on new eval
-            if showReaction {
+            if coordinator.showReaction {
                 RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
                     .fill(Color.white.opacity(0.3))
                     .transition(.opacity)
@@ -170,11 +164,11 @@ struct DuckView: View {
             .fill(DuckTheme.eyeColor)
             .frame(
                 width: DuckTheme.eyeSize,
-                height: DuckTheme.eyeSize * expression.eyeHeight
+                height: DuckTheme.eyeSize * coordinator.expression.eyeHeight
             )
             .animation(
                 .spring(response: 0.3, dampingFraction: 0.7),
-                value: expression.eyeHeight
+                value: coordinator.expression.eyeHeight
             )
     }
 
@@ -191,8 +185,8 @@ struct DuckView: View {
             Ellipse()
                 .fill(DuckTheme.beakColor.opacity(0.8))
                 .frame(width: 16, height: 6)
-                .offset(y: 4 + expression.beakOpen * 6)
-                .animation(.spring(response: 0.2), value: expression.beakOpen)
+                .offset(y: 4 + coordinator.expression.beakOpen * 6)
+                .animation(.spring(response: 0.2), value: coordinator.expression.beakOpen)
         }
     }
 
@@ -232,59 +226,6 @@ struct DuckView: View {
         Button("Quit Duck") {
             serviceProcess.stopService()
             NSApp.terminate(nil)
-        }
-    }
-
-    // MARK: - Eval Reaction
-
-    private func onNewEval() {
-        updateExpression()
-        flashReaction()
-
-        // Send to Teensy via serial
-        if let scores = evalService.scores {
-            serialManager.sendScores(scores, source: evalService.source)
-        }
-
-        // Speak the reaction
-        if !evalService.reaction.isEmpty {
-            speechService.speak(evalService.reaction)
-        }
-    }
-
-    // MARK: - Expression Updates
-
-    private func updateExpression() {
-        withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
-            expression = ExpressionEngine.reduce(
-                scores: evalService.scores,
-                permissionPending: evalService.permissionPending
-            )
-        }
-    }
-
-    private func flashReaction() {
-        showReaction = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.easeOut(duration: 0.4)) {
-                showReaction = false
-            }
-        }
-
-        // Open beak briefly when speaking
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.spring(response: 0.2)) {
-                expression.beakOpen = 0.0
-            }
-        }
-    }
-
-    private func startPermissionWobble() {
-        withAnimation(
-            .easeInOut(duration: 0.15)
-            .repeatCount(6, autoreverses: true)
-        ) {
-            permissionWobble.toggle()
         }
     }
 }

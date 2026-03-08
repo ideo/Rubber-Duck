@@ -12,7 +12,7 @@ class ServiceProcess: ObservableObject {
 
     private var process: Process?
     private var healthTask: Task<Void, Never>?
-    private let port: Int = 3333
+    private let port: Int = DuckConfig.servicePort
 
     var serviceURL: URL {
         URL(string: "http://localhost:\(port)")!
@@ -32,31 +32,26 @@ class ServiceProcess: ObservableObject {
     /// Find the repo root by walking up from the running binary.
     /// Binary is at: {repo}/widget/.build/{config}/RubberDuckWidget.app/Contents/MacOS/RubberDuckWidget
     /// Or: {repo}/widget/.build/{config}/RubberDuckWidget
+    ///
+    /// Override: set DUCK_REPO_ROOT=/path/to/Rubber-Duck to skip discovery.
     private func findRepoRoot() -> URL? {
-        let bundle = Bundle.main.bundleURL
+        // Allow env var override for non-standard locations
+        if let override = ProcessInfo.processInfo.environment["DUCK_REPO_ROOT"] {
+            let url = URL(fileURLWithPath: override)
+            let serverPath = url.appendingPathComponent("service/server.py")
+            if FileManager.default.fileExists(atPath: serverPath.path) {
+                return url
+            }
+        }
 
-        // Walk up looking for service/server.py
+        // Walk up from binary looking for service/server.py
+        let bundle = Bundle.main.bundleURL
         var dir = bundle
         for _ in 0..<10 {
             dir = dir.deletingLastPathComponent()
             let serverPath = dir.appendingPathComponent("service/server.py")
             if FileManager.default.fileExists(atPath: serverPath.path) {
                 return dir
-            }
-        }
-
-        // Also check common development paths
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let candidates = [
-            home.appendingPathComponent("Documents/GitHub/Rubber-Duck"),
-            home.appendingPathComponent("Developer/Rubber-Duck"),
-            home.appendingPathComponent("Projects/Rubber-Duck"),
-        ]
-
-        for candidate in candidates {
-            let serverPath = candidate.appendingPathComponent("service/server.py")
-            if FileManager.default.fileExists(atPath: serverPath.path) {
-                return candidate
             }
         }
 
@@ -162,10 +157,13 @@ class ServiceProcess: ObservableObject {
             return
         }
 
+        let session = DuckConfig.tmuxSession
+        let window = DuckConfig.tmuxWindow
+
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(repoRoot.path) && if ! tmux has-session -t duck 2>/dev/null; then tmux new-session -d -s duck -n claude 'claude'; fi && tmux set-option -t duck -w allow-rename off 2>/dev/null && tmux rename-window -t duck claude 2>/dev/null && tmux attach -t duck"
+            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(window) 'claude'; fi && tmux set-option -t \(session) -w allow-rename off 2>/dev/null && tmux rename-window -t \(session) \(window) 2>/dev/null && tmux attach -t \(session)"
         end tell
         """
 
@@ -187,7 +185,7 @@ class ServiceProcess: ObservableObject {
     // MARK: - Health Check
 
     private nonisolated func checkHealth() -> Bool {
-        let url = URL(string: "http://localhost:3333/health")!
+        let url = URL(string: "http://localhost:\(port)/health")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 2.0
 
