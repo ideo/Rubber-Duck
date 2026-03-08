@@ -14,7 +14,8 @@ class WebSocketTransport: EvalTransport {
     private var reconnectTask: Task<Void, Never>?
     private let url: URL
 
-    init(url: URL = DuckConfig.serviceURL) {
+    /// Connect to a remote eval service. For local use, prefer LocalEvalTransport.
+    init(url: URL = URL(string: "ws://localhost:\(DuckConfig.servicePort)/ws")!) {
         self.url = url
     }
 

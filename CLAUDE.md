@@ -45,6 +45,10 @@ You (Claude Code) — this session
 - Eval reactions are short (max 10 words) gut reactions like "Now THAT'S what I'm talking about" or "Did a toddler write this?"
 - The duck uses a voice called "Boing" for TTS. It's intentionally goofy.
 
+## Safety rules
+
+- **NEVER use `pkill -f`**. The `-f` flag matches the full command line of all processes and can kill system processes like WindowServer, crashing the entire GUI. Use `killall <name>` or `pkill <name>` (without `-f`) instead.
+
 ## Dev workflow
 
 - Widget: `cd widget && make run` (builds and launches the app, which auto-starts the eval service)
