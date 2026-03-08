@@ -10,17 +10,7 @@ enum DuckConfig {
 
     // MARK: - Eval Service
 
-    /// WebSocket URL for the eval service.
-    /// Override: DUCK_SERVICE_URL=ws://192.168.1.50:3333/ws
-    static let serviceURL: URL = {
-        if let override = ProcessInfo.processInfo.environment["DUCK_SERVICE_URL"],
-           let url = URL(string: override) {
-            return url
-        }
-        return URL(string: "ws://localhost:\(servicePort)/ws")!
-    }()
-
-    /// HTTP port for the eval service.
+    /// HTTP port for the embedded eval server.
     /// Override: DUCK_SERVICE_PORT=4444
     static let servicePort: Int = {
         if let override = ProcessInfo.processInfo.environment["DUCK_SERVICE_PORT"],
@@ -29,6 +19,58 @@ enum DuckConfig {
         }
         return 3333
     }()
+
+    // MARK: - Anthropic API
+
+    /// Anthropic API key for Claude evaluations.
+    /// Lookup order: ANTHROPIC_API_KEY env var → ~/.duck/api_key file → service/.env file
+    static let anthropicAPIKey: String = {
+        // 1. Environment variable (highest priority)
+        if let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
+            return envKey
+        }
+
+        // 2. ~/.duck/api_key file
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let keyFile = homeDir.appendingPathComponent(".duck/api_key")
+        if let fileKey = try? String(contentsOf: keyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !fileKey.isEmpty {
+            return fileKey
+        }
+
+        // 3. service/.env file (for dev — walk up from binary to find repo)
+        if let envKey = loadFromDotEnv(key: "ANTHROPIC_API_KEY") {
+            return envKey
+        }
+
+        print("[config] WARNING: No ANTHROPIC_API_KEY found. Set via env var or ~/.duck/api_key")
+        return ""
+    }()
+
+    /// Load a key from the service/.env file by walking up from the binary to find the repo root.
+    private static func loadFromDotEnv(key: String) -> String? {
+        var dir = Bundle.main.bundleURL
+        for _ in 0..<10 {
+            dir = dir.deletingLastPathComponent()
+            let envFile = dir.appendingPathComponent("service/.env")
+            guard let contents = try? String(contentsOf: envFile, encoding: .utf8) else { continue }
+
+            for line in contents.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+                let parts = trimmed.components(separatedBy: "=")
+                guard parts.count >= 2 else { continue }
+                let k = parts[0].trimmingCharacters(in: .whitespaces)
+                if k == key {
+                    let v = parts.dropFirst().joined(separator: "=")
+                        .trimmingCharacters(in: .whitespaces)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    if !v.isEmpty { return v }
+                }
+            }
+        }
+        return nil
+    }
 
     // MARK: - Serial / Device
 

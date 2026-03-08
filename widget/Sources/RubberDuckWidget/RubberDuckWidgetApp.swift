@@ -1,7 +1,8 @@
 // Rubber Duck Widget — Floating Desktop Companion
 //
 // A chromeless, always-on-top yellow cube that reacts
-// to Claude Code evaluation scores via WebSocket.
+// to Claude Code evaluation scores in real time.
+// Embeds its own HTTP+WebSocket eval server (no Python needed).
 // Owns speech I/O (STT + TTS) and serial to Teensy.
 //
 // Build: cd widget && make run
@@ -11,20 +12,23 @@ import SwiftUI
 @main
 struct RubberDuckWidgetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var serviceProcess = ServiceProcess()
-    @StateObject private var evalService = EvalService()
+    @StateObject private var duckServer: DuckServer
+    @StateObject private var evalService: EvalService
     @StateObject private var speechService = SpeechService()
     @StateObject private var serialManager = SerialManager()
     @StateObject private var coordinator: DuckCoordinator
 
     init() {
-        // Create services first, then coordinator that wires them together.
-        // StateObject init closures capture the underlying objects.
-        let eval = EvalService()
+        // Create server with embedded eval service
+        let server = DuckServer(apiKey: DuckConfig.anthropicAPIKey)
+        let localTransport = server.localTransport
+
+        // EvalService uses local transport instead of WebSocket
+        let eval = EvalService(transport: localTransport)
         let speech = SpeechService()
         let serial = SerialManager()
 
-        _serviceProcess = StateObject(wrappedValue: ServiceProcess())
+        _duckServer = StateObject(wrappedValue: server)
         _evalService = StateObject(wrappedValue: eval)
         _speechService = StateObject(wrappedValue: speech)
         _serialManager = StateObject(wrappedValue: serial)
@@ -39,7 +43,7 @@ struct RubberDuckWidgetApp: App {
         WindowGroup {
             DuckView()
                 .environmentObject(coordinator)
-                .environmentObject(serviceProcess)
+                .environmentObject(duckServer)
                 .environmentObject(evalService)
                 .environmentObject(speechService)
                 .environmentObject(serialManager)
@@ -55,6 +59,9 @@ struct RubberDuckWidgetApp: App {
     // MARK: - Service Wiring
 
     private func wireServices() {
+        // Start the embedded HTTP + WebSocket server
+        duckServer.start()
+
         // Request mic permission on launch
         speechService.requestPermissions()
 

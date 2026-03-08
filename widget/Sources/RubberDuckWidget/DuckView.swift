@@ -6,7 +6,7 @@ import SwiftUI
 
 struct DuckView: View {
     @EnvironmentObject var coordinator: DuckCoordinator
-    @EnvironmentObject var serviceProcess: ServiceProcess
+    @EnvironmentObject var duckServer: DuckServer
     @EnvironmentObject var evalService: EvalService
     @EnvironmentObject var speechService: SpeechService
     @EnvironmentObject var serialManager: SerialManager
@@ -217,22 +217,59 @@ struct DuckView: View {
             Text("Teensy: Disconnected")
         }
 
-        Text("Service: \(serviceProcess.isRunning ? "Running" : "Stopped")")
-        Text("WebSocket: \(evalService.isConnected ? "Connected" : "Disconnected")")
+        Text("Server: \(duckServer.isRunning ? "Running" : "Stopped")")
 
-        if !serviceProcess.isRunning {
-            Button("Start Service") { serviceProcess.startService() }
+        if !duckServer.isRunning {
+            Button("Start Server") { duckServer.start() }
         }
 
         Divider()
 
-        Button("Start Claude Session") { serviceProcess.startClaudeSession() }
+        Button("Start Claude Session") { startClaudeSession() }
 
         Divider()
 
         Button("Quit Duck") {
-            serviceProcess.stopService()
+            duckServer.stop()
             NSApp.terminate(nil)
+        }
+    }
+
+    // MARK: - Claude Session
+
+    /// Launch Claude Code in Terminal.app inside a tmux session named "duck".
+    private func startClaudeSession() {
+        let session = DuckConfig.tmuxSession
+        let window = DuckConfig.tmuxWindow
+
+        // Try to find repo root by walking up from binary
+        var repoRoot = Bundle.main.bundleURL
+        for _ in 0..<10 {
+            repoRoot = repoRoot.deletingLastPathComponent()
+            let serverPath = repoRoot.appendingPathComponent("service/server.py")
+            if FileManager.default.fileExists(atPath: serverPath.path) {
+                break
+            }
+        }
+
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(window) 'claude'; fi && tmux set-option -t \(session) -w allow-rename off 2>/dev/null && tmux rename-window -t \(session) \(window) 2>/dev/null && tmux attach -t \(session)"
+        end tell
+        """
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            print("[app] Launched Claude terminal session")
+        } catch {
+            print("[app] Failed to launch Claude session: \(error)")
         }
     }
 }

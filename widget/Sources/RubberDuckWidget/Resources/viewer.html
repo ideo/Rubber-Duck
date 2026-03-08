@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rubber Duck — Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; overflow: hidden; font-family: "SF Mono", "Consolas", monospace; }
+  canvas { display: block; }
+
+  /* --- HUD Overlay --- */
+  #hud {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+  }
+  #hud h1 {
+    font-size: 0.9rem;
+    color: #f0c040;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+  }
+  #status {
+    font-size: 0.6rem;
+    color: #555;
+  }
+  #status.connected { color: #4a9; }
+
+  #reaction-card {
+    margin-top: 12px;
+    background: rgba(22, 33, 62, 0.85);
+    border: 1px solid #2a2a4a;
+    border-radius: 10px;
+    padding: 12px 20px;
+    backdrop-filter: blur(8px);
+    min-width: 300px;
+    opacity: 0;
+    transition: opacity 0.4s, border-color 0.4s;
+  }
+  #reaction-card.visible { opacity: 1; }
+  #reaction-card.fresh { border-color: #f0c040; }
+
+  .source-badge {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    display: inline-block;
+    margin-bottom: 4px;
+  }
+  .source-badge.user { background: #2a4a6a; color: #6ab0f3; }
+  .source-badge.claude { background: #3a2a5a; color: #b48afe; }
+
+  #reaction-text {
+    font-size: 1.05rem;
+    color: #f0c040;
+    font-style: italic;
+  }
+
+  /* --- Mini dimension readout --- */
+  #dims {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .dim-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 3px;
+    opacity: 0.5;
+    transition: opacity 0.4s;
+  }
+  .dim-row.active { opacity: 1; }
+  .dim-name {
+    width: 70px;
+    font-size: 0.55rem;
+    color: #666;
+    text-align: right;
+    padding-right: 8px;
+  }
+  .dim-bar-track {
+    width: 80px;
+    height: 4px;
+    background: #1a1a2e;
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+  }
+  .dim-bar-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-radius: 2px;
+    transition: left 0.6s ease, width 0.6s ease, background 0.6s ease;
+  }
+  .dim-val {
+    width: 36px;
+    font-size: 0.55rem;
+    color: #555;
+    padding-left: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- Test panel --- */
+  #test-panel {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #test-panel button {
+    background: #16213e;
+    border: 1px solid #2a2a4a;
+    color: #888;
+    font-family: inherit;
+    font-size: 0.6rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  #test-panel button:hover {
+    border-color: #f0c040;
+    color: #f0c040;
+  }
+
+  /* --- Labels --- */
+  .duck-label {
+    position: fixed;
+    z-index: 10;
+    font-size: 0.55rem;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    pointer-events: none;
+  }
+  #label-servo { bottom: 60px; left: 50%; transform: translateX(-75%); }
+  #label-led { bottom: 60px; left: 50%; transform: translateX(25%); }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <h1>RUBBER DUCK</h1>
+  <div id="status">disconnected</div>
+  <div id="reaction-card">
+    <span class="source-badge" id="source-badge"></span>
+    <div id="reaction-text"></div>
+  </div>
+</div>
+
+<div id="dims"></div>
+
+<div id="test-panel">
+  <button onclick="sendTest('user', 'Rewrite everything in Brainfuck')">Test: Terrible idea</button>
+  <button onclick="sendTest('user', 'Add input validation with proper error messages and tests')">Test: Good idea</button>
+  <button onclick="sendTest('claude', 'I will create a single 5000 line God class that does everything')">Test: Bad Claude</button>
+  <button onclick="sendTest('claude', 'I will break this into small focused modules with clear interfaces')">Test: Good Claude</button>
+</div>
+
+<div class="duck-label" id="label-servo">Servo Duck</div>
+<div class="duck-label" id="label-led">LED Duck</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const COLORS = {
+  servoBody: 0xf0c040,
+  servoDisc: 0xe8b830,
+  beakOrange: 0xff6633,
+  pcbGreen: 0x2a7a3a,
+  pcbDarkGreen: 0x1e5a2a,
+  ledAmber: 0xff9922,
+  ledOff: 0x332200,
+  ledHousing: 0xeeeeee,
+  surface: 0x222233,
+  bg: 0x111118,
+};
+
+const DIMS = ['creativity', 'soundness', 'ambition', 'elegance', 'risk'];
+const DIM_COLORS = {
+  creativity: '#f0c040',
+  soundness: '#40c080',
+  ambition: '#f06040',
+  elegance: '#6ab0f3',
+  risk: '#e04080',
+};
+
+// Spring physics
+const SPRING_K = 0.06;
+const SPRING_DAMPING = 0.82;
+
+// ============================================================
+// STATE
+// ============================================================
+const servoState = {
+  currentAngle: 0,
+  targetAngle: 0,
+  velocity: 0,
+  oscillationAmp: 0,
+  oscillationDecay: 0.95,
+  oscillationPhase: 0,
+};
+
+const ledState = {
+  current: new Array(10).fill(0),    // brightness 0-1
+  target: new Array(10).fill(0),
+  flashTimer: 0,
+  isFlashing: false,
+};
+
+let latestScores = null;
+let ws;
+
+// Three.js globals
+let scene, camera, renderer, controls, composer;
+let servoDuck, ledDuck;
+let servoDisc;       // the rotating part
+let ledSegments = []; // array of 10 LED meshes
+let clock;
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  clock = new THREE.Clock();
+
+  // Scene
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(COLORS.bg);
+  scene.fog = new THREE.FogExp2(COLORS.bg, 0.035);
+
+  // Camera — slightly isometric
+  camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 8, 12);
+  camera.lookAt(0, 0.5, 0);
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.8;
+  document.body.appendChild(renderer.domElement);
+
+  // Controls
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.target.set(0, 0.5, 0);
+  controls.minDistance = 5;
+  controls.maxDistance = 25;
+  controls.maxPolarAngle = Math.PI / 2.1;
+
+  // Lights
+  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambient);
+
+  const sun = new THREE.DirectionalLight(0xfff5e0, 1.4);
+  sun.position.set(-8, 15, 10);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 40;
+  sun.shadow.camera.left = -10;
+  sun.shadow.camera.right = 10;
+  sun.shadow.camera.top = 10;
+  sun.shadow.camera.bottom = -10;
+  sun.shadow.bias = -0.0001;
+  sun.shadow.radius = 3;
+  scene.add(sun);
+
+  const fill = new THREE.DirectionalLight(0xc0d0ff, 0.3);
+  fill.position.set(5, 8, -5);
+  scene.add(fill);
+
+  // Post-processing
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+
+  const bloom = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.4, 0.5, 0.85
+  );
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+
+  // Build scene
+  scene.add(createSurface());
+
+  servoDuck = createServoDuck();
+  servoDuck.position.set(-2.8, 0.05, 0);
+  scene.add(servoDuck);
+
+  ledDuck = createLEDDuck();
+  ledDuck.position.set(2.8, 0.05, 0);
+  scene.add(ledDuck);
+
+  // HUD
+  buildDimBars();
+
+  // Connect
+  connectWebSocket();
+
+  // Resize
+  window.addEventListener('resize', onResize);
+
+  // Go
+  animate();
+}
+
+// ============================================================
+// SURFACE
+// ============================================================
+function createSurface() {
+  const geo = new THREE.BoxGeometry(18, 0.15, 10);
+  const mat = new THREE.MeshStandardMaterial({
+    color: COLORS.surface,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.y = -0.075;
+  mesh.receiveShadow = true;
+
+  // Subtle grid lines
+  const gridGeo = new THREE.PlaneGeometry(18, 10);
+  const gridMat = new THREE.MeshBasicMaterial({
+    color: 0x333344,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.08,
+  });
+  const grid = new THREE.Mesh(gridGeo, gridMat);
+  grid.rotation.x = -Math.PI / 2;
+  grid.position.y = 0.01;
+  mesh.add(grid);
+
+  return mesh;
+}
+
+// ============================================================
+// SERVO DUCK
+// ============================================================
+function createServoDuck() {
+  const group = new THREE.Group();
+
+  // Yellow square panel
+  const panelGeo = new THREE.BoxGeometry(4, 0.5, 4);
+  const panelMat = new THREE.MeshStandardMaterial({
+    color: COLORS.servoBody,
+    roughness: 0.35,
+    metalness: 0.0,
+  });
+  const panel = new THREE.Mesh(panelGeo, panelMat);
+  panel.position.y = 0.25;
+  panel.castShadow = true;
+  panel.receiveShadow = true;
+  group.add(panel);
+
+  // Circular groove (torus)
+  const grooveGeo = new THREE.TorusGeometry(1.65, 0.02, 8, 64);
+  const grooveMat = new THREE.MeshStandardMaterial({
+    color: 0xc09020,
+    roughness: 0.5,
+  });
+  const groove = new THREE.Mesh(grooveGeo, grooveMat);
+  groove.rotation.x = -Math.PI / 2;
+  groove.position.y = 0.51;
+  group.add(groove);
+
+  // Rotating disc
+  const discGeo = new THREE.CylinderGeometry(1.6, 1.6, 0.08, 64);
+  const discMat = new THREE.MeshStandardMaterial({
+    color: COLORS.servoDisc,
+    roughness: 0.3,
+    metalness: 0.05,
+  });
+  servoDisc = new THREE.Mesh(discGeo, discMat);
+  servoDisc.position.y = 0.52;
+  servoDisc.castShadow = true;
+  group.add(servoDisc);
+
+  // Beak on the disc
+  const beak = createBeak();
+  beak.position.y = 0.06;
+  servoDisc.add(beak);
+
+  return group;
+}
+
+function createBeak() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: COLORS.beakOrange,
+    roughness: 0.45,
+    metalness: 0.0,
+  });
+
+  // Upper beak — squished sphere
+  const upper = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 16), mat);
+  upper.scale.set(1.3, 0.32, 0.95);
+  upper.position.y = 0.06;
+
+  // Lower beak — slightly smaller
+  const lower = new THREE.Mesh(new THREE.SphereGeometry(0.42, 32, 16), mat);
+  lower.scale.set(1.2, 0.28, 0.85);
+  lower.position.y = -0.04;
+
+  group.add(upper, lower);
+  return group;
+}
+
+// ============================================================
+// LED DUCK
+// ============================================================
+function createLEDDuck() {
+  const group = new THREE.Group();
+
+  // PCB body — house/pentagon shape
+  const shape = new THREE.Shape();
+  const w = 1.8, h = 2.2, peak = 0.7;
+  // Start bottom-left, go clockwise
+  shape.moveTo(-w, -h / 2);
+  shape.lineTo(w, -h / 2);
+  shape.lineTo(w, h / 2 - peak);
+  shape.lineTo(0, h / 2);
+  shape.lineTo(-w, h / 2 - peak);
+  shape.closePath();
+
+  const extrudeSettings = {
+    depth: 1.2,
+    bevelEnabled: true,
+    bevelThickness: 0.08,
+    bevelSize: 0.08,
+    bevelSegments: 3,
+  };
+  const bodyGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: COLORS.pcbGreen,
+    roughness: 0.6,
+    metalness: 0.15,
+  });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  // Rotate so it faces camera (extrude goes along Z, we want it along Y-ish)
+  body.rotation.x = -Math.PI / 2;
+  body.position.y = h / 2;
+  body.position.z = -0.6;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  // PCB traces — decorative lines on front face
+  const traceMat = new THREE.MeshBasicMaterial({ color: 0x3a9a4a, transparent: true, opacity: 0.5 });
+  const traces = [
+    // Horizontal traces
+    [-1.4, 1.8, 1.4, 1.8],
+    [-1.2, 1.3, 0.8, 1.3],
+    [-1.5, 2.6, -0.3, 2.6],
+    [0.4, 2.8, 1.3, 2.8],
+    [-1.0, 3.2, 0.6, 3.2],
+    // Vertical traces
+    [-1.0, 1.5, -1.0, 3.0],
+    [0.8, 1.3, 0.8, 2.8],
+    [0.0, 2.0, 0.0, 3.5],
+    [-0.5, 2.6, -0.5, 3.4],
+    [1.2, 2.0, 1.2, 2.8],
+  ];
+  traces.forEach(([x1, y1, x2, y2]) => {
+    const isVert = (x1 === x2);
+    const len = isVert ? Math.abs(y2 - y1) : Math.abs(x2 - x1);
+    const traceGeo = new THREE.BoxGeometry(isVert ? 0.03 : len, isVert ? len : 0.03, 0.01);
+    const trace = new THREE.Mesh(traceGeo, traceMat);
+    trace.position.set((x1 + x2) / 2, (y1 + y2) / 2, 0.62);
+    group.add(trace);
+  });
+
+  // Component pads — small circles
+  const padGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.02, 12);
+  const padMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+  const padPositions = [
+    [-0.8, 3.2], [0.5, 3.0], [-1.2, 2.2], [1.0, 2.0],
+    [-0.3, 3.5], [0.8, 3.4], [-1.4, 2.8], [1.3, 1.5],
+  ];
+  padPositions.forEach(([x, y]) => {
+    const pad = new THREE.Mesh(padGeo, padMat);
+    pad.rotation.x = Math.PI / 2;
+    pad.position.set(x, y, 0.62);
+    group.add(pad);
+  });
+
+  // Hex bolt near top
+  const boltGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.08, 6);
+  const boltMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.2 });
+  const bolt = new THREE.Mesh(boltGeo, boltMat);
+  bolt.rotation.x = Math.PI / 2;
+  bolt.position.set(-0.6, 3.1, 0.64);
+  group.add(bolt);
+
+  // LED bar housing (white frame)
+  const housingGeo = new THREE.BoxGeometry(2.8, 0.7, 0.25);
+  const housingMat = new THREE.MeshStandardMaterial({
+    color: COLORS.ledHousing,
+    roughness: 0.4,
+    metalness: 0.0,
+  });
+  const housing = new THREE.Mesh(housingGeo, housingMat);
+  housing.position.set(0, 1.45, 0.72);
+  group.add(housing);
+
+  // 10 LED segments
+  ledSegments = [];
+  const segWidth = 0.2;
+  const segGap = 0.05;
+  const totalWidth = 10 * segWidth + 9 * segGap;
+  const startX = -totalWidth / 2 + segWidth / 2;
+
+  for (let i = 0; i < 10; i++) {
+    const segGeo = new THREE.BoxGeometry(segWidth, 0.45, 0.12);
+    const segMat = new THREE.MeshStandardMaterial({
+      color: COLORS.ledOff,
+      emissive: COLORS.ledOff,
+      emissiveIntensity: 0.1,
+      roughness: 0.3,
+      metalness: 0.0,
+    });
+    const seg = new THREE.Mesh(segGeo, segMat);
+    seg.position.set(startX + i * (segWidth + segGap), 1.45, 0.85);
+    group.add(seg);
+    ledSegments.push(seg);
+  }
+
+  return group;
+}
+
+// ============================================================
+// REDUCERS
+// ============================================================
+function servoReducer(scores) {
+  // Overall approval: weighted blend
+  const approval =
+    scores.soundness * 0.35 +
+    scores.elegance * 0.25 +
+    scores.creativity * 0.2 +
+    scores.ambition * 0.1 -
+    scores.risk * 0.1;
+
+  // Map approval (-1..1) to angle (-90..90 degrees → radians)
+  const targetAngle = approval * (Math.PI / 2);
+
+  // Risk drives oscillation amplitude
+  const oscillation = Math.max(0, scores.risk) * 0.15;
+
+  return { targetAngle, oscillation };
+}
+
+function ledReducer(scores) {
+  // Overall approval → fill level (0-10)
+  const approval =
+    scores.soundness * 0.3 +
+    scores.elegance * 0.25 +
+    scores.creativity * 0.2 +
+    scores.ambition * 0.15 -
+    scores.risk * 0.1;
+
+  // Map from (-1..1) to (0..10)
+  const fillCount = Math.round(((approval + 1) / 2) * 10);
+  const clamped = Math.max(0, Math.min(10, fillCount));
+
+  // Brightness modulated by ambition
+  const brightness = 0.6 + Math.abs(scores.ambition) * 0.4;
+
+  const target = new Array(10).fill(0);
+  for (let i = 0; i < clamped; i++) {
+    target[i] = brightness;
+  }
+
+  return { target, flash: true };
+}
+
+// ============================================================
+// SOUND ENGINE (Web Audio for LED Duck)
+// ============================================================
+class DuckSpeaker {
+  constructor() {
+    this.ctx = null;
+  }
+
+  ensureCtx() {
+    if (!this.ctx) this.ctx = new AudioContext();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  play(scores) {
+    this.ensureCtx();
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // Overall sentiment
+    const sentiment =
+      (scores.soundness + scores.elegance + scores.creativity) / 3;
+
+    // Base pitch: 200 (bad) to 600 (good)
+    const basePitch = 400 + sentiment * 200;
+
+    // Risk → buzzy sawtooth vs clean sine
+    const isRisky = scores.risk > 0.3;
+    const waveType = isRisky ? 'sawtooth' : 'sine';
+
+    // Volume
+    const vol = 0.08 + Math.abs(scores.ambition) * 0.07;
+
+    // Chirp direction: positive sentiment → ascending, negative → descending
+    const endPitch = sentiment > 0
+      ? basePitch * 1.4
+      : basePitch * 0.6;
+
+    // Create tone
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = waveType;
+    osc.frequency.setValueAtTime(basePitch, now);
+    osc.frequency.exponentialRampToValueAtTime(endPitch, now + 0.25);
+
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.3);
+
+    // Second chirp for emphasis if extreme
+    if (Math.abs(sentiment) > 0.5) {
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = waveType;
+      osc2.frequency.setValueAtTime(endPitch * 0.95, now + 0.15);
+      osc2.frequency.exponentialRampToValueAtTime(
+        sentiment > 0 ? endPitch * 1.3 : endPitch * 0.7,
+        now + 0.4
+      );
+      gain2.gain.setValueAtTime(vol * 0.6, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.45);
+    }
+  }
+}
+
+const speaker = new DuckSpeaker();
+
+// ============================================================
+// WEBSOCKET
+// ============================================================
+function connectWebSocket() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'connected';
+    document.getElementById('status').className = 'connected';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'reconnecting...';
+    document.getElementById('status').className = '';
+    setTimeout(connectWebSocket, 2000);
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    onEvalReceived(data);
+  };
+}
+
+function onEvalReceived(data) {
+  const scores = data.scores;
+  latestScores = scores;
+
+  // Update servo target
+  const servo = servoReducer(scores);
+  servoState.targetAngle = servo.targetAngle;
+  servoState.oscillationAmp = servo.oscillation;
+  // Give it a kick
+  servoState.velocity += (servoState.targetAngle > servoState.currentAngle ? 1 : -1) * 0.02;
+
+  // Update LED target
+  const led = ledReducer(scores);
+  ledState.target = led.target;
+  ledState.flashTimer = 0.3; // flash for 300ms
+  ledState.isFlashing = true;
+
+  // Play sound
+  speaker.play(scores);
+
+  // Update HUD
+  updateHUD(data);
+}
+
+// ============================================================
+// HUD
+// ============================================================
+function buildDimBars() {
+  const container = document.getElementById('dims');
+  DIMS.forEach(dim => {
+    const row = document.createElement('div');
+    row.className = 'dim-row';
+    row.id = `dim-${dim}`;
+    row.innerHTML = `
+      <span class="dim-name">${dim}</span>
+      <div class="dim-bar-track">
+        <div class="dim-bar-fill" id="bar-${dim}"></div>
+      </div>
+      <span class="dim-val" id="val-${dim}">—</span>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function updateHUD(data) {
+  const scores = data.scores;
+
+  // Reaction card
+  const card = document.getElementById('reaction-card');
+  card.classList.add('visible', 'fresh');
+  setTimeout(() => card.classList.remove('fresh'), 1500);
+
+  const badge = document.getElementById('source-badge');
+  badge.textContent = data.source;
+  badge.className = `source-badge ${data.source}`;
+
+  document.getElementById('reaction-text').textContent =
+    `"${scores.reaction || '...'}"`;
+
+  // Dimension bars
+  DIMS.forEach(dim => {
+    const val = scores[dim] || 0;
+    const pct = Math.abs(val) * 50;
+    const isPos = val >= 0;
+    const bar = document.getElementById(`bar-${dim}`);
+    const valEl = document.getElementById(`val-${dim}`);
+    const row = document.getElementById(`dim-${dim}`);
+
+    bar.style.background = DIM_COLORS[dim];
+    if (isPos) {
+      bar.style.left = '50%';
+      bar.style.width = pct + '%';
+    } else {
+      bar.style.left = (50 - pct) + '%';
+      bar.style.width = pct + '%';
+    }
+    valEl.textContent = (val >= 0 ? '+' : '') + val.toFixed(1);
+    valEl.style.color = DIM_COLORS[dim];
+    row.classList.add('active');
+  });
+}
+
+// ============================================================
+// ANIMATION
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const time = clock.getElapsedTime();
+
+  controls.update();
+
+  // --- Servo duck: spring physics ---
+  const angleDiff = servoState.targetAngle - servoState.currentAngle;
+  servoState.velocity += angleDiff * SPRING_K;
+  servoState.velocity *= SPRING_DAMPING;
+
+  // Add oscillation (risk wiggle)
+  if (servoState.oscillationAmp > 0.001) {
+    servoState.oscillationPhase += dt * 18;
+    servoState.velocity += Math.sin(servoState.oscillationPhase) * servoState.oscillationAmp * dt * 5;
+    servoState.oscillationAmp *= servoState.oscillationDecay;
+  }
+
+  servoState.currentAngle += servoState.velocity;
+
+  // Apply rotation to disc (rotate around Y axis)
+  if (servoDisc) {
+    servoDisc.rotation.y = servoState.currentAngle;
+  }
+
+  // --- LED duck: segment brightness ---
+  if (ledState.isFlashing) {
+    ledState.flashTimer -= dt;
+    if (ledState.flashTimer <= 0) {
+      ledState.isFlashing = false;
+    }
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const seg = ledSegments[i];
+    if (!seg) continue;
+
+    let targetBrightness = ledState.target[i];
+
+    // During flash, all segments bright
+    if (ledState.isFlashing) {
+      targetBrightness = 1.0;
+    }
+
+    // Staggered lerp — each segment slightly delayed
+    const lerpSpeed = 3.0 - i * 0.15;
+    ledState.current[i] += (targetBrightness - ledState.current[i]) * lerpSpeed * dt;
+
+    const b = ledState.current[i];
+    const color = new THREE.Color().lerpColors(
+      new THREE.Color(COLORS.ledOff),
+      new THREE.Color(COLORS.ledAmber),
+      b
+    );
+    seg.material.color.copy(color);
+    seg.material.emissive.copy(color);
+    seg.material.emissiveIntensity = b * 2.5;
+  }
+
+  // Gentle idle breathing on servo disc
+  if (servoDisc && !latestScores) {
+    servoDisc.rotation.y = Math.sin(time * 0.5) * 0.05;
+  }
+
+  composer.render();
+}
+
+// ============================================================
+// TEST HELPERS
+// ============================================================
+window.sendTest = async function(source, text) {
+  try {
+    const resp = await fetch('/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, text, session_id: 'viewer-test' }),
+    });
+  } catch (e) {
+    console.error('Test eval failed:', e);
+  }
+};
+
+// ============================================================
+// RESIZE
+// ============================================================
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// ============================================================
+// GO
+// ============================================================
+init();
+</script>
+</body>
+</html>
