@@ -165,7 +165,7 @@ class ServiceProcess: ObservableObject {
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(repoRoot.path) && tmux new-session -A -s duck claude"
+            do script "cd \(repoRoot.path) && if ! tmux has-session -t duck 2>/dev/null; then tmux new-session -d -s duck -n claude 'claude'; fi && tmux set-option -t duck -w allow-rename off 2>/dev/null && tmux rename-window -t duck claude 2>/dev/null && tmux attach -t duck"
         end tell
         """
 

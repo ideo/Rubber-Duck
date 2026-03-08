@@ -1,9 +1,16 @@
 // ============================================================
-// I2S Audio — Chirp synthesis via MAX98357 DAC
+// I2S Audio — Chirp synthesis + TTS playback via MAX98357 DAC
 // ============================================================
 // Generates expressive chirps through I2S audio output.
+// When USB Audio is enabled, also mixes in TTS audio from the Mac
+// (received via AudioInputUSB defined in AudioBridge.ino).
+//
 // MAX98357 on Teensy 4.0 default I2S pins:
 //   BCLK = 21, LRCLK = 20, DIN = 7
+//
+// Audio graph:
+//   chirpWave ──→ mixer(ch0) ──→ i2sOut (speaker)
+//   usbIn    ──→ mixer(ch1) ──╯
 //
 // Chirp vocabulary:
 //   - Ascending sine sweep = positive sentiment (happy)
@@ -19,9 +26,28 @@
 AudioSynthWaveform       chirpWave;
 AudioOutputI2S           i2sOut;
 
-// --- Audio Connections ---
+#if ENABLE_USB_AUDIO
+// --- TTS Mixer: chirps + USB audio from Mac → I2S speaker ---
+AudioMixer4              i2sMixL;
+AudioMixer4              i2sMixR;
+
+// Chirp → mixer
+AudioConnection          patchChirpMixL(chirpWave, 0, i2sMixL, 0);
+AudioConnection          patchChirpMixR(chirpWave, 0, i2sMixR, 0);
+
+// USB TTS → mixer (usbIn defined in AudioBridge.ino)
+AudioConnection          patchTTSMixL(usbIn, 0, i2sMixL, 1);
+AudioConnection          patchTTSMixR(usbIn, 1, i2sMixR, 1);
+
+// Mixer → I2S output
+AudioConnection          patchMixOutL(i2sMixL, 0, i2sOut, 0);
+AudioConnection          patchMixOutR(i2sMixR, 0, i2sOut, 1);
+
+#else
+// --- Direct chirp → I2S (no USB mixing) ---
 AudioConnection          patchChirpL(chirpWave, 0, i2sOut, 0);  // Left
 AudioConnection          patchChirpR(chirpWave, 0, i2sOut, 1);  // Right (mono → stereo)
+#endif
 
 // --- Chirp State ---
 bool     i2sChirpActive = false;
@@ -39,7 +65,17 @@ void setupI2SAudio() {
   chirpWave.begin(0.0, 440, WAVEFORM_SINE);
   chirpWave.amplitude(0.0);  // Silent until chirp
 
-  Serial.println("[audio] I2S audio enabled (MAX98357)");
+  #if ENABLE_USB_AUDIO
+    // Mixer gains: chirps (ch0) + TTS from USB (ch1)
+    // TTS boosted — USB audio arrives quiet; 4.5x is the sweet spot
+    i2sMixL.gain(0, 1.0);   // chirps at full volume
+    i2sMixL.gain(1, 4.5);   // TTS loud but clean
+    i2sMixR.gain(0, 1.0);
+    i2sMixR.gain(1, 4.5);
+    Serial.println("[audio] I2S audio enabled (MAX98357) + USB TTS mixer (TTS gain 4.5x)");
+  #else
+    Serial.println("[audio] I2S audio enabled (MAX98357)");
+  #endif
 }
 
 // ============================================================
