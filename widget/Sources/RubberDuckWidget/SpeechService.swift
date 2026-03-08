@@ -4,11 +4,16 @@
 // and text-to-speech output (Boing voice). Auto-detects Teensy mic
 // if available, falls back to system default.
 //
+// TTS routing: uses `say -a <deviceID>` to target the Teensy USB Audio
+// output device directly (Teensy → I2S DAC → speaker). Falls back to
+// system default output if Teensy not available.
+//
 // Logs to ~/Library/Logs/RubberDuck.log for debugging.
 
 import Foundation
 import Speech
 import AVFoundation
+import CoreAudio
 
 @MainActor
 class SpeechService: ObservableObject {
@@ -42,6 +47,16 @@ class SpeechService: ObservableObject {
     private let maxRestartAttempts = 5
     private var wakeWordDetected = false
     private var voiceInputTimer: Task<Void, Never>?
+    private var recognitionWatchdog: Task<Void, Never>?
+    private var teensyDeviceID: AudioDeviceID?
+    private var teensyDeviceUID: String?
+    private var teensyDeviceName: String?  // CoreAudio name, used for `say -a`
+    private var ttsProcess: Process?
+
+    // Thread-safe TTS state — accessed from both MainActor and audio render thread.
+    // Separate class (not actor-isolated) so the audio tap can read it directly.
+    private class TTSGate: @unchecked Sendable { var muted = false }
+    private let ttsGate = TTSGate()
 
     // Log file
     private let logURL: URL = {
@@ -110,10 +125,11 @@ class SpeechService: ObservableObject {
 
         log("[speech] Found \(devices.count) mic(s): \(devices.map { $0.localizedName })")
 
-        // Prefer Teensy
+        // Prefer Teensy — set it as the audio engine's input device
         if let teensy = devices.first(where: { $0.localizedName.lowercased().contains("teensy") }) {
             selectedMicName = teensy.localizedName
             log("[speech] Selected Teensy mic: \(teensy.localizedName)")
+            setAudioInputDevice(name: teensy.localizedName)
             return
         }
 
@@ -124,6 +140,132 @@ class SpeechService: ObservableObject {
         } else {
             log("[speech] No microphone found!")
             lastError = "No microphone found"
+        }
+    }
+
+    /// Safe CoreAudio string property reader — avoids UnsafeMutableRawPointer
+    /// warnings from passing CFString directly to AudioObjectGetPropertyData.
+    private func coreAudioStringProperty(_ deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr, size > 0 else {
+            return nil
+        }
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<CFString>.alignment)
+        defer { buf.deallocate() }
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, buf) == noErr else {
+            return nil
+        }
+        return buf.load(as: CFString.self) as String
+    }
+
+    /// Find Teensy audio device by name and store its ID for later use.
+    /// We DON'T touch the audio engine here — accessing inputNode too early
+    /// causes it to cache the default device's format (48kHz), which then
+    /// conflicts with Teensy's 44100Hz when the engine starts.
+    private func setAudioInputDevice(name: String) {
+        var propSize: UInt32 = 0
+        var propAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        // Get all audio devices
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propAddress, 0, nil, &propSize)
+        let deviceCount = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propAddress, 0, nil, &propSize, &deviceIDs)
+
+        for deviceID in deviceIDs {
+            guard let devName = coreAudioStringProperty(deviceID, selector: kAudioObjectPropertyName) else {
+                continue
+            }
+
+            if devName.lowercased().contains("teensy") {
+                teensyDeviceID = deviceID
+                teensyDeviceName = devName
+                teensyDeviceUID = coreAudioStringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID)
+
+                log("[speech] Found Teensy audio device (ID \(deviceID), name \"\(devName)\", UID \(teensyDeviceUID ?? "?"))")
+                log("[tts] Will route TTS to Teensy via `say -a \"\(devName)\"`")
+                return
+            }
+        }
+        log("[speech] Teensy not found in CoreAudio devices")
+    }
+
+    /// Apply the stored Teensy device to the audio engine's input node.
+    /// After setting the device, we must also set the audio unit's output
+    /// stream format to match the hardware (44100Hz Float32) — otherwise
+    /// AVAudioEngine's cached 48kHz format causes -10868 on start().
+    private func applyTeensyDevice() {
+        guard let deviceID = teensyDeviceID else { return }
+
+        let audioUnit = audioEngine.inputNode.audioUnit!
+        var inputDeviceID = deviceID
+
+        // 1. Set the device
+        var status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &inputDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else {
+            log("[speech] Failed to set Teensy device: OSStatus \(status)")
+            return
+        }
+        log("[speech] Set input device to Teensy (ID \(deviceID))")
+
+        // 2. Read the device's native format from the hardware (input) side
+        var deviceFormat = AudioStreamBasicDescription()
+        var formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        status = AudioUnitGetProperty(
+            audioUnit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Input,
+            1, // Element 1 = input bus (hardware side)
+            &deviceFormat,
+            &formatSize
+        )
+        guard status == noErr else {
+            log("[speech] Could not read device format: OSStatus \(status)")
+            return
+        }
+        log("[speech] Teensy hardware: \(deviceFormat.mSampleRate)Hz, \(deviceFormat.mChannelsPerFrame)ch, \(deviceFormat.mBitsPerChannel)bit")
+
+        // 3. Set the output (software) side to Float32 at the device's sample rate.
+        //    This eliminates the 48kHz vs 44100Hz mismatch that causes -10868.
+        var outputFormat = AudioStreamBasicDescription(
+            mSampleRate: deviceFormat.mSampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: deviceFormat.mChannelsPerFrame,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Output,
+            1, // Element 1 = input bus (software side)
+            &outputFormat,
+            UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        )
+        if status == noErr {
+            log("[speech] Set software format to \(outputFormat.mSampleRate)Hz Float32 \(outputFormat.mChannelsPerFrame)ch")
+        } else {
+            log("[speech] Could not set output format: OSStatus \(status)")
         }
     }
 
@@ -144,6 +286,13 @@ class SpeechService: ObservableObject {
 
         // Cancel any existing task
         stopListening()
+
+        // Reset engine to clear cached format state from any previous device
+        audioEngine.reset()
+
+        // Apply Teensy device AFTER reset so the engine builds its graph
+        // with Teensy's native format (44100Hz) instead of system default (48kHz)
+        applyTeensyDevice()
 
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let request = recognitionRequest else {
@@ -166,20 +315,29 @@ class SpeechService: ObservableObject {
             return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { buffer, _ in
+        // Use nil format to let audio engine auto-negotiate with hardware.
+        // Gate: don't feed audio to recognition while TTS is playing — the
+        // speaker is right next to the mic and causes garbage transcripts.
+        // Captures ttsGate directly (not through self) so it's not actor-isolated.
+        let gate = ttsGate
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+            guard !gate.muted else { return }
             request.append(buffer)
         }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
-                guard let self = self else { return }
+                guard let self = self, self.isListening else { return }
+
+                // Pet the watchdog — recognition is still alive
+                self.resetRecognitionWatchdog()
 
                 if let result = result {
                     let transcript = result.bestTranscription.formattedString
                     self.processTranscript(transcript, isFinal: result.isFinal)
 
                     if result.isFinal {
-                        self.log("[speech] Final result, restarting...")
+                        self.log("[speech] Final, restarting...")
                         self.restartAttempts = 0
                         self.wakeWordDetected = false
                         self.restartListening()
@@ -187,8 +345,12 @@ class SpeechService: ObservableObject {
                 }
 
                 if let error = error {
-                    self.log("[speech] Recognition error: \(error.localizedDescription)")
-                    self.lastError = error.localizedDescription
+                    let msg = error.localizedDescription
+                    // Don't log cancellation errors — they're expected after sendVoiceCommand
+                    if !msg.contains("canceled") {
+                        self.log("[speech] Recognition error: \(msg)")
+                    }
+                    self.lastError = msg
                     self.wakeWordDetected = false
                     self.restartListening()
                 }
@@ -209,6 +371,8 @@ class SpeechService: ObservableObject {
     }
 
     func stopListening() {
+        recognitionWatchdog?.cancel()
+        recognitionWatchdog = nil
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -218,6 +382,22 @@ class SpeechService: ObservableObject {
         recognitionRequest = nil
         recognitionTask = nil
         isListening = false
+    }
+
+    /// Watchdog: if recognition goes silent for 10s, restart it.
+    /// SFSpeechRecognizer sometimes stops producing partials after a short
+    /// utterance (e.g. just "Ducky") without giving a final or error.
+    private func resetRecognitionWatchdog() {
+        recognitionWatchdog?.cancel()
+        recognitionWatchdog = Task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
+            if !Task.isCancelled && self.isListening {
+                self.log("[speech] Watchdog: recognition silent for 10s, restarting...")
+                self.wakeWordDetected = false
+                self.restartAttempts = 0
+                self.restartListening()
+            }
+        }
     }
 
     private func restartListening() {
@@ -307,6 +487,21 @@ class SpeechService: ObservableObject {
             wakeWordDetected = true
             onWakeWord?()
             log("[speech] Wake word detected!")
+
+            // Start a 3s wake-word timeout. If no command text arrives,
+            // give up and restart listening. User can say "ducky" again.
+            voiceInputTimer?.cancel()
+            voiceInputTimer = Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s
+                if !Task.isCancelled && self.wakeWordDetected {
+                    self.log("[speech] No command after wake word, restarting...")
+                    self.speak("Hmm?")
+                    self.wakeWordDetected = false
+                    self.lastHeard = ""
+                    self.restartAttempts = 0
+                    self.restartListening()
+                }
+            }
         }
 
         // Update what we're showing
@@ -316,16 +511,17 @@ class SpeechService: ObservableObject {
             return
         }
 
-        // Debounce: wait for the user to stop talking before sending.
-        // Cancel previous timer, start new one. On final result, send immediately.
+        // We have command text — cancel the wake-word timeout and debounce instead.
         voiceInputTimer?.cancel()
 
         if isFinal {
             sendVoiceCommand(afterWake)
         } else {
-            // Wait 1.5s of silence before treating partial as final
+            // Wait 2.5s of silence before treating partial as final.
+            // 1.5s was too short — "ducky let's code" would send just "let's"
+            // because the partial arrived before "code" was recognized.
             voiceInputTimer = Task {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if !Task.isCancelled {
                     sendVoiceCommand(afterWake)
                 }
@@ -334,45 +530,96 @@ class SpeechService: ObservableObject {
     }
 
     private func sendVoiceCommand(_ text: String) {
-        // Reset wake word state for next cycle
+        // Kill current recognition FIRST to prevent double-send.
+        // The dying task may fire final/error callbacks — guard with wakeWordDetected.
         wakeWordDetected = false
         pendingTranscript = ""
+        voiceInputTimer?.cancel()
+        stopListening()
 
         let quitWords = ["quit", "exit", "stop", "bye"]
         if quitWords.contains(where: { text.lowercased() == $0 }) {
             speak("Quack! See you later.")
+            restartAfterTTS()
             return
         }
 
         log("[speech] Sending: \(text)")
         speak("On it.")
         onVoiceInput?(text)
+
+        // Restart listening after TTS finishes (async)
+        restartAfterTTS()
     }
 
-    // MARK: - TTS (macOS `say` command — reliable, supports Boing)
+    /// Restart listening after a short delay (lets TTS finish + unmute).
+    private func restartAfterTTS() {
+        Task {
+            // Wait for TTS to finish — poll the gate
+            while ttsGate.muted {
+                try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            }
+            self.restartAttempts = 0
+            self.startListening()
+        }
+    }
+
+    // MARK: - TTS (`say -a <deviceID>` → Teensy USB Audio → I2S speaker)
 
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
         log("[tts] \(text)")
 
-        // Use macOS `say` command — works reliably across all macOS versions
-        // and supports fun voices like Boing that AVSpeechSynthesizer doesn't.
+        // Stop any current speech to prevent pileup
+        stopSpeaking()
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        task.arguments = ["-v", ttsVoice, text]
+
+        // Route to Teensy speaker via `-a <name>` if available.
+        // Note: `say -a` uses its OWN device IDs (not CoreAudio AudioDeviceID),
+        // but it also accepts device names — use the name for reliability.
+        if let name = teensyDeviceName {
+            task.arguments = ["-v", ttsVoice, "-a", name, text]
+        } else {
+            task.arguments = ["-v", ttsVoice, text]
+        }
+
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
 
-        // Run in background to avoid blocking main thread
+        // Mute mic input while speaking to prevent feedback
+        // (speaker is right next to electret mic on the duck)
+        ttsGate.muted = true
+        ttsProcess = task
+
+        let gate = ttsGate
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 try task.run()
+                task.waitUntilExit()
             } catch {
                 Task { @MainActor in
-                    self?.log("[tts] say command failed: \(error)")
+                    self?.log("[tts] say failed: \(error)")
+                }
+            }
+            // Unmute after say exits + brief delay for USB audio buffer drain
+            Thread.sleep(forTimeInterval: 0.3)
+            gate.muted = false
+            Task { @MainActor in
+                if self?.ttsProcess === task {
+                    self?.ttsProcess = nil
                 }
             }
         }
+    }
+
+    func stopSpeaking() {
+        if let process = ttsProcess, process.isRunning {
+            process.terminate()
+            ttsProcess = nil
+        }
+        ttsGate.muted = false
     }
 
     // MARK: - Permission Gate
@@ -380,15 +627,8 @@ class SpeechService: ObservableObject {
     func askPermission(toolName: String, options: [String] = []) {
         permissionOptionCount = options.count
 
-        var prompt = "Claude wants to use \(toolName). Yes to allow"
-        if !options.isEmpty {
-            let ordinalWords = ["first", "second", "third", "fourth"]
-            let optionParts = options.prefix(4).enumerated().map { (i, label) in
-                "\(ordinalWords[i]) to \(label)"
-            }
-            prompt += ", \(optionParts.joined(separator: ", "))"
-        }
-        prompt += ", or no to deny."
+        // Keep it short — the duck asks, the human decides
+        let prompt = "\(toolName). Allow?"
 
         lastPermissionPrompt = prompt
         isWaitingForPermissionResponse = true

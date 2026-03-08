@@ -1,31 +1,31 @@
 // ============================================================
-// Audio Bridge — USB Audio from onboard mic
+// Audio Bridge — Bidirectional USB Audio
 // ============================================================
-// Makes the Teensy appear as a USB microphone to the host Mac.
-// Requires USB Type set to "Serial + MIDI + Audio" in Arduino IDE.
+// Makes the Teensy appear as a USB audio device to the host Mac:
+//   OUT (mic):  AudioInputAnalog(A0) → gain → AudioOutputUSB
+//   IN  (TTS):  AudioInputUSB → mixed with chirps → I2S speaker
 //
-// Audio pipeline:
-//   AudioInputAnalog(A0) → gain → AudioOutputUSB
-//
-// The Mac sees "Teensy" as an audio input device.
-// speech.py auto-detects it and uses it for wake word + STT.
+// Requires USB Type "Serial + MIDI + Audio" in Arduino IDE.
+// The AudioInputUSB (usbIn) is wired to the I2S mixer in I2SAudio.ino.
 // ============================================================
 
 #if ENABLE_USB_AUDIO
 
 #include <Audio.h>
 
-// --- Audio Objects ---
+// --- USB Audio Objects ---
 AudioInputAnalog     audioIn(MIC_PIN);       // Analog mic on A0
 AudioAmplifier       audioGain;              // Adjustable gain stage
-AudioOutputUSB       audioOut;               // USB Audio output to Mac
+AudioOutputUSB       audioOut;               // Mic → Mac (USB output)
+AudioInputUSB        usbIn;                  // Mac → Teensy (USB input, for TTS)
 AudioAnalyzePeak     audioPeak;              // For level monitoring
 
-// --- Audio Connections (patchcords) ---
+// --- Mic → USB (patchcords) ---
 AudioConnection      patchCord1(audioIn, 0, audioGain, 0);
 AudioConnection      patchCord2(audioGain, 0, audioOut, 0);   // Left channel
 AudioConnection      patchCord3(audioGain, 0, audioOut, 1);   // Right channel (mono→stereo)
 AudioConnection      patchCord4(audioGain, 0, audioPeak, 0);  // Level monitor
+// usbIn → I2S mixer connections are in I2SAudio.ino
 
 // --- Audio State ---
 float    audioCurrentGain = MIC_DEFAULT_GAIN;
@@ -37,7 +37,7 @@ unsigned long lastLevelReport = 0;
 // Setup (called from main setup())
 // ============================================================
 void setupAudioBridge() {
-  AudioMemory(12);
+  // AudioMemory called in main setup() to avoid double-init with I2S Audio
 
   audioGain.gain(audioCurrentGain);
   Serial.println("[audio] USB Audio bridge enabled (mic on A" + String(MIC_PIN - A0) + ")");
@@ -77,29 +77,10 @@ float getMicLevel() {
 // VU Meter mode (optional — shows audio level on LED bar when idle)
 // ============================================================
 void showVUMeter() {
-  if (!ENABLE_LED_DUCK) return;
-
-  // Map audio level (0.0-1.0) to LED count (0-NUM_LEDS)
-  int count = (int)(audioLevel * NUM_LEDS * 3);  // multiply for sensitivity
-  count = constrain(count, 0, NUM_LEDS);
-
-  for (int i = 0; i < NUM_LEDS; i++) {
-    if (i < count) {
-      // Green → yellow → red gradient
-      uint8_t r, g;
-      if (i < NUM_LEDS / 3) {
-        r = 0; g = 150;                    // Green
-      } else if (i < 2 * NUM_LEDS / 3) {
-        r = 200; g = 200;                  // Yellow
-      } else {
-        r = 255; g = 40;                   // Red
-      }
-      strip.setPixelColor(i, strip.Color(r, g, 0));
-    } else {
-      strip.setPixelColor(i, strip.Color(0, 0, 0));
-    }
-  }
-  strip.show();
+  // Requires LED hardware — no-op without it
+  #if !ENABLE_LED_DUCK
+    return;
+  #endif
 }
 
 #else

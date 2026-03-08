@@ -55,9 +55,14 @@ struct RubberDuckWidgetApp: App {
 
         // Wake word → duck acknowledges
         speechService.onWakeWord = { [weak speechService] in
-            // Optional: small audio cue could go here
             print("[app] Wake word detected")
             _ = speechService // retain
+        }
+
+        // Teensy serial → log incoming messages
+        serialManager.onLineReceived = { line in
+            // Debug output from Teensy — just log it
+            print("[serial] \(line)")
         }
 
         // Poll until permissions are granted, then start listening

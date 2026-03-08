@@ -13,7 +13,11 @@ class SerialManager: ObservableObject {
 
     private var fileDescriptor: Int32 = -1
     private var reconnectTask: Task<Void, Never>?
+    private var readTask: Task<Void, Never>?
     private let baudRate: speed_t = 9600
+
+    /// Called when Teensy sends a line (e.g. "Y" or "N" for permission)
+    var onLineReceived: ((String) -> Void)?
 
     init() {
         connect()
@@ -22,6 +26,7 @@ class SerialManager: ObservableObject {
 
     deinit {
         reconnectTask?.cancel()
+        readTask?.cancel()
         if fileDescriptor >= 0 {
             close(fileDescriptor)
         }
@@ -99,6 +104,7 @@ class SerialManager: ObservableObject {
         isConnected = true
         portName = path
         print("[serial] Connected to \(path)")
+        startReading()
     }
 
     // MARK: - Send
@@ -135,6 +141,42 @@ class SerialManager: ObservableObject {
         let data = Array(msg.utf8)
         data.withUnsafeBufferPointer { ptr in
             _ = write(fileDescriptor, ptr.baseAddress, data.count)
+        }
+    }
+
+    // MARK: - Read
+
+    private func startReading() {
+        readTask?.cancel()
+        let fd = fileDescriptor
+        readTask = Task.detached { [weak self] in
+            var buffer = [UInt8](repeating: 0, count: 256)
+            var lineBuffer = ""
+
+            while !Task.isCancelled && fd >= 0 {
+                let bytesRead = read(fd, &buffer, buffer.count)
+                if bytesRead > 0 {
+                    let chunk = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
+                    lineBuffer += chunk
+
+                    // Process complete lines
+                    while let newlineRange = lineBuffer.range(of: "\n") {
+                        let line = String(lineBuffer[lineBuffer.startIndex..<newlineRange.lowerBound])
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        lineBuffer = String(lineBuffer[newlineRange.upperBound...])
+
+                        if !line.isEmpty {
+                            await MainActor.run {
+                                self?.onLineReceived?(line)
+                            }
+                        }
+                    }
+                } else if bytesRead == 0 {
+                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                } else {
+                    break // Read error — connection lost
+                }
+            }
         }
     }
 
