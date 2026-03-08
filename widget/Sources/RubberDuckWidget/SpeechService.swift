@@ -351,22 +351,32 @@ class SpeechService: ObservableObject {
 
     // MARK: - TTS (macOS `say` command — reliable, supports Boing)
 
+    private var currentSpeechProcess: Process?
+
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
         log("[tts] \(text)")
 
-        // Use macOS `say` command — works reliably across all macOS versions
-        // and supports fun voices like Boing that AVSpeechSynthesizer doesn't.
+        // Kill any currently speaking process to prevent pileup
+        stopSpeaking()
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         task.arguments = ["-v", ttsVoice, text]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
 
-        // Run in background to avoid blocking main thread
+        currentSpeechProcess = task
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 try task.run()
+                task.waitUntilExit()
+                Task { @MainActor in
+                    if self?.currentSpeechProcess === task {
+                        self?.currentSpeechProcess = nil
+                    }
+                }
             } catch {
                 Task { @MainActor in
                     self?.log("[tts] say command failed: \(error)")
@@ -375,20 +385,20 @@ class SpeechService: ObservableObject {
         }
     }
 
+    func stopSpeaking() {
+        if let proc = currentSpeechProcess, proc.isRunning {
+            proc.terminate()
+            currentSpeechProcess = nil
+        }
+    }
+
     // MARK: - Permission Gate
 
     func askPermission(toolName: String, options: [String] = []) {
         permissionOptionCount = options.count
 
-        var prompt = "Claude wants to use \(toolName). Yes to allow"
-        if !options.isEmpty {
-            let ordinalWords = ["first", "second", "third", "fourth"]
-            let optionParts = options.prefix(4).enumerated().map { (i, label) in
-                "\(ordinalWords[i]) to \(label)"
-            }
-            prompt += ", \(optionParts.joined(separator: ", "))"
-        }
-        prompt += ", or no to deny."
+        // Keep it short — the duck asks, the human decides
+        let prompt = "\(toolName). Allow?"
 
         lastPermissionPrompt = prompt
         isWaitingForPermissionResponse = true

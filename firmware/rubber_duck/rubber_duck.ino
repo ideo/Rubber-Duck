@@ -18,7 +18,6 @@
 
 #include "Config.h"
 #include <PWMServo.h>
-#include <Adafruit_NeoPixel.h>
 
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
@@ -26,24 +25,22 @@ bool newEvalAvailable = false;
 
 // --- Hardware ---
 PWMServo servo;
-Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // --- Timing ---
 unsigned long lastServoUpdate = 0;
-unsigned long lastLEDUpdate = 0;
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
 
   // Servo
-  if (ENABLE_SERVO_DUCK) {
+  #if ENABLE_SERVO_DUCK
     servo.attach(SERVO_PIN);
     servo.write(SERVO_CENTER);
     Serial.println("[duck] Servo duck enabled on pin " + String(SERVO_PIN));
-  }
+  #endif
 
-  // LEDs
-  if (ENABLE_LED_DUCK) {
+  // LEDs + Piezo
+  #if ENABLE_LED_DUCK
     strip.begin();
     strip.setBrightness(LED_BRIGHTNESS);
     strip.clear();
@@ -52,7 +49,10 @@ void setup() {
 
     pinMode(PIEZO_PIN, OUTPUT);
     Serial.println("[duck] Piezo enabled on pin " + String(PIEZO_PIN));
-  }
+  #endif
+
+  // I2S Audio (MAX98357 chirps)
+  setupI2SAudio();
 
   // USB Audio bridge (mic → USB)
   setupAudioBridge();
@@ -75,31 +75,48 @@ void loop() {
   if (newEvalAvailable) {
     newEvalAvailable = false;
 
-    if (ENABLE_SERVO_DUCK) {
+    #if ENABLE_SERVO_DUCK
       ServoTarget target = servoReducer(latestScores);
       setServoTarget(target);
-    }
+    #endif
 
-    if (ENABLE_LED_DUCK) {
-      LEDTarget target = ledReducer(latestScores);
-      setLEDTarget(target);
-      playChirp(target);
+    #if ENABLE_LED_DUCK
+    {
+      LEDTarget ledTarget = ledReducer(latestScores);
+      setLEDTarget(ledTarget);
+      playChirp(ledTarget);
     }
+    #endif
+
+    // I2S chirp (independent of LED duck)
+    #if ENABLE_I2S_AUDIO
+    {
+      ChirpTarget chirp = chirpReducer(latestScores);
+      playI2SChirp(chirp);
+    }
+    #endif
 
     // Debug output
     printEval(latestScores);
   }
 
   // Fixed-rate updates
-  if (ENABLE_SERVO_DUCK && (now - lastServoUpdate >= SERVO_UPDATE_MS)) {
+  #if ENABLE_SERVO_DUCK
+  if (now - lastServoUpdate >= SERVO_UPDATE_MS) {
     lastServoUpdate = now;
     updateServo();
   }
+  #endif
 
-  if (ENABLE_LED_DUCK && (now - lastLEDUpdate >= SERVO_UPDATE_MS)) {
+  #if ENABLE_LED_DUCK
+  if (now - lastLEDUpdate >= SERVO_UPDATE_MS) {
     lastLEDUpdate = now;
     updateLEDs();
   }
+  #endif
+
+  // I2S audio chirp update
+  updateI2SAudio();
 
   // USB Audio bridge
   updateAudioBridge();
@@ -107,7 +124,7 @@ void loop() {
 
 // --- Startup animation: sweep servo + fill LEDs ---
 void startupAnimation() {
-  if (ENABLE_LED_DUCK) {
+  #if ENABLE_LED_DUCK
     for (int i = 0; i < NUM_LEDS; i++) {
       strip.setPixelColor(i, strip.Color(255, 153, 34));  // Amber
       strip.show();
@@ -119,25 +136,29 @@ void startupAnimation() {
       strip.show();
       delay(40);
     }
-  }
+  #endif
 
-  if (ENABLE_SERVO_DUCK) {
+  #if ENABLE_SERVO_DUCK
     servo.write(SERVO_CENTER - 30);
     delay(300);
     servo.write(SERVO_CENTER + 30);
     delay(300);
     servo.write(SERVO_CENTER);
     delay(200);
-  }
+  #endif
 
-  if (ENABLE_LED_DUCK) {
-    // Happy chirp
+  #if ENABLE_LED_DUCK
+    // Happy chirp (piezo)
     tone(PIEZO_PIN, 400, 100);
     delay(120);
     tone(PIEZO_PIN, 600, 100);
     delay(120);
     noTone(PIEZO_PIN);
-  }
+  #endif
+
+  #if ENABLE_I2S_AUDIO
+    playStartupChirp();
+  #endif
 }
 
 // --- Debug print ---

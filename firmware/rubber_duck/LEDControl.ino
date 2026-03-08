@@ -8,6 +8,8 @@
 //   - Flash: brief all-on burst when new eval arrives
 //   - Sound: ascending chirp (good) / descending buzz (bad)
 
+#if ENABLE_LED_DUCK
+
 // --- LED State ---
 float    ledCurrentBrightness[10] = {0};
 float    ledTargetBrightness[10]  = {0};
@@ -144,3 +146,5 @@ void updateLEDs() {
     }
   }
 }
+
+#endif // ENABLE_LED_DUCK
