@@ -42,6 +42,22 @@ Claude Code    Dashboard/    Teensy 4.0
 
 ## Hardware
 
+### Bill of Materials
+
+| Component | Qty | Role | Notes |
+|-----------|-----|------|-------|
+| **Teensy 4.0** | 1 | Main controller | USB Type: Serial + MIDI + Audio |
+| **MG90S micro servo** | 1 | Sentiment tilt | Pin 3 (PWM), 4.8V from USB |
+| **MAX98357 I2S DAC** | 1 | Audio amplifier | BCLK=21, LRCLK=20, DIN=7 |
+| **Mini oval speaker** 8Ω 1W | 1 | Chirps + TTS voice | [Adafruit 3923](https://www.adafruit.com/product/3923) |
+| **Electret microphone** (with breakout/amp) | 1 | Voice input to Mac | Pin A0 (analog) → USB Audio |
+| **Tactile button** | 1 | Mode toggle (critic/relay) | Pin 2 (internal pullup) |
+| **JST PH 2-pin cable** (male, 20cm) | 1 | Speaker connector | [Adafruit 3814](https://www.adafruit.com/product/3814) |
+| **JST PH 2-pin jack** (PCB mount) | 1 | Speaker receptacle | [Adafruit 4714](https://www.adafruit.com/product/4714) |
+| **Breadboard** | 1 | Prototyping base | Half-size works |
+| **Micro USB cable** | 1 | Power + data | Teensy to Mac |
+| **Hookup wire** | — | Connections | 22 AWG solid core |
+
 ### Current Build
 
 | Component | Role | Connection |
