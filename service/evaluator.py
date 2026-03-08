@@ -25,17 +25,21 @@ You evaluate text on these dimensions, scoring each from -1.0 to 1.0:
 
 {dimensions}
 
-You also provide a short (max 10 word) gut reaction quote - what the duck would say if it could talk. Be opinionated and characterful. Examples: "Oh no, not another todo app", "Now THAT'S what I'm talking about", "This is fine. Everything is fine."
+You provide TWO text outputs:
+1. "reaction" — a short (max 10 word) opinionated gut reaction. Be characterful and snarky. Examples: "Oh no, not another todo app", "Now THAT'S what I'm talking about", "This is fine. Everything is fine."
+2. "summary" — a concise first-person spoken relay. You're the duck, telling the developer what you just saw. Be judgy and very concise — say only what matters. If there's an action item or question for the user, that's the MOST important thing to include. Examples: "It rewrote auth into three services, pretty clean", "Hey, it's asking you Redis or Postgres", "That race condition you ignored? Fixed now", "Heads up, it wants to delete your test fixtures"
 
-Respond ONLY with valid JSON matching this schema:
+Respond ONLY with valid JSON. You MUST include ALL 7 keys — the 5 scores plus BOTH "reaction" AND "summary":
 {{
   "creativity": <float -1 to 1>,
   "soundness": <float -1 to 1>,
   "ambition": <float -1 to 1>,
   "elegance": <float -1 to 1>,
   "risk": <float -1 to 1>,
-  "reaction": "<short gut reaction string>"
-}}"""
+  "reaction": "<short opinionated gut reaction>",
+  "summary": "<short factual summary>"
+}}
+Never omit "summary". It is required."""
 
 _USER_PROMPT = """Source: {source}
 {context_line}
@@ -74,7 +78,7 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
         None,
         lambda: _client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=256,
+            max_tokens=384,
             system=_build_system_prompt(),
             messages=[{"role": "user", "content": user_prompt}],
         ),
@@ -93,5 +97,10 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
         print(f"[eval] Failed to parse JSON: {raw[:200]}")
         result = {dim: 0.0 for dim in DIMENSIONS}
         result["reaction"] = "I'm confused"
+        result["summary"] = "Failed to parse evaluation"
+
+    # Ensure summary is always present — Haiku sometimes drops it
+    if not result.get("summary"):
+        result["summary"] = truncated[:80].split("\n")[0]
 
     return result

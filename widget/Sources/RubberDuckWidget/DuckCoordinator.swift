@@ -11,6 +11,7 @@ class DuckCoordinator: ObservableObject {
     @Published var expression = DuckExpression()
     @Published var showReaction = false
     @Published var permissionWobble = false
+    @Published var mode: DuckMode = .critic
 
     private let evalService: EvalService
     private let speechService: SpeechService
@@ -34,10 +35,26 @@ class DuckCoordinator: ObservableObject {
             serialManager.sendScores(scores, source: evalService.source)
         }
 
-        // Speak the reaction
-        if !evalService.reaction.isEmpty {
-            speechService.speak(evalService.reaction)
+        // Speak based on current mode
+        // Relay mode: only speak Claude's output, not the user's (you know what you said)
+        let isUserEval = evalService.source == "user"
+        let textToSpeak: String
+        switch mode {
+        case .critic:
+            textToSpeak = evalService.reaction
+        case .relay:
+            textToSpeak = isUserEval ? "" : evalService.summary
         }
+        if !textToSpeak.isEmpty {
+            speechService.speak(textToSpeak)
+        }
+    }
+
+    /// Toggle between critic and relay mode. Speaks the new mode name as confirmation.
+    func toggleMode() {
+        mode = (mode == .critic) ? .relay : .critic
+        let label = mode == .critic ? "Critic mode" : "Relay mode"
+        speechService.speak(label)
     }
 
     /// Called when permission state changes.

@@ -16,6 +16,9 @@ class SerialManager: ObservableObject {
     /// Called when Teensy sends a line (e.g. "PONG" for ping).
     var onLineReceived: ((String) -> Void)?
 
+    /// Called when Teensy sends "MODE" (physical button press).
+    var onModeToggle: (() -> Void)?
+
     init(transport: DeviceTransport? = nil) {
         let t = transport ?? {
             let s = SerialTransport()
@@ -27,7 +30,11 @@ class SerialManager: ObservableObject {
         // Forward line events from transport
         t.onLineReceived = { [weak self] line in
             Task { @MainActor in
-                self?.onLineReceived?(line)
+                if line == "MODE" {
+                    self?.onModeToggle?()
+                } else {
+                    self?.onLineReceived?(line)
+                }
             }
         }
 

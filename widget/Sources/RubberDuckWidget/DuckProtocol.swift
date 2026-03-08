@@ -15,6 +15,7 @@ struct EvalScores: Codable, Equatable {
     let elegance: Double
     let risk: Double
     let reaction: String?
+    let summary: String?      // Factual summary (relay mode)
 }
 
 // MARK: - Enums
@@ -29,6 +30,12 @@ enum PermissionStatus: String, Codable {
     case allow
     case deny
     case timeout
+}
+
+/// Voice output mode — controls which eval text the duck speaks.
+enum DuckMode: String, CaseIterable {
+    case critic   // Speak opinionated reaction (default)
+    case relay    // Speak factual summary
 }
 
 // MARK: - Inbound Messages (service → widget via WebSocket)

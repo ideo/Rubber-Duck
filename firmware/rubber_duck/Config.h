@@ -29,6 +29,10 @@
 #define NUM_LEDS         10   // 10-segment LED bar graph
 #define LED_BRIGHTNESS   80   // Global brightness (0-255)
 
+// --- Button Config ---
+#define BUTTON_PIN       2    // Mode toggle button (digital input, internal pullup)
+#define BUTTON_DEBOUNCE_MS 200
+
 // --- Serial Config ---
 #define SERIAL_BAUD      9600
 

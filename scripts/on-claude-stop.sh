@@ -14,6 +14,16 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   exit 0
 fi
 
+# If last_assistant_message is missing, read from transcript JSONL
+# Content can be a string or array of content blocks — handle both in one jq pass
+if [ -z "$LAST_MESSAGE" ] || [ "$LAST_MESSAGE" = "null" ]; then
+  if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+    LAST_MESSAGE=$(tail -r "$TRANSCRIPT_PATH" \
+      | jq -r 'select(.type=="assistant") | .message.content | if type=="array" then [.[] | select(.type=="text") | .text] | join(" ") elif type=="string" then . else empty end' 2>/dev/null \
+      | head -1)
+  fi
+fi
+
 # Skip empty responses
 if [ -z "$LAST_MESSAGE" ] || [ "$LAST_MESSAGE" = "null" ]; then
   exit 0
@@ -22,7 +32,9 @@ fi
 # Try to grab the last user message from transcript for context
 LAST_USER=""
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-  LAST_USER=$(jq -r 'select(.type=="human") | .message.content' "$TRANSCRIPT_PATH" 2>/dev/null | tail -1)
+  LAST_USER=$(tail -r "$TRANSCRIPT_PATH" \
+    | jq -r 'select(.type=="human") | .message.content | if type=="array" then [.[] | select(.type=="text") | .text] | join(" ") elif type=="string" then . else empty end' 2>/dev/null \
+    | head -1)
 fi
 
 PAYLOAD=$(jq -n \

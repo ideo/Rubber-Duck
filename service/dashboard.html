@@ -77,8 +77,14 @@
     font-size: 1.2rem;
     color: #f0c040;
     font-style: italic;
-    margin-bottom: 16px;
+    margin-bottom: 4px;
     min-height: 1.5em;
+  }
+  .summary {
+    font-size: 0.85rem;
+    color: #8899aa;
+    margin-bottom: 12px;
+    min-height: 1.2em;
   }
 
   .preview {
@@ -199,6 +205,7 @@
       <span class="eval-time" id="evalTime"></span>
     </div>
     <div class="reaction" id="reaction"></div>
+    <div class="summary" id="summary"></div>
     <div class="preview" id="preview"></div>
     <div id="dimensions"></div>
   </div>
@@ -267,8 +274,9 @@ function renderEval(data) {
   const t = new Date(data.timestamp);
   document.getElementById("evalTime").textContent = t.toLocaleTimeString();
 
-  // Reaction quote
+  // Reaction quote + summary
   document.getElementById("reaction").textContent = `"${data.scores.reaction || "..."}"`;
+  document.getElementById("summary").textContent = data.scores.summary || "";
 
   // Preview
   document.getElementById("preview").textContent = data.text_preview;

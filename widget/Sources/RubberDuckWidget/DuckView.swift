@@ -92,7 +92,7 @@ struct DuckView: View {
         .onAppear {
             isBreathing = true
         }
-        .onChange(of: evalService.scores?.reaction) {
+        .onChange(of: evalService.evalCount) {
             coordinator.handleNewEval()
         }
         .onChange(of: evalService.permissionRequestId) {
@@ -199,6 +199,13 @@ struct DuckView: View {
         } else {
             Button("Start Listening") { speechService.startListening() }
         }
+
+        Divider()
+
+        Button(coordinator.mode == .critic ? "Switch to Relay Mode" : "Switch to Critic Mode") {
+            coordinator.toggleMode()
+        }
+        Text("Mode: \(coordinator.mode == .critic ? "Critic" : "Relay")")
 
         Divider()
 

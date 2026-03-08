@@ -47,8 +47,8 @@ async def handle_evaluate(request: web.Request) -> web.Response:
 
     await broadcast(result)
 
-    print(f"[{source}] {scores.get('reaction', '...')}  |  "
-          + "  ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if k != "reaction"))
+    print(f"[{source}] {scores.get('reaction', '...')}  |  {scores.get('summary', '')}  |  "
+          + "  ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if k not in ('reaction', 'summary')))
 
     return web.json_response(result)
 

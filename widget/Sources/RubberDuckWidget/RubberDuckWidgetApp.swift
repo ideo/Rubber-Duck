@@ -76,8 +76,12 @@ struct RubberDuckWidgetApp: App {
 
         // Teensy serial → log incoming messages
         serialManager.onLineReceived = { line in
-            // Debug output from Teensy — just log it
             print("[serial] \(line)")
+        }
+
+        // Teensy mode button → toggle coordinator mode
+        serialManager.onModeToggle = { [weak coordinator] in
+            coordinator?.toggleMode()
         }
 
         // Poll until permissions are granted, then start listening

@@ -66,6 +66,10 @@ void setup() {
   // USB Audio bridge (mic → USB)
   setupAudioBridge();
 
+  // Mode toggle button
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("[duck] Mode button on pin " + String(BUTTON_PIN));
+
   // Startup animation
   startupAnimation();
 
@@ -79,6 +83,13 @@ void loop() {
 
   // Check for incoming serial data
   readSerial();
+
+  // Check mode toggle button (sends MODE to widget via serial)
+  static unsigned long lastButtonPress = 0;
+  if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress) > BUTTON_DEBOUNCE_MS) {
+    lastButtonPress = now;
+    Serial.println("MODE");
+  }
 
   // Process new evaluation if available
   if (newEvalAvailable) {

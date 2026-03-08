@@ -12,6 +12,7 @@ class EvalService: ObservableObject {
     // Current state
     @Published var scores: EvalScores?
     @Published var reaction: String = ""
+    @Published var summary: String = ""
     @Published var source: String = ""
     @Published var isConnected: Bool = false
 
@@ -20,6 +21,9 @@ class EvalService: ObservableObject {
     @Published var permissionTool: String = ""
     @Published var permissionOptions: [String] = []
     @Published var permissionRequestId: Int = 0
+
+    // Eval counter — increments on every eval so onChange always fires
+    @Published var evalCount: Int = 0
 
     // Computed
     @Published var sentiment: Double = 0.0
@@ -51,7 +55,9 @@ class EvalService: ObservableObject {
             guard let newScores = result.scores else { return }
             scores = newScores
             reaction = newScores.reaction ?? ""
+            summary = newScores.summary ?? ""
             source = result.source ?? ""
+            evalCount += 1
 
             sentiment = (
                 newScores.soundness * 0.3 +
