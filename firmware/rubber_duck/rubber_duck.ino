@@ -19,6 +19,10 @@
 #include "Config.h"
 #include <PWMServo.h>
 
+#if ENABLE_I2S_AUDIO || ENABLE_USB_AUDIO
+#include <Audio.h>
+#endif
+
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
@@ -49,6 +53,11 @@ void setup() {
 
     pinMode(PIEZO_PIN, OUTPUT);
     Serial.println("[duck] Piezo enabled on pin " + String(PIEZO_PIN));
+  #endif
+
+  // Audio subsystem — shared memory for I2S output + USB mic
+  #if ENABLE_I2S_AUDIO || ENABLE_USB_AUDIO
+    AudioMemory(20);
   #endif
 
   // I2S Audio (MAX98357 chirps)

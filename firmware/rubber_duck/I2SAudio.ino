@@ -34,7 +34,7 @@ int      i2sChirpDuration = CHIRP_DURATION;
 // Setup (called from main setup())
 // ============================================================
 void setupI2SAudio() {
-  AudioMemory(8);
+  // AudioMemory called in main setup() to avoid double-init with USB Audio
 
   chirpWave.begin(0.0, 440, WAVEFORM_SINE);
   chirpWave.amplitude(0.0);  // Silent until chirp

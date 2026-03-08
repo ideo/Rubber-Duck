@@ -9,6 +9,7 @@
 import Foundation
 import Speech
 import AVFoundation
+import CoreAudio
 
 @MainActor
 class SpeechService: ObservableObject {
@@ -42,6 +43,7 @@ class SpeechService: ObservableObject {
     private let maxRestartAttempts = 5
     private var wakeWordDetected = false
     private var voiceInputTimer: Task<Void, Never>?
+    private var teensyDeviceID: AudioDeviceID?
 
     // Log file
     private let logURL: URL = {
@@ -110,10 +112,11 @@ class SpeechService: ObservableObject {
 
         log("[speech] Found \(devices.count) mic(s): \(devices.map { $0.localizedName })")
 
-        // Prefer Teensy
+        // Prefer Teensy — set it as the audio engine's input device
         if let teensy = devices.first(where: { $0.localizedName.lowercased().contains("teensy") }) {
             selectedMicName = teensy.localizedName
             log("[speech] Selected Teensy mic: \(teensy.localizedName)")
+            setAudioInputDevice(name: teensy.localizedName)
             return
         }
 
@@ -124,6 +127,114 @@ class SpeechService: ObservableObject {
         } else {
             log("[speech] No microphone found!")
             lastError = "No microphone found"
+        }
+    }
+
+    /// Find Teensy audio device by name and store its ID for later use.
+    /// We DON'T touch the audio engine here — accessing inputNode too early
+    /// causes it to cache the default device's format (48kHz), which then
+    /// conflicts with Teensy's 44100Hz when the engine starts.
+    private func setAudioInputDevice(name: String) {
+        var propSize: UInt32 = 0
+        var propAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        // Get all audio devices
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propAddress, 0, nil, &propSize)
+        let deviceCount = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propAddress, 0, nil, &propSize, &deviceIDs)
+
+        for deviceID in deviceIDs {
+            // Get device name via C string (avoids CFString UnsafeMutableRawPointer warning)
+            var nameAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioObjectPropertyName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var deviceName: CFString = "" as CFString
+            var nameSize: UInt32 = UInt32(MemoryLayout<CFString>.size)
+            AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &deviceName)
+
+            if (deviceName as String).lowercased().contains("teensy") {
+                teensyDeviceID = deviceID
+                log("[speech] Found Teensy audio device (ID \(deviceID))")
+                return
+            }
+        }
+        log("[speech] Teensy not found in CoreAudio devices")
+    }
+
+    /// Apply the stored Teensy device to the audio engine's input node.
+    /// After setting the device, we must also set the audio unit's output
+    /// stream format to match the hardware (44100Hz Float32) — otherwise
+    /// AVAudioEngine's cached 48kHz format causes -10868 on start().
+    private func applyTeensyDevice() {
+        guard let deviceID = teensyDeviceID else { return }
+
+        let audioUnit = audioEngine.inputNode.audioUnit!
+        var inputDeviceID = deviceID
+
+        // 1. Set the device
+        var status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &inputDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else {
+            log("[speech] Failed to set Teensy device: OSStatus \(status)")
+            return
+        }
+        log("[speech] Set input device to Teensy (ID \(deviceID))")
+
+        // 2. Read the device's native format from the hardware (input) side
+        var deviceFormat = AudioStreamBasicDescription()
+        var formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        status = AudioUnitGetProperty(
+            audioUnit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Input,
+            1, // Element 1 = input bus (hardware side)
+            &deviceFormat,
+            &formatSize
+        )
+        guard status == noErr else {
+            log("[speech] Could not read device format: OSStatus \(status)")
+            return
+        }
+        log("[speech] Teensy hardware: \(deviceFormat.mSampleRate)Hz, \(deviceFormat.mChannelsPerFrame)ch, \(deviceFormat.mBitsPerChannel)bit")
+
+        // 3. Set the output (software) side to Float32 at the device's sample rate.
+        //    This eliminates the 48kHz vs 44100Hz mismatch that causes -10868.
+        var outputFormat = AudioStreamBasicDescription(
+            mSampleRate: deviceFormat.mSampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: deviceFormat.mChannelsPerFrame,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Output,
+            1, // Element 1 = input bus (software side)
+            &outputFormat,
+            UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        )
+        if status == noErr {
+            log("[speech] Set software format to \(outputFormat.mSampleRate)Hz Float32 \(outputFormat.mChannelsPerFrame)ch")
+        } else {
+            log("[speech] Could not set output format: OSStatus \(status)")
         }
     }
 
@@ -144,6 +255,13 @@ class SpeechService: ObservableObject {
 
         // Cancel any existing task
         stopListening()
+
+        // Reset engine to clear cached format state from any previous device
+        audioEngine.reset()
+
+        // Apply Teensy device AFTER reset so the engine builds its graph
+        // with Teensy's native format (44100Hz) instead of system default (48kHz)
+        applyTeensyDevice()
 
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let request = recognitionRequest else {
@@ -166,7 +284,8 @@ class SpeechService: ObservableObject {
             return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { buffer, _ in
+        // Use nil format to let audio engine auto-negotiate with hardware
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
             request.append(buffer)
         }
 

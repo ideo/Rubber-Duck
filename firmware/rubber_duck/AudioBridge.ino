@@ -37,7 +37,7 @@ unsigned long lastLevelReport = 0;
 // Setup (called from main setup())
 // ============================================================
 void setupAudioBridge() {
-  AudioMemory(12);
+  // AudioMemory called in main setup() to avoid double-init with I2S Audio
 
   audioGain.gain(audioCurrentGain);
   Serial.println("[audio] USB Audio bridge enabled (mic on A" + String(MIC_PIN - A0) + ")");
@@ -77,29 +77,10 @@ float getMicLevel() {
 // VU Meter mode (optional — shows audio level on LED bar when idle)
 // ============================================================
 void showVUMeter() {
-  if (!ENABLE_LED_DUCK) return;
-
-  // Map audio level (0.0-1.0) to LED count (0-NUM_LEDS)
-  int count = (int)(audioLevel * NUM_LEDS * 3);  // multiply for sensitivity
-  count = constrain(count, 0, NUM_LEDS);
-
-  for (int i = 0; i < NUM_LEDS; i++) {
-    if (i < count) {
-      // Green → yellow → red gradient
-      uint8_t r, g;
-      if (i < NUM_LEDS / 3) {
-        r = 0; g = 150;                    // Green
-      } else if (i < 2 * NUM_LEDS / 3) {
-        r = 200; g = 200;                  // Yellow
-      } else {
-        r = 255; g = 40;                   // Red
-      }
-      strip.setPixelColor(i, strip.Color(r, g, 0));
-    } else {
-      strip.setPixelColor(i, strip.Color(0, 0, 0));
-    }
-  }
-  strip.show();
+  // Requires LED hardware — no-op without it
+  #if !ENABLE_LED_DUCK
+    return;
+  #endif
 }
 
 #else

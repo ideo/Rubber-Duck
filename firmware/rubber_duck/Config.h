@@ -10,7 +10,7 @@
 #define ENABLE_SERVO_DUCK  true
 #define ENABLE_LED_DUCK    false  // No matching LED hardware yet
 #define ENABLE_I2S_AUDIO   true   // MAX98357 I2S DAC on default pins (BCLK=21, LRCLK=20, DIN=7)
-#define ENABLE_USB_AUDIO   false  // Phase 3 — requires USB Type: "Serial + MIDI + Audio"
+#define ENABLE_USB_AUDIO   true   // Teensy appears as USB mic — requires USB Type: "Serial + MIDI + Audio"
 
 // --- Pin Assignments (matching metro_0.1 layout) ---
 #define SERVO_PIN        3    // PWM servo output
