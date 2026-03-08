@@ -8,18 +8,19 @@ A physical IoT companion for Claude Code. It watches your coding sessions, evalu
                      You (speaking)
                           | voice (electret mic → Teensy USB → Mac)
                           v
-               .--- Widget (SwiftUI) ---.
-               |  * Apple Speech STT    |
-               |  * TTS via say -a      |--------> Teensy speaker
-               |  * SerialManager       |  (USB Audio out → I2S DAC)
-               |  * ServiceProcess      |
-               '---+-------+-------+----'
+               .--- Widget (SwiftUI) ---------.
+               |  * Apple Speech STT          |
+               |  * TTS via say -a            |--------> Teensy speaker
+               |  * SerialManager             |  (USB Audio out → I2S DAC)
+               |  * Embedded HTTP+WS Server   |
+               |    (Hummingbird 2 :3333)      |
+               '---+-------+-------+----------'
                    |       |       |
           voice/   |   WebSocket   |   serial (9600 baud)
        permission  |       |       |
                    v       v       v
-Claude Code    Eval Service    Teensy 4.0
-  (tmux)       (Python :3333)  servo + I2S audio + USB mic
+Claude Code    Dashboard/    Teensy 4.0
+  (tmux)       Viewer        servo + I2S audio + USB mic
   |-- hooks -----> |               |
   |  UserPrompt    |               | I2S (BCLK=21, LRCLK=20, DIN=7)
   |  Stop          |               v
@@ -30,13 +31,14 @@ Claude Code    Eval Service    Teensy 4.0
 
 ### Data Flow
 
-1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the eval service
-2. **Eval service** scores text via Claude Haiku on 5 dimensions, broadcasts results via WebSocket
-3. **Widget** receives scores, animates the duck face, speaks reactions via TTS, sends scores to Teensy via serial
-4. **Teensy** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
-5. **Voice input**: say "ducky [command]" — widget transcribes, sends to service, which injects into Claude Code via `tmux send-keys`
-6. **Voice permissions**: when Claude needs approval, the duck asks you out loud. Say "yes", "no", "first", "second", etc.
-7. **TTS output**: duck voice ("Boing") routes through Teensy USB Audio to the physical speaker via `say -a`, mixed with chirps through the I2S DAC
+1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the widget's embedded server on `:3333`
+2. **ClaudeEvaluator** scores text via Claude Haiku on 5 dimensions, returns scores + reaction + summary
+3. **Widget** receives scores in-process via `LocalEvalTransport`, animates the duck face, speaks reactions via TTS, sends scores to Teensy via serial
+4. **WebSocketBroadcaster** fans out results to any connected dashboard/viewer clients
+5. **Teensy** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
+6. **Voice input**: say "ducky [command]" — widget transcribes, TmuxBridge injects into Claude Code via `tmux send-keys`
+7. **Voice permissions**: when Claude needs approval, the duck asks you out loud. Say "yes", "no", "first", "second", etc.
+8. **TTS output**: duck voice ("Boing") routes through Teensy USB Audio to the physical speaker via `say -a`, mixed with chirps through the I2S DAC
 
 ## Hardware
 
@@ -111,38 +113,59 @@ Each prompt and response is scored from -1.0 to +1.0 on:
 - **elegance** — clean/clear vs hacky/convoluted
 - **risk** — could-go-wrong vs safe/predictable
 
-Plus a short gut-reaction quote from the duck (max 10 words).
+Plus a short gut-reaction quote from the duck (max 10 words) and a one-line summary.
 
 ## Components
 
 ### Widget (`widget/`)
-SwiftUI macOS app — the duck's brain. Owns all I/O:
-- **SpeechService** — Apple Speech STT + `say -a` TTS routed to Teensy speaker (Boing voice)
-- **SerialManager** — USB serial to Teensy for eval scores
-- **EvalService** — WebSocket client receiving eval scores from service
-- **ServiceProcess** — auto-launches the Python eval service, health monitoring, tmux session management
+SwiftUI macOS app — the duck's brain. Self-contained: no external services needed.
+
+**Server (embedded):**
+- **DuckServer** — Hummingbird 2 HTTP + WebSocket server on `:3333`, replaces the old Python service
+- **ClaudeEvaluator** — calls Anthropic Messages API directly via URLSession (Claude Haiku)
+- **PermissionGate** — actor-based async blocking until voice response or 30s timeout
+- **WebSocketBroadcaster** — fans out eval results and permission events to dashboard/viewer clients
+- **TmuxBridge** — injects voice commands into Claude Code via `tmux send-keys`
+- **LocalEvalTransport** — in-process delivery of eval results (no WebSocket round-trip for the widget itself)
+
+**Speech:**
+- **SpeechService** — orchestrates STT, TTS, wake word detection, and permission voice gate
+- **STTEngine** — Apple Speech framework recognition with Teensy mic input
+- **TTSEngine** — `say -a` TTS routed to Teensy speaker (Boing voice)
+- **WakeWordProcessor** — "ducky" detection and command extraction
+- **PermissionVoiceGate** — yes/no/ordinal word matching for permission responses
+- **AudioDeviceDiscovery** — CoreAudio enumeration, Teensy detection
+
+**UI:**
 - **DuckView** — animated yellow cube with expression engine, context menu
+- **ExpressionEngine** — maps eval scores to facial animations
+- **DuckTheme** — visual styling
+
+**Hardware bridge:**
+- **SerialManager** — USB serial to Teensy for eval scores
+- **EvalService** — transport-agnostic eval result handler (supports both local and WebSocket transports)
 
 Right-click menu: Start/Stop Listening, Start Claude Session, status info, Quit.
 
-### Service (`service/`)
-Python server on `localhost:3333`. Stateless eval + broadcast:
-- `server.py` — eval via Claude Haiku, WebSocket broadcast, permission gate, tmux voice bridge
+### Server Routes (`:3333`)
 
 | Route | Description |
 |-------|-------------|
-| `/` | Bar chart dashboard |
-| `/viewer` | Three.js 3D duck viewer |
-| `/ws` | WebSocket for live updates |
-| `/evaluate` | POST — trigger evaluation |
-| `/permission` | POST — voice permission gate (blocking) |
-| `/health` | Service status |
+| `GET /` | Bar chart dashboard |
+| `GET /viewer` | Three.js 3D duck viewer |
+| `GET /ws` | WebSocket for live updates |
+| `POST /evaluate` | Trigger evaluation (called by hooks) |
+| `POST /permission` | Voice permission gate — blocks until response |
+| `GET /health` | Server status JSON |
 
 ### Scripts (`scripts/`)
-- `duck-session` — tmux launcher: Claude Code + eval service in split panes
+- `duck-session` — tmux launcher: Claude Code + widget in split panes
 - `on-user-prompt.sh` — hook: captures user input (UserPromptSubmit)
 - `on-claude-stop.sh` — hook: captures Claude's response (Stop)
 - `on-permission-request.sh` — hook: voice-gated permission approval (blocking)
+
+### Service (`service/`)
+The original Python eval service. **No longer required** — the widget embeds all functionality natively. Kept for reference and standalone/remote use cases.
 
 ### Firmware (`firmware/rubber_duck/`)
 Teensy 4.0 Arduino firmware — multi-file sketch:
@@ -158,7 +181,7 @@ Teensy 4.0 Arduino firmware — multi-file sketch:
 | `SerialProtocol.ino` | Score parsing, test commands, ping |
 | `Easing.ino` | Quintic easing for servo smoothness |
 
-### 3D Viewer (`service/viewer.html`)
+### 3D Viewer (`service/viewer.html` / bundled in widget)
 Three.js scene with both duck prototypes side by side:
 - **Servo Duck** — yellow panel with rotating beak disc, spring physics
 - **LED Duck** — green PCB with 10-segment bar graph, piezo sound
@@ -169,7 +192,6 @@ Three.js scene with both duck prototypes side by side:
 
 - macOS (Apple Speech framework required)
 - [Teensy 4.0](https://www.pjrc.com/store/teensy40.html) + [Teensyduino](https://www.pjrc.com/teensy/td_download.html) (for hardware)
-- Python 3.10+
 - Swift 5.9+ (ships with Xcode)
 - tmux (`brew install tmux`)
 - Anthropic API key
@@ -181,32 +203,28 @@ Three.js scene with both duck prototypes side by side:
 git clone https://github.com/ideo/Rubber-Duck.git
 cd Rubber-Duck
 
-# 2. Install Python dependencies
-cd service
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# 2. Set API key (pick one)
+export ANTHROPIC_API_KEY=sk-ant-...          # env var (session)
+echo "sk-ant-..." > ~/.duck/api_key          # persistent file
+echo "ANTHROPIC_API_KEY=sk-ant-..." > service/.env  # legacy .env
 
-# 3. Set API key
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
-
-# 4. Flash Teensy firmware (Arduino IDE)
+# 3. Flash Teensy firmware (Arduino IDE)
 #    Board: Teensy 4.0
 #    USB Type: Serial + MIDI + Audio
 #    Open firmware/rubber_duck/rubber_duck.ino → Upload
 
-# 5. Launch the widget (builds + runs, auto-starts eval service)
-cd ../widget
+# 4. Launch the widget (builds + runs, starts embedded server)
+cd widget
 make run
 ```
 
 ### Running
 
-**Widget (recommended):** Launch with `cd widget && make run`. The widget auto-starts the eval service. Right-click the duck to start a Claude Code terminal session (tmux), toggle voice listening, or quit.
+**Widget (recommended):** Launch with `cd widget && make run`. The widget starts an embedded HTTP+WebSocket server on `:3333`. Right-click the duck to start a Claude Code terminal session (tmux), toggle voice listening, or quit.
 
-**Full session:** `./scripts/duck-session` starts a tmux session with Claude Code in the main pane and the eval service in a split below.
+**Full session:** `./scripts/duck-session` starts a tmux session with Claude Code in the main pane.
 
-**Debug mode:** `cd widget && make debug` runs in the terminal with full log output (stdout).
+**Debug mode:** `cd widget && make debug` runs in the terminal with full log output. Note: mic permissions may not work in this mode — use `make run` for full functionality.
 
 **Without hardware:** Everything works except physical servo/audio. The widget still animates, speaks through Mac speakers, and bridges voice to Claude Code.
 
