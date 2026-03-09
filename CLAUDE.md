@@ -19,25 +19,22 @@ These fire automatically for your session:
 ## Architecture overview
 
 ```
-Widget (SwiftUI) — owns speech (STT/TTS), serial (Teensy), duck UI
+Widget (SwiftUI) — owns everything: eval server, speech, serial, duck UI
     |
-    WebSocket
+    HTTP+WebSocket (localhost:3333, embedded Hummingbird server)
     |
-Eval Service (Python :3333) — scores via Claude Haiku, broadcasts results
-    |
-    hooks
+    hooks (shell scripts POST to /evaluate, /permission)
     |
 You (Claude Code) — this session
 ```
 
 ## Key files
 
-- `widget/Sources/RubberDuckWidget/` — SwiftUI app (DuckView, SpeechService, SerialManager, EvalService, ServiceProcess)
-- `service/server.py` — eval service, WebSocket, permission gate, tmux bridge
+- `widget/Sources/RubberDuckWidget/` — SwiftUI app (DuckServer, ClaudeEvaluator, SpeechService, SerialManager, DuckView)
 - `scripts/` — hook scripts that connect Claude Code to the eval service
 - `firmware/rubber_duck/` — Teensy 4.0 firmware for servo/LED/piezo
-- `service/dashboard.html` — browser dashboard at localhost:3333
-- `service/viewer.html` — Three.js 3D viewer at localhost:3333/viewer
+- `widget/Sources/RubberDuckWidget/Resources/dashboard.html` — browser dashboard at localhost:3333
+- `widget/Sources/RubberDuckWidget/Resources/viewer.html` — Three.js 3D viewer at localhost:3333/viewer
 
 ## Style notes
 
@@ -51,7 +48,6 @@ You (Claude Code) — this session
 
 ## Dev workflow
 
-- Widget: `cd widget && make run` (builds and launches the app, which auto-starts the eval service)
-- Service only: `python3 service/server.py`
-- Full session: `./scripts/duck-session` (tmux with Claude Code + service)
+- Widget: `cd widget && make run` (builds and launches the app — this IS the eval service)
+- Full session: `./scripts/duck-session` (tmux with Claude Code; widget must be running)
 - The widget's right-click menu has "Start Claude Session" to launch a terminal Claude Code in tmux.

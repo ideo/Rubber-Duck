@@ -175,13 +175,10 @@ Right-click menu: Start/Stop Listening, Start Claude Session, status info, Quit.
 | `GET /health` | Server status JSON |
 
 ### Scripts (`scripts/`)
-- `duck-session` — tmux launcher: Claude Code + widget in split panes
+- `duck-session` — tmux launcher for Claude Code (widget must be running)
 - `on-user-prompt.sh` — hook: captures user input (UserPromptSubmit)
 - `on-claude-stop.sh` — hook: captures Claude's response (Stop)
 - `on-permission-request.sh` — hook: voice-gated permission approval (blocking)
-
-### Service (`service/`)
-The original Python eval service. **No longer required** — the widget embeds all functionality natively. Kept for reference and standalone/remote use cases.
 
 ### Firmware (`firmware/rubber_duck/`)
 Teensy 4.0 Arduino firmware — multi-file sketch:
@@ -197,7 +194,7 @@ Teensy 4.0 Arduino firmware — multi-file sketch:
 | `SerialProtocol.ino` | Score parsing, test commands, ping |
 | `Easing.ino` | Quintic easing for servo smoothness |
 
-### 3D Viewer (`service/viewer.html` / bundled in widget)
+### 3D Viewer (`widget/Sources/RubberDuckWidget/Resources/viewer.html`)
 Three.js scene with both duck prototypes side by side:
 - **Servo Duck** — yellow panel with rotating beak disc, spring physics
 - **LED Duck** — green PCB with 10-segment bar graph, piezo sound
@@ -222,7 +219,7 @@ cd Rubber-Duck
 # 2. Set API key (pick one)
 export ANTHROPIC_API_KEY=sk-ant-...          # env var (session)
 echo "sk-ant-..." > ~/.duck/api_key          # persistent file
-echo "ANTHROPIC_API_KEY=sk-ant-..." > service/.env  # legacy .env
+echo "ANTHROPIC_API_KEY=sk-ant-..." > widget/.env    # .env in widget dir
 
 # 3. Flash Teensy firmware (Arduino IDE)
 #    Board: Teensy 4.0

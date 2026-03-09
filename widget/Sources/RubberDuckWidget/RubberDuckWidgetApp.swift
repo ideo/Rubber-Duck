@@ -19,8 +19,8 @@ struct RubberDuckWidgetApp: App {
     @StateObject private var coordinator: DuckCoordinator
 
     init() {
-        // Create server with embedded eval service
-        let server = DuckServer(apiKey: DuckConfig.anthropicAPIKey)
+        // Create server (reads API key lazily from DuckConfig at eval time)
+        let server = DuckServer()
         let localTransport = server.localTransport
 
         // EvalService uses local transport instead of WebSocket
@@ -59,7 +59,17 @@ struct RubberDuckWidgetApp: App {
     // MARK: - Service Wiring
 
     private func wireServices() {
-        // Write runtime config for shell scripts and Python
+        // Prompt for API key on first launch if none found
+        if DuckConfig.anthropicAPIKey.isEmpty {
+            if let key = DuckConfig.promptForAPIKey() {
+                DuckConfig.saveAPIKey(key)
+            } else {
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
+        // Write runtime config for shell scripts
         DuckConfig.writeRuntimeConfig()
 
         // Start the embedded HTTP + WebSocket server

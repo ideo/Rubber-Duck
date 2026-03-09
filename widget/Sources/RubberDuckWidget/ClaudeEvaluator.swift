@@ -17,21 +17,23 @@ actor ClaudeEvaluator {
         ("risk", "How risky is this? Safe and predictable vs could-go-wrong territory."),
     ]
 
-    private let apiKey: String
     private let session = URLSession.shared
 
-    init(apiKey: String) {
-        self.apiKey = apiKey
-    }
+    /// API key is read from DuckConfig at eval time so it picks up keys saved after app init.
+    private var apiKey: String { DuckConfig.anthropicAPIKey }
+
+    init() {}
 
     // MARK: - Evaluate
 
-    func evaluate(text: String, source: String, userContext: String = "") async throws -> EvalScores {
-        let truncated = String(text.prefix(2000)) + (text.count > 2000 ? "..." : "")
+    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
+        let truncated = String(text.prefix(4000)) + (text.count > 4000 ? "..." : "")
 
         var contextLine = ""
         if !userContext.isEmpty && source == "claude" {
             contextLine = "User's request (for context): \(String(userContext.prefix(500)))\n"
+        } else if !claudeContext.isEmpty && source == "user" {
+            contextLine = "Claude's last response (for context): \(String(claudeContext.prefix(1000)))\n"
         }
 
         let userPrompt = """

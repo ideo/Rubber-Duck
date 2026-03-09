@@ -4,6 +4,7 @@
 // Defaults match the current computer-attached setup. Override via env vars
 // for alternate configurations (network service, BLE device, etc).
 
+import AppKit
 import Foundation
 
 enum DuckConfig {
@@ -23,8 +24,15 @@ enum DuckConfig {
     // MARK: - Anthropic API
 
     /// Anthropic API key for Claude evaluations.
-    /// Lookup order: ANTHROPIC_API_KEY env var → ~/.duck/api_key file → service/.env file
-    static let anthropicAPIKey: String = {
+    /// Lookup order: ANTHROPIC_API_KEY env var → ~/.duck/api_key file → .env file in repo → prompt user
+    static var anthropicAPIKey: String = {
+        if let key = resolveAPIKey() { return key }
+        print("[config] WARNING: No ANTHROPIC_API_KEY found. Will prompt on launch.")
+        return ""
+    }()
+
+    /// Try all automatic sources for the API key.
+    private static func resolveAPIKey() -> String? {
         // 1. Environment variable (highest priority)
         if let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
             return envKey
@@ -38,34 +46,80 @@ enum DuckConfig {
             return fileKey
         }
 
-        // 3. service/.env file (for dev — walk up from binary to find repo)
+        // 3. .env file in repo (walk up from binary to find it)
         if let envKey = loadFromDotEnv(key: "ANTHROPIC_API_KEY") {
             return envKey
         }
 
-        print("[config] WARNING: No ANTHROPIC_API_KEY found. Set via env var or ~/.duck/api_key")
-        return ""
-    }()
+        return nil
+    }
 
-    /// Load a key from the service/.env file by walking up from the binary to find the repo root.
+    /// Save an API key to ~/.duck/api_key and update the in-memory value.
+    static func saveAPIKey(_ key: String) {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let duckDir = homeDir.appendingPathComponent(".duck")
+        let keyFile = duckDir.appendingPathComponent("api_key")
+
+        try? FileManager.default.createDirectory(at: duckDir, withIntermediateDirectories: true)
+
+        do {
+            try key.write(to: keyFile, atomically: true, encoding: .utf8)
+            anthropicAPIKey = key
+            print("[config] API key saved to \(keyFile.path)")
+        } catch {
+            print("[config] Failed to save API key: \(error)")
+        }
+    }
+
+    /// Show a blocking dialog to ask the user for their API key. Returns the key or nil if cancelled.
+    @MainActor
+    static func promptForAPIKey() -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Anthropic API Key Required"
+        alert.informativeText = "Rubber Duck needs an Anthropic API key to evaluate code.\n\nGet one at console.anthropic.com → API Keys."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Quit")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        textField.placeholderString = "sk-ant-..."
+        textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        alert.accessoryView = textField
+
+        // Focus the text field
+        alert.window.initialFirstResponder = textField
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let key = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty { return key }
+        }
+        return nil
+    }
+
+    /// Load a key from a .env file by walking up from the binary to find the repo root.
+    /// Searches for .env and widget/.env at each level.
     private static func loadFromDotEnv(key: String) -> String? {
         var dir = Bundle.main.bundleURL
         for _ in 0..<10 {
             dir = dir.deletingLastPathComponent()
-            let envFile = dir.appendingPathComponent("service/.env")
-            guard let contents = try? String(contentsOf: envFile, encoding: .utf8) else { continue }
+            // Check .env at this level and widget/.env
+            for envPath in [dir.appendingPathComponent(".env"),
+                            dir.appendingPathComponent("widget/.env")] {
+                guard let contents = try? String(contentsOf: envPath, encoding: .utf8) else { continue }
 
-            for line in contents.components(separatedBy: .newlines) {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
-                let parts = trimmed.components(separatedBy: "=")
-                guard parts.count >= 2 else { continue }
-                let k = parts[0].trimmingCharacters(in: .whitespaces)
-                if k == key {
-                    let v = parts.dropFirst().joined(separator: "=")
-                        .trimmingCharacters(in: .whitespaces)
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                    if !v.isEmpty { return v }
+                for line in contents.components(separatedBy: .newlines) {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+                    let parts = trimmed.components(separatedBy: "=")
+                    guard parts.count >= 2 else { continue }
+                    let k = parts[0].trimmingCharacters(in: .whitespaces)
+                    if k == key {
+                        let v = parts.dropFirst().joined(separator: "=")
+                            .trimmingCharacters(in: .whitespaces)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                        if !v.isEmpty { return v }
+                    }
                 }
             }
         }
@@ -116,7 +170,7 @@ enum DuckConfig {
         return homeDir.appendingPathComponent(".duck/duck.pid").path
     }()
 
-    /// Write resolved runtime values to ~/.duck/config so shell scripts and Python can read them.
+    /// Write resolved runtime values to ~/.duck/config so shell scripts can read them.
     /// Called once on app launch. Format is key=value for direct `source` in bash.
     static func writeRuntimeConfig() {
         let homeDir = FileManager.default.homeDirectoryForCurrentUser

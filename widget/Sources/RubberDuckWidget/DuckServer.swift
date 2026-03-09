@@ -32,9 +32,9 @@ class DuckServer: ObservableObject {
     private var serverTask: Task<Void, Never>?
     private let port: Int
 
-    init(apiKey: String, port: Int = DuckConfig.servicePort) {
+    init(port: Int = DuckConfig.servicePort) {
         self.port = port
-        self.evaluator = ClaudeEvaluator(apiKey: apiKey)
+        self.evaluator = ClaudeEvaluator()
         self.permissionGate = PermissionGate()
         self.broadcaster = WebSocketBroadcaster()
         self.tmuxBridge = TmuxBridge()
@@ -70,6 +70,9 @@ class DuckServer: ObservableObject {
 
         serverTask = Task.detached {
             do {
+                // Per-session memory: last Claude response, so user evals have context
+                let sessionContext = SessionContext()
+
                 // Build HTTP router
                 let router = Router(context: BasicWebSocketRequestContext.self)
 
@@ -98,10 +101,18 @@ class DuckServer: ObservableObject {
                         )
                     }
 
+                    // Track context: store Claude's response, recall for user evals
+                    var claudeContext = ""
+                    if source == "claude" {
+                        sessionContext.store(sessionId: sessionId, text: text)
+                    } else if source == "user" {
+                        claudeContext = sessionContext.recall(sessionId: sessionId)
+                    }
+
                     // Evaluate via Claude
                     let scores: EvalScores
                     do {
-                        scores = try await evaluator.evaluate(text: text, source: source, userContext: userContext)
+                        scores = try await evaluator.evaluate(text: text, source: source, userContext: userContext, claudeContext: claudeContext)
                     } catch {
                         DuckLog.log("[server] Eval error: \(error)")
                         scores = EvalScores(
@@ -346,6 +357,26 @@ class DuckServer: ObservableObject {
         serverTask = nil
         isRunning = false
         DuckLog.log("[server] Stopped")
+    }
+}
+
+// MARK: - Session Context (thread-safe per-session memory)
+
+/// Stores last Claude response per session so user evals have context.
+private final class SessionContext: @unchecked Sendable {
+    private var lock = NSLock()
+    private var lastClaudeText: [String: String] = [:]
+
+    func store(sessionId: String, text: String) {
+        lock.lock()
+        lastClaudeText[sessionId] = text
+        lock.unlock()
+    }
+
+    func recall(sessionId: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastClaudeText[sessionId] ?? ""
     }
 }
 

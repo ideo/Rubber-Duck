@@ -1,10 +1,4 @@
 .env
-service/.env
-service/venv/
-service/.pid
-service/duck.log
-__pycache__/
-*.pyc
 node_modules/
 widget/.build/
 widget/.swiftpm/
