@@ -5,7 +5,7 @@ You are running inside the **Rubber Duck** project. A physical rubber duck compa
 ## What's happening
 
 - Every prompt you receive and every response you generate is being sent to an eval service that scores it on creativity, soundness, ambition, elegance, and risk.
-- The duck widget (a yellow SwiftUI cube on the user's desktop) animates based on those scores and speaks gut reactions out loud.
+- The duck widget (a liquid glass SwiftUI duck floating on the desktop) animates based on those scores and speaks gut reactions out loud.
 - If you are running in a tmux session named "duck", the user can speak voice commands to you by saying "ducky [command]".
 
 ## Hooks active in this project
@@ -19,9 +19,9 @@ These fire automatically for your session:
 ## Architecture overview
 
 ```
-Widget (SwiftUI) — owns everything: eval server, speech, serial, duck UI
+Widget (SwiftUI, macOS 26) — owns everything: eval server, speech, serial, duck UI
     |
-    HTTP+WebSocket (localhost:3333, embedded Hummingbird server)
+    HTTP+WebSocket (localhost:3333, MiniServer — zero-dep Network.framework)
     |
     hooks (shell scripts POST to /evaluate, /permission)
     |
@@ -30,7 +30,12 @@ You (Claude Code) — this session
 
 ## Key files
 
-- `widget/Sources/RubberDuckWidget/` — SwiftUI app (DuckServer, ClaudeEvaluator, SpeechService, SerialManager, DuckView)
+- `widget/Sources/RubberDuckWidget/` — SwiftUI app (DuckServer, MiniServer, ClaudeEvaluator, SpeechService, SerialManager, DuckView)
+- `widget/Sources/RubberDuckWidget/MiniServer.swift` — zero-dependency HTTP+WebSocket server (Network.framework + CryptoKit)
+- `widget/Sources/RubberDuckWidget/DuckView.swift` — liquid glass duck face with `.glassEffect()`, exclamation mark permission eyes
+- `widget/Sources/RubberDuckWidget/ExpressionEngine.swift` — maps eval scores to visual state (eye shape, hue shift, glow)
+- `widget/Sources/RubberDuckWidget/DuckTheme.swift` — design tokens (colors, sizes, animation constants)
+- `widget/assets/duckIcon.icon` — Apple Icon Composer icon bundle (compiled via actool in Makefile)
 - `scripts/` — hook scripts that connect Claude Code to the eval service
 - `firmware/rubber_duck/` — Teensy 4.0 firmware for servo/LED/piezo
 - `widget/Sources/RubberDuckWidget/Resources/dashboard.html` — browser dashboard at localhost:3333
@@ -48,6 +53,27 @@ You (Claude Code) — this session
 
 ## Dev workflow
 
-- Widget: `cd widget && make run` (builds and launches the app — this IS the eval service)
+- Widget: `cd widget && make run` (builds release + compiles icon via actool + bundles app + launches)
+- Debug: `cd widget && make debug` (swift build debug + runs in terminal)
 - Full session: `./scripts/duck-session` (tmux with Claude Code; widget must be running)
 - The widget's right-click menu has "Start Claude Session" to launch a terminal Claude Code in tmux.
+- Build stack: swift-tools-version 6.2, macOS 26, Swift 5 language mode (for concurrency compat)
+- Zero external dependencies — Network.framework for HTTP/WS, CryptoKit for WebSocket handshake
+
+## Serial protocol (widget → Teensy / ESP32)
+
+Score messages (on every eval):
+```
+{U|C},creativity,soundness,ambition,elegance,risk\n
+```
+- `U` = user prompt evaluated, `C` = Claude response evaluated
+- All floats from -1.0 to 1.0
+- Example: `C,0.72,0.85,0.40,0.61,-0.20\n`
+
+Permission commands:
+```
+P,1\n   — permission requested (alert!)
+P,0\n   — permission resolved (calm down)
+```
+
+Sentiment formula: `soundness*0.3 + elegance*0.25 + creativity*0.2 + ambition*0.15 - risk*0.1`

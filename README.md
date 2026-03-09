@@ -1,6 +1,6 @@
 # Rubber Duck
 
-A physical IoT companion for Claude Code. It watches your coding sessions, evaluates both your prompts and Claude's responses on multiple dimensions, then expresses its judgment through servo movements, audio chirps, voice, and a desktop widget. You can talk to it — say "ducky" to give voice commands that get injected directly into Claude Code via tmux.
+A physical IoT companion for Claude Code. It watches your coding sessions, evaluates both your prompts and Claude's responses on multiple dimensions, then expresses its judgment through servo movements, audio chirps, voice, and a liquid-glass desktop widget. You can talk to it — say "ducky" to give voice commands that get injected directly into Claude Code via tmux.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ A physical IoT companion for Claude Code. It watches your coding sessions, evalu
                |  * TTS via say -a            |--------> Teensy speaker
                |  * SerialManager             |  (USB Audio out → I2S DAC)
                |  * Embedded HTTP+WS Server   |
-               |    (Hummingbird 2 :3333)      |
+               |    (MiniServer :3333)         |
                '---+-------+-------+----------'
                    |       |       |
           voice/   |   WebSocket   |   serial (9600 baud)
@@ -37,7 +37,7 @@ Claude Code    Dashboard/    Teensy 4.0
 4. **WebSocketBroadcaster** fans out results to any connected dashboard/viewer clients
 5. **Teensy** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
 6. **Voice input**: say "ducky [command]" — widget transcribes, TmuxBridge injects into Claude Code via `tmux send-keys`
-7. **Voice permissions**: when Claude needs approval, the duck asks you out loud. Say "yes", "no", "first", "second", etc.
+7. **Voice permissions**: when Claude needs approval, the duck summarizes the action and asks ("Run git. Allow?"). Say "yes", "no", "first", "second", etc.
 8. **TTS output**: duck voice ("Boing") routes through Teensy USB Audio to the physical speaker via `say -a`, mixed with chirps through the I2S DAC
 
 ## Hardware
@@ -96,6 +96,8 @@ The Teensy handles bidirectional audio over a single USB connection:
 ```
 U,0.20,0.70,0.00,0.60,-0.30   (user eval: creativity,soundness,ambition,elegance,risk)
 C,-0.80,0.90,0.30,-0.50,0.80  (claude eval)
+P,1                            (permission pending — duck awaits voice response)
+P,0                            (permission resolved — back to normal)
 T / X / P                      (test positive / negative / ping)
 ```
 
@@ -107,9 +109,9 @@ Say **"ducky"** followed by a command. The widget transcribes your speech and in
 |---|---|
 | "ducky, refactor the auth module" | Command sent to Claude Code CLI |
 | "ducky" (then silence for 3s) | Duck says "Hmm?" and resets |
-| "yes" / "no" (during permission) | Approves or denies Claude's action |
+| "yes" / "no" (during permission) | Approves or denies (varied responses: "Got it.", "Approved.", "Nope.", etc.) |
 | "first" / "second" (during permission) | Selects a numbered suggestion |
-| "ducky, quit" | Duck says "See you later" |
+| "ducky, quit" | Duck says "Quack! See you later." |
 
 ### Voice Reliability
 
@@ -118,6 +120,8 @@ Say **"ducky"** followed by a command. The widget transcribes your speech and in
 - **Command debounce**: 2.5s of silence after wake word before sending (prevents partial transcripts)
 - **Recognition watchdog**: 10s timeout restarts speech recognition if it goes silent
 - **TTS routing**: `say -a "Teensy MIDI_Audio"` sends voice directly to Teensy USB Audio, bypassing Mac speakers
+- **Smart permission prompts**: Instead of bare tool names ("Bash. Allow?"), the duck summarizes the action ("Run git. Allow?", "Edit DuckServer. Allow?")
+- **Response variety**: Acknowledgments rotate through phrase pools to avoid sounding robotic
 
 ## Evaluation Dimensions
 
@@ -134,10 +138,10 @@ Plus a short gut-reaction quote from the duck (max 10 words) and a one-line summ
 ## Components
 
 ### Widget (`widget/`)
-SwiftUI macOS app — the duck's brain. Self-contained: no external services needed.
+SwiftUI macOS app — the duck's brain. Self-contained: no external services needed. The widget is a borderless, always-on-top liquid-glass window using macOS Tahoe's `.glassEffect()` for real desktop refraction. The duck's face (eyes, beak, cheeks) floats on the glass surface with animated expressions driven by eval scores.
 
 **Server (embedded):**
-- **DuckServer** — Hummingbird 2 HTTP + WebSocket server on `:3333`, replaces the old Python service
+- **DuckServer** — zero-dependency HTTP + WebSocket server on `:3333` built on Network.framework (`MiniServer`)
 - **ClaudeEvaluator** — calls Anthropic Messages API directly via URLSession (Claude Haiku)
 - **PermissionGate** — actor-based async blocking until voice response or 30s timeout
 - **WebSocketBroadcaster** — fans out eval results and permission events to dashboard/viewer clients
@@ -153,15 +157,20 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - **AudioDeviceDiscovery** — CoreAudio enumeration, Teensy detection
 
 **UI:**
-- **DuckView** — animated yellow cube with expression engine, context menu
-- **ExpressionEngine** — maps eval scores to facial animations
-- **DuckTheme** — visual styling
+- **DuckView** — liquid-glass duck with animated face, exclamation-mark eyes during permissions, context menu
+- **ExpressionEngine** — reducer mapping eval dimensions to visual state (eye shape, beak, glow, hue shift)
+- **DuckTheme** — colors, sizes, spring physics constants
+- **DuckCoordinator** — orchestrates side effects (serial, TTS, expression updates) in response to eval events
 
 **Hardware bridge:**
 - **SerialManager** — USB serial to Teensy for eval scores
 - **EvalService** — transport-agnostic eval result handler (supports both local and WebSocket transports)
 
-Right-click menu: Start/Stop Listening, Start Claude Session, status info, Quit.
+**App icon:**
+- `assets/duckIcon.icon/` — Apple Icon Composer bundle (`.icon` format) with layered eyes + beak on yellow fill
+- Compiled via `xcrun actool` in the Makefile → `.icns` + `Assets.car` in app bundle Resources
+
+Right-click menu: Start Claude Session, Start/Stop Listening, Mode Toggle, status info, Quit.
 
 ### Server Routes (`:3333`)
 
@@ -203,11 +212,11 @@ Three.js scene with both duck prototypes side by side:
 
 ### Prerequisites
 
-- macOS (Apple Speech framework required)
+- macOS Tahoe (26.0+) — required for `.glassEffect()` liquid glass
+- Xcode with Swift 6.2+ (widget builds with `swift-tools-version: 6.2`, Swift 5 language mode)
 - [Teensy 4.0](https://www.pjrc.com/store/teensy40.html) + [Teensyduino](https://www.pjrc.com/teensy/td_download.html) (for hardware)
-- Swift 5.9+ (ships with Xcode)
 - tmux (`brew install tmux`)
-- Anthropic API key
+- Anthropic API key (prompted on first launch, stored in `~/.duck/api_key`)
 
 ### Setup
 
@@ -216,10 +225,11 @@ Three.js scene with both duck prototypes side by side:
 git clone https://github.com/ideo/Rubber-Duck.git
 cd Rubber-Duck
 
-# 2. Set API key (pick one)
+# 2. Set API key (pick one — or skip; the widget prompts on first launch)
 export ANTHROPIC_API_KEY=sk-ant-...          # env var (session)
 echo "sk-ant-..." > ~/.duck/api_key          # persistent file
 echo "ANTHROPIC_API_KEY=sk-ant-..." > widget/.env    # .env in widget dir
+# If none set, the widget opens a dialog on first launch and saves to ~/.duck/api_key
 
 # 3. Flash Teensy firmware (Arduino IDE)
 #    Board: Teensy 4.0
@@ -247,8 +257,10 @@ The universal evaluation stays rich (5 dimensions). Each output target has its o
 
 | Dimension | Servo Duck | I2S Audio | Widget |
 |-----------|-----------|-----------|--------|
-| soundness | base angle | chirp direction | eye shape |
+| soundness | base angle | chirp direction | eye shape (round → squint) |
 | elegance | easing smoothness | waveform (sine) | transition speed |
-| creativity | angle weight | frequency range | color shift |
-| ambition | speed | — | breathing |
-| risk | oscillation/wiggle | buzzy sawtooth | shake/wobble |
+| creativity | angle weight | frequency range | hue shift + eye widening |
+| ambition | speed | — | scale |
+| risk | oscillation/wiggle | buzzy sawtooth | rotation angle |
+
+**Permission state**: Eyes become `!` exclamation marks, subtle warm glow. Teensy receives `P,1` (pending) and `P,0` (resolved).
