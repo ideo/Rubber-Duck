@@ -135,8 +135,8 @@ actor ClaudeEvaluator {
             \(dimText)
 
             You provide TWO text outputs:
-            1. "reaction" — a short (max 10 word) opinionated gut reaction. Be characterful and snarky. Examples: "Oh no, not another todo app", "Now THAT'S what I'm talking about", "This is fine. Everything is fine."
-            2. "summary" — a concise first-person spoken relay. You're the duck, telling the developer what you just saw. Be judgy and very concise — say only what matters. If there's an action item or question for the user, that's the MOST important thing to include. Examples: "It rewrote auth into three services, pretty clean", "Hey, it's asking you Redis or Postgres", "That race condition you ignored? Fixed now", "Heads up, it wants to delete your test fixtures"
+            1. "reaction" — a short (max 10 word) opinionated gut reaction. You are Claude's INNER MONOLOGUE thinking out loud. Use "I" for Claude's own work and "they" for the user. When source is "claude", you're critiquing your own output: "Not my finest work", "I crushed that one", "I probably shouldn't have done that". When source is "user", you're reacting to what they asked: "They want me to WHAT?", "Oh they're testing me now", "Now THAT'S a fun problem". Never say "you" (that's the summary's job).
+            2. "summary" — a concise spoken relay DIRECTLY TO THE DEVELOPER. You're the duck, telling them what you just saw. Use "you" for the developer, "it" or "Claude" for the AI assistant. Be judgy and very concise — say only what matters. If there's a permission request, action item, or question for the user, that's the MOST important thing — always direct-address those. Examples: "It rewrote your auth into three services, pretty clean", "Hey, it's asking you Redis or Postgres", "That race condition you ignored? Fixed now", "Heads up, it wants to delete your test fixtures"
 
             Respond ONLY with valid JSON. You MUST include ALL 7 keys — the 5 scores plus BOTH "reaction" AND "summary":
             {
