@@ -196,8 +196,10 @@ class STTEngine: ObservableObject {
     // MARK: - Teensy Device Setup
 
     /// Apply the stored Teensy device to the audio engine's input node.
+    /// If the cached device ID is stale, re-discovers the Teensy.
+    /// Falls back to default mic if Teensy is gone.
     private func applyTeensyDevice() {
-        guard let deviceID = teensyDeviceID else { return }
+        guard var deviceID = teensyDeviceID else { return }
 
         let audioUnit = audioEngine.inputNode.audioUnit!
         var inputDeviceID = deviceID
@@ -211,8 +213,32 @@ class STTEngine: ObservableObject {
             &inputDeviceID,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
+
+        // If stale device ID, re-discover Teensy
+        if status != noErr {
+            log?("[stt] Cached Teensy device \(deviceID) stale (OSStatus \(status)), re-discovering...")
+            if let teensy = AudioDeviceDiscovery.findTeensy() {
+                deviceID = teensy.deviceID
+                teensyDeviceID = deviceID
+                inputDeviceID = deviceID
+                status = AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &inputDeviceID,
+                    UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+            } else {
+                log?("[stt] Teensy not found — falling back to default mic")
+                teensyDeviceID = nil
+                return
+            }
+        }
+
         guard status == noErr else {
             log?("[stt] Failed to set Teensy device: OSStatus \(status)")
+            teensyDeviceID = nil  // Clear so next attempt uses default mic
             return
         }
         log?("[stt] Set input device to Teensy (ID \(deviceID))")
