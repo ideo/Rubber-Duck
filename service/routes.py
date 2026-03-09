@@ -18,6 +18,9 @@ SERVICE_DIR = pathlib.Path(__file__).parent
 DASHBOARD_PATH = SERVICE_DIR / "dashboard.html"
 VIEWER_PATH = SERVICE_DIR / "viewer.html"
 
+# Per-session memory: last Claude response, so user evals have context
+_last_claude_text: dict[str, str] = {}
+
 
 async def handle_evaluate(request: web.Request) -> web.Response:
     """Receive hook payload, evaluate, broadcast results."""
@@ -34,7 +37,14 @@ async def handle_evaluate(request: web.Request) -> web.Response:
     if not text:
         return web.json_response({"error": "no text"}, status=400)
 
-    scores = await evaluate(text, source, user_context)
+    # Track context: store Claude's response, recall it for user evals
+    claude_context = ""
+    if source == "claude":
+        _last_claude_text[session_id] = text
+    elif source == "user" and session_id in _last_claude_text:
+        claude_context = _last_claude_text[session_id]
+
+    scores = await evaluate(text, source, user_context, claude_context)
 
     result = {
         "type": "eval",

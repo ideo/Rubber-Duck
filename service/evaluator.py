@@ -55,7 +55,7 @@ def _build_system_prompt() -> str:
     return _SYSTEM_PROMPT.format(dimensions=dim_text)
 
 
-async def evaluate(text: str, source: str, user_context: str = "") -> dict:
+async def evaluate(text: str, source: str, user_context: str = "", claude_context: str = "") -> dict:
     """Call Claude API to evaluate text on multiple dimensions.
 
     Returns a dict with dimension scores and a reaction string.
@@ -63,9 +63,11 @@ async def evaluate(text: str, source: str, user_context: str = "") -> dict:
     context_line = ""
     if user_context and source == "claude":
         context_line = f"User's request (for context): {user_context[:500]}\n"
+    elif claude_context and source == "user":
+        context_line = f"Claude's last response (for context): {claude_context[:1000]}\n"
 
     # Truncate very long texts to keep eval focused and fast
-    truncated = text[:2000] + ("..." if len(text) > 2000 else "")
+    truncated = text[:4000] + ("..." if len(text) > 4000 else "")
 
     user_prompt = _USER_PROMPT.format(
         source=source,
