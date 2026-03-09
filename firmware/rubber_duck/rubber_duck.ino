@@ -27,11 +27,22 @@
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
 
+// --- Permission State ---
+bool          permissionPending = false;
+unsigned long permissionStartTime = 0;
+unsigned long lastPermissionNag = 0;
+unsigned long nextNagInterval = 0;      // Randomized per-nag
+
 // --- Hardware ---
 PWMServo servo;
 
 // --- Timing ---
 unsigned long lastServoUpdate = 0;
+
+// --- Button State (for short/long press detection) ---
+bool     buttonDown       = false;
+unsigned long buttonDownAt = 0;
+#define LONG_PRESS_MS     2000   // Hold 2s for snap-to-center
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
@@ -84,16 +95,43 @@ void loop() {
   // Check for incoming serial data
   readSerial();
 
-  // Check mode toggle button (sends MODE to widget via serial)
-  static unsigned long lastButtonPress = 0;
-  if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress) > BUTTON_DEBOUNCE_MS) {
-    lastButtonPress = now;
-    Serial.println("MODE");
+  // Button handling: short press = demo preset cycle, long press = snap to center
+  bool pressed = (digitalRead(BUTTON_PIN) == LOW);
+
+  if (pressed && !buttonDown) {
+    // Button just pressed down
+    buttonDown = true;
+    buttonDownAt = now;
+  }
+  else if (pressed && buttonDown) {
+    // Button held — check for long press
+    if ((now - buttonDownAt) >= LONG_PRESS_MS) {
+      snapToCenter();
+      buttonDown = false;  // Consume the press, don't fire short press on release
+    }
+  }
+  else if (!pressed && buttonDown) {
+    // Button released — short press if wasn't consumed by long press
+    buttonDown = false;
+    unsigned long held = now - buttonDownAt;
+
+    if (held < LONG_PRESS_MS && held > 50) {  // 50ms debounce floor
+      if (calibrationMode) {
+        advanceCalibration();
+      } else {
+        triggerDemoPreset();
+      }
+    }
   }
 
-  // Process new evaluation if available
-  if (newEvalAvailable) {
+  // Process new evaluation if available (skip during calibration)
+  if (newEvalAvailable && !calibrationMode) {
     newEvalAvailable = false;
+
+    // Any new eval means the session moved on — permission was handled
+    if (permissionPending) {
+      exitPermission();
+    }
 
     #if ENABLE_SERVO_DUCK
       ServoTarget target = servoReducer(latestScores);
@@ -120,9 +158,9 @@ void loop() {
     printEval(latestScores);
   }
 
-  // Fixed-rate updates
+  // Fixed-rate updates (skip spring physics during calibration)
   #if ENABLE_SERVO_DUCK
-  if (now - lastServoUpdate >= SERVO_UPDATE_MS) {
+  if (!calibrationMode && (now - lastServoUpdate >= SERVO_UPDATE_MS)) {
     lastServoUpdate = now;
     updateServo();
   }
@@ -134,6 +172,11 @@ void loop() {
     updateLEDs();
   }
   #endif
+
+  // Permission nag loop
+  if (permissionPending) {
+    updatePermissionNag(now);
+  }
 
   // I2S audio chirp update
   updateI2SAudio();
@@ -179,6 +222,45 @@ void startupAnimation() {
   #if ENABLE_I2S_AUDIO
     playStartupChirp();
   #endif
+}
+
+// --- Permission State Machine ---
+
+// Three-tier nag: urgent (4-8s) → lazy (15-30s) → rare (5-10min)
+void updatePermissionNag(unsigned long now) {
+  if ((now - lastPermissionNag) <= nextNagInterval) return;
+
+  lastPermissionNag = now;
+  unsigned long elapsed = now - permissionStartTime;
+
+  if (elapsed > PERMISSION_RARE_AT) {
+    nextNagInterval = PERMISSION_RARE_BASE + random(PERMISSION_RARE_JITTER);
+  } else if (elapsed > PERMISSION_BACKOFF_AT) {
+    nextNagInterval = PERMISSION_LAZY_BASE + random(PERMISSION_LAZY_JITTER);
+  } else {
+    nextNagInterval = PERMISSION_NAG_BASE + random(-PERMISSION_NAG_JITTER, PERMISSION_NAG_JITTER + 1);
+  }
+
+  #if ENABLE_I2S_AUDIO
+    playPermissionChirp();
+  #endif
+}
+
+void enterPermission() {
+  permissionPending = true;
+  permissionStartTime = millis();
+  lastPermissionNag = 0;  // Chirp immediately
+  Serial.println("[perm] === PERMISSION PENDING ===");
+
+  #if ENABLE_I2S_AUDIO
+    playPermissionChirp();
+  #endif
+}
+
+void exitPermission() {
+  permissionPending = false;
+  chirpServoOffset = 0.0;
+  Serial.println("[perm] === PERMISSION RESOLVED ===");
 }
 
 // --- Debug print ---

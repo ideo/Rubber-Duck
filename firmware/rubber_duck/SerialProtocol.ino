@@ -9,7 +9,16 @@
 // Also accepts test commands:
 //   T   → trigger test eval (positive)
 //   X   → trigger test eval (negative)
+//   D   → cycle demo emotion presets (same as button press)
 //   P   → ping (responds with "PONG")
+//   P,1 → enter permission pending (nag loop)
+//   P,0 → permission resolved (stop nagging)
+//
+// Servo/calibration commands:
+//   S,90   → set servo to absolute angle (10-170)
+//   S,C    → snap to center
+//   S,?    → report current servo angle
+//   CAL    → enter calibration mode
 //
 // Audio commands (USB Audio bridge):
 //   G,0.8  → set mic gain (0.0-10.0)
@@ -40,9 +49,17 @@ void readSerial() {
 void parseMessage(char *msg) {
   char source = msg[0];
 
-  // Test commands
+  // Ping / Permission control
   if (source == 'P') {
-    Serial.println("PONG");
+    if (msg[1] == ',' && msg[2] == '1') {
+      // P,1 → enter permission pending
+      enterPermission();
+    } else if (msg[1] == ',' && msg[2] == '0') {
+      // P,0 → permission resolved
+      exitPermission();
+    } else {
+      Serial.println("PONG");
+    }
     return;
   }
 
@@ -59,6 +76,12 @@ void parseMessage(char *msg) {
     latestScores = {0.8, -0.9, 0.9, -0.8, 0.9, 'U', true};
     newEvalAvailable = true;
     Serial.println("[duck] Test eval: negative");
+    return;
+  }
+
+  if (source == 'D') {
+    // Cycle demo emotion presets (same as button press)
+    triggerDemoPreset();
     return;
   }
 
@@ -80,6 +103,41 @@ void parseMessage(char *msg) {
   if (source == 'V') {
     // Report audio level
     Serial.println("L," + String(getMicLevel(), 3));
+    return;
+  }
+
+  // --- Servo/calibration commands ---
+  if (source == 'S') {
+    if (msg[1] == ',') {
+      if (msg[2] == 'C' || msg[2] == 'c') {
+        // S,C → snap to center
+        snapToCenter();
+      } else if (msg[2] == '?') {
+        // S,? → report current angle
+        int pos = (int)(SERVO_CENTER + servoCurrentAngle);
+        Serial.println("[servo] Current: " + String(pos) + " deg (offset " +
+                       String(servoCurrentAngle, 1) + " from " + String(SERVO_CENTER) + ")");
+        Serial.println("[servo] Target:  " + String((int)(SERVO_CENTER + servoTargetAngle)) + " deg");
+        Serial.println("[servo] Range:   " + String(SERVO_MIN) + " - " + String(SERVO_MAX));
+        Serial.println("[servo] Cal mode: " + String(calibrationMode ? "ON" : "OFF"));
+      } else {
+        // S,90 → set to specific angle
+        int angle = (int)strtof(msg + 2, NULL);
+        setServoAngleDirect(angle);
+      }
+    }
+    return;
+  }
+
+  // CAL → enter calibration mode from serial
+  if (strncmp(msg, "CAL", 3) == 0) {
+    enterCalibration();
+    return;
+  }
+
+  // N → advance calibration step (next)
+  if (source == 'N' && calibrationMode) {
+    advanceCalibration();
     return;
   }
 

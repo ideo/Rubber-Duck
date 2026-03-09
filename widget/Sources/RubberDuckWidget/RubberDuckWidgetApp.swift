@@ -70,9 +70,9 @@ struct RubberDuckWidgetApp: App {
             evalService?.sendVoiceInput(text)
         }
 
-        // Permission response → send to service → unblock hook
-        speechService.onPermissionResponse = { [weak evalService] index in
-            evalService?.sendPermissionDecision(index: index)
+        // Permission response → send to service → unblock hook → tell Teensy
+        speechService.onPermissionResponse = { [weak coordinator] index in
+            coordinator?.handlePermissionDecision(index: index)
         }
 
         // Wake word → duck acknowledges

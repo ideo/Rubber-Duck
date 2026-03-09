@@ -6,10 +6,19 @@
 - [x] **Unified speech engine** (`service/speech.py`) — swappable STT/TTS backend
 - [x] **Voice → Claude Code bridge** — say "ducky [command]" → tmux send-keys
 - [x] **tmux session launcher** (`scripts/duck-session`)
-- [x] **USB Audio firmware** — Teensy mic (A0) → USB Audio → Mac
+- [x] **USB Audio firmware** — Teensy mic (A0) → USB Audio → Mac, TTS playback via I2S
 - [x] **macOS floating widget** — SwiftUI yellow cube with expression engine
 - [x] **Mac `say` TTS** — Boing voice for duck reactions
 - [x] **Plugin script structure** (`scripts/`) — portable hooks
+- [x] **I2S chirp engine** — sawtooth → bandpass filter, sentiment-driven quacks
+- [x] **Double-chirp patterns** — whistle (very positive) and uh-uh (very negative)
+- [x] **Whistle-servo coupling** — head bobs synced to chirp pitch hills
+- [x] **Expression decay** — poses spring back to center after 5s hold
+- [x] **Idle heartbeat** — gentle ±5° random drift when duck is at rest
+- [x] **Demo button presets** — 6 emotions (Impressed→Bored) cycled by button press
+- [x] **Permission nag system** — "uh-oh" chirp with 3-tier backoff (urgent→lazy→rare)
+- [x] **Widget ↔ Teensy permission wiring** — P,1/P,0 serial commands for nag lifecycle
+- [x] **Critic/Relay voice modes** — toggle via Teensy button or widget menu
 
 ## 🔮 Next: Realtime API Migration
 
