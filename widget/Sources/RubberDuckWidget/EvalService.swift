@@ -19,6 +19,7 @@ class EvalService: ObservableObject {
     // Permission state
     @Published var permissionPending: Bool = false
     @Published var permissionTool: String = ""
+    @Published var permissionSummary: String = ""
     @Published var permissionOptions: [String] = []
     @Published var permissionRequestId: Int = 0
 
@@ -69,6 +70,7 @@ class EvalService: ObservableObject {
 
         case .permission(let event):
             permissionTool = event.toolName ?? "unknown"
+            permissionSummary = event.actionSummary ?? ""
             let isPending = (event.status == "pending")
             permissionPending = isPending
             if isPending {

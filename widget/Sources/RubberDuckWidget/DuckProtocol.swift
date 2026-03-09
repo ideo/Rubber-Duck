@@ -63,12 +63,14 @@ struct PermissionEvent: Codable {
     let toolName: String?
     let toolInput: String?
     let optionLabels: [String]?
+    let actionSummary: String?  // TTS-friendly description of what the tool wants to do
 
     enum CodingKeys: String, CodingKey {
         case type, status
         case toolName = "tool_name"
         case toolInput = "tool_input"
         case optionLabels = "option_labels"
+        case actionSummary = "action_summary"
     }
 }
 

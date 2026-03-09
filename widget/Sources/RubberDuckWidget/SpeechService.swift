@@ -126,8 +126,9 @@ class SpeechService: ObservableObject {
         tts.stop()
     }
 
-    func askPermission(toolName: String, options: [String] = []) {
-        let prompt = "\(toolName). Allow?"
+    func askPermission(toolName: String, summary: String = "", options: [String] = []) {
+        let label = summary.isEmpty ? toolName : summary
+        let prompt = "\(label). Allow?"
         permissionGate.startWaiting(optionCount: options.count, prompt: prompt)
         speak(prompt)
     }
@@ -166,13 +167,13 @@ class SpeechService: ObservableObject {
             let decision = permissionGate.process(transcript)
             switch decision {
             case .allow:
-                speak("Got it.")
+                speak(["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!)
                 onPermissionResponse?(0)
             case .deny:
-                speak("Blocked it.")
+                speak(["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!)
                 onPermissionResponse?(-1)
             case .selectOption(let index):
-                speak("Got it, option \(index).")
+                speak(["Got it, option \(index).", "Going with \(index).", "Option \(index) it is."].randomElement()!)
                 onPermissionResponse?(index)
             case .repeatPrompt:
                 speak(permissionGate.lastPrompt)
@@ -199,7 +200,7 @@ class SpeechService: ObservableObject {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if !Task.isCancelled && self.wakeWordProcessor.isAwake && self.wakeWordProcessor.pendingText.isEmpty {
                     self.log("[speech] No command after wake word, restarting...")
-                    self.speak("Hmm?")
+                    self.speak(["Hmm?", "Yeah?", "What's up?", "I'm here."].randomElement()!)
                     self.wakeWordProcessor.reset()
                     self.lastHeard = ""
                     self.stt.resetRestartAttempts()
@@ -239,7 +240,7 @@ class SpeechService: ObservableObject {
         stopListening()
 
         log("[speech] Sending: \(text)")
-        speak("On it.")
+        speak(["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!)
         onVoiceInput?(text)
 
         restartAfterTTS()

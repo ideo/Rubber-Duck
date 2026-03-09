@@ -177,8 +177,9 @@ class DuckServer: ObservableObject {
                     let suggestions = json["permission_suggestions"] as? [[String: Any]] ?? []
 
                     let optionLabels = suggestions.map { PermissionGate.describeSuggestion($0) }
+                    let summary = summarizePermission(toolName: toolName, toolInput: toolInput)
 
-                    DuckLog.log("[permission] Request: \(toolName) (\(suggestions.count) options)")
+                    DuckLog.log("[permission] Request: \(toolName) → \"\(summary)\" (\(suggestions.count) options)")
 
                     // Broadcast pending to WebSocket clients
                     let pendingEvent = PermissionEvent(
@@ -186,7 +187,8 @@ class DuckServer: ObservableObject {
                         status: "pending",
                         toolName: toolName,
                         toolInput: String(describing: toolInput).prefix(200).description,
-                        optionLabels: optionLabels
+                        optionLabels: optionLabels,
+                        actionSummary: summary
                     )
                     await broadcaster.broadcast(pendingEvent)
 
@@ -202,7 +204,7 @@ class DuckServer: ObservableObject {
                         DuckLog.log("[permission] Timeout — no response")
                         let timeoutEvent = PermissionEvent(
                             type: "permission", status: "timeout",
-                            toolName: toolName, toolInput: nil, optionLabels: nil
+                            toolName: toolName, toolInput: nil, optionLabels: nil, actionSummary: nil
                         )
                         await broadcaster.broadcast(timeoutEvent)
                         await MainActor.run {
@@ -218,7 +220,7 @@ class DuckServer: ObservableObject {
                     // Broadcast resolution
                     let resolvedEvent = PermissionEvent(
                         type: "permission", status: decision,
-                        toolName: toolName, toolInput: nil, optionLabels: nil
+                        toolName: toolName, toolInput: nil, optionLabels: nil, actionSummary: nil
                     )
                     await broadcaster.broadcast(resolvedEvent)
                     await MainActor.run {
@@ -377,6 +379,78 @@ private final class SessionContext: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return lastClaudeText[sessionId] ?? ""
+    }
+}
+
+// MARK: - Permission Summarization
+
+/// Generate a short, TTS-friendly description of what a tool wants to do.
+/// Never reads raw commands, paths, or URLs aloud — always human speech.
+func summarizePermission(toolName: String, toolInput: Any) -> String {
+    // Try to parse toolInput as a JSON dict (it may arrive as a string or dict)
+    let dict: [String: Any]
+    if let d = toolInput as? [String: Any] {
+        dict = d
+    } else if let str = toolInput as? String,
+              let data = str.data(using: .utf8),
+              let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        dict = d
+    } else {
+        dict = [:]
+    }
+
+    switch toolName {
+    case "Bash":
+        guard let command = dict["command"] as? String else { return "Run a command" }
+        let base = command.trimmingCharacters(in: .whitespaces)
+            .components(separatedBy: .whitespaces).first ?? ""
+        switch base {
+        case "git":     return "Run git"
+        case "npm", "npx": return "Run \(base)"
+        case "make":    return "Run make"
+        case "swift":   return "Run swift"
+        case "curl", "wget": return "Make a network request"
+        case "rm":      return "Delete files"
+        case "mkdir":   return "Create a directory"
+        case "pip", "pip3", "brew", "cargo", "yarn", "pnpm", "bun":
+            return "Run \(base)"
+        case "ls", "find", "tree": return "List files"
+        case "cat", "head", "tail", "less": return "Read a file"
+        case "cd":      return "Change directory"
+        case "cp", "mv": return "Move files"
+        case "chmod", "chown": return "Change file permissions"
+        case "docker":  return "Run docker"
+        case "xcodebuild": return "Build with Xcode"
+        default:        return "Run a command"
+        }
+
+    case "Edit":
+        if let path = dict["file_path"] as? String {
+            let basename = (path as NSString).lastPathComponent
+            let name = (basename as NSString).deletingPathExtension
+            return "Edit \(name)"
+        }
+        return "Edit a file"
+
+    case "Write":
+        return "Write a new file"
+
+    case "WebFetch":
+        return "Fetch a webpage"
+
+    case "Glob", "Grep":
+        return "Search the codebase"
+
+    case "Read":
+        if let path = dict["file_path"] as? String {
+            let basename = (path as NSString).lastPathComponent
+            let name = (basename as NSString).deletingPathExtension
+            return "Read \(name)"
+        }
+        return "Read a file"
+
+    default:
+        return toolName
     }
 }
 

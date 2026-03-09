@@ -7,7 +7,7 @@ enum DuckTheme {
     static let widgetSize: CGFloat = 120
     static let cornerRadius: CGFloat = 18
     static let eyeSize: CGFloat = 10
-    static let eyeSpacing: CGFloat = 24
+    static let eyeSpacing: CGFloat = 30
 
     // Duck yellow palette
     static let bodyColor = Color(red: 1.0, green: 0.85, blue: 0.2)

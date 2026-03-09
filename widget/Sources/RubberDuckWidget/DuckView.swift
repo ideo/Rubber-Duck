@@ -12,6 +12,7 @@ struct DuckView: View {
     @EnvironmentObject var serialManager: SerialManager
 
     @State private var isBreathing = false
+    @State private var isBlinking = false
 
     var body: some View {
         ZStack {
@@ -91,6 +92,7 @@ struct DuckView: View {
         .contextMenu { duckContextMenu }
         .onAppear {
             isBreathing = true
+            scheduleBlink()
         }
         .onChange(of: evalService.evalCount) {
             coordinator.handleNewEval()
@@ -129,26 +131,26 @@ struct DuckView: View {
                     duckEye
                 }
                 .offset(y: coordinator.expression.eyeOffsetY)
-                .padding(.top, 28)
+                .padding(.top, 34)
 
                 // Beak
                 duckBeak
-                    .padding(.top, 2)
+                    .padding(.top, 0)
 
                 Spacer()
             }
 
-            // Cheek blush (visible when happy)
+            // Cheek blush (visible when happy — flanking the beak)
             if let s = evalService.scores, s.soundness > 0.3 {
-                HStack(spacing: 36) {
-                    Circle()
+                HStack(spacing: 40) {
+                    Ellipse()
                         .fill(DuckTheme.cheekColor)
                         .frame(width: 14, height: 10)
-                    Circle()
+                    Ellipse()
                         .fill(DuckTheme.cheekColor)
                         .frame(width: 14, height: 10)
                 }
-                .offset(y: 6)
+                .offset(y: 16)
                 .opacity(Double(s.soundness) * 0.5)
             }
 
@@ -165,11 +167,17 @@ struct DuckView: View {
     // MARK: - Eyes
 
     private var duckEye: some View {
-        Ellipse()
+        let eyeScale = isBlinking ? 0.1 : coordinator.expression.eyeHeight
+        return Ellipse()
             .fill(DuckTheme.eyeColor)
             .frame(
                 width: DuckTheme.eyeSize,
-                height: DuckTheme.eyeSize * coordinator.expression.eyeHeight
+                height: DuckTheme.eyeSize * eyeScale
+            )
+            .frame(width: DuckTheme.eyeSize, height: DuckTheme.eyeSize * 1.5)
+            .animation(
+                .spring(response: 0.1, dampingFraction: 0.9),
+                value: isBlinking
             )
             .animation(
                 .spring(response: 0.3, dampingFraction: 0.7),
@@ -184,13 +192,13 @@ struct DuckView: View {
             // Top beak
             Ellipse()
                 .fill(DuckTheme.beakColor)
-                .frame(width: 20, height: 10)
+                .frame(width: 30, height: 12)
 
             // Bottom beak (opens with expression)
             Ellipse()
                 .fill(DuckTheme.beakColor.opacity(0.8))
-                .frame(width: 16, height: 6)
-                .offset(y: 4 + coordinator.expression.beakOpen * 6)
+                .frame(width: 24, height: 8)
+                .offset(y: 5 + coordinator.expression.beakOpen * 8)
                 .animation(.spring(response: 0.2), value: coordinator.expression.beakOpen)
         }
     }
@@ -199,13 +207,15 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
+        Button("Start Claude Session") { startClaudeSession() }
+
+        Divider()
+
         if speechService.isListening {
             Button("Stop Listening") { speechService.stopListening() }
         } else {
             Button("Start Listening") { speechService.startListening() }
         }
-
-        Divider()
 
         Button(coordinator.mode == .critic ? "Switch to Relay Mode" : "Switch to Critic Mode") {
             coordinator.toggleMode()
@@ -227,10 +237,6 @@ struct DuckView: View {
         if !duckServer.isRunning {
             Button("Start Server") { duckServer.start() }
         }
-
-        Divider()
-
-        Button("Start Claude Session") { startClaudeSession() }
 
         Divider()
 
@@ -275,6 +281,19 @@ struct DuckView: View {
             print("[app] Launched Claude terminal session")
         } catch {
             print("[app] Failed to launch Claude session: \(error)")
+        }
+    }
+
+    // MARK: - Blink
+
+    private func scheduleBlink() {
+        let delay = Double.random(in: 2.5...6.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            isBlinking = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                isBlinking = false
+                scheduleBlink()
+            }
         }
     }
 }
