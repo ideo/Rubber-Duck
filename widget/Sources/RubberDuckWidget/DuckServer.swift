@@ -103,7 +103,7 @@ class DuckServer: ObservableObject {
                     do {
                         scores = try await evaluator.evaluate(text: text, source: source, userContext: userContext)
                     } catch {
-                        print("[server] Eval error: \(error)")
+                        DuckLog.log("[server] Eval error: \(error)")
                         scores = EvalScores(
                             creativity: 0, soundness: 0, ambition: 0,
                             elegance: 0, risk: 0,
@@ -133,7 +133,7 @@ class DuckServer: ObservableObject {
                     }
 
                     // Log
-                    print("[\(source)] \(scores.reaction ?? "...")  |  \(scores.summary ?? "")  |  "
+                    DuckLog.log("[\(source)] \(scores.reaction ?? "...")  |  \(scores.summary ?? "")  |  "
                         + "cr:\(String(format: "%+.1f", scores.creativity)) "
                         + "sn:\(String(format: "%+.1f", scores.soundness)) "
                         + "am:\(String(format: "%+.1f", scores.ambition)) "
@@ -167,7 +167,7 @@ class DuckServer: ObservableObject {
 
                     let optionLabels = suggestions.map { PermissionGate.describeSuggestion($0) }
 
-                    print("[permission] Request: \(toolName) (\(suggestions.count) options)")
+                    DuckLog.log("[permission] Request: \(toolName) (\(suggestions.count) options)")
 
                     // Broadcast pending to WebSocket clients
                     let pendingEvent = PermissionEvent(
@@ -188,7 +188,7 @@ class DuckServer: ObservableObject {
                     let (decision, suggestionIndex) = await permissionGate.waitForDecision()
 
                     if decision == "timeout" {
-                        print("[permission] Timeout — no response from widget")
+                        DuckLog.log("[permission] Timeout — no response")
                         let timeoutEvent = PermissionEvent(
                             type: "permission", status: "timeout",
                             toolName: toolName, toolInput: nil, optionLabels: nil
@@ -317,7 +317,10 @@ class DuckServer: ObservableObject {
 
                 let app = Application(
                     router: router,
-                    server: .http1WebSocketUpgrade(webSocketRouter: router),
+                    server: .http1WebSocketUpgrade(
+                        webSocketRouter: router,
+                        configuration: .init(autoPing: .disabled)
+                    ),
                     configuration: .init(
                         address: .hostname("127.0.0.1", port: port),
                         serverName: "RubberDuck"
@@ -325,18 +328,14 @@ class DuckServer: ObservableObject {
                     logger: logger
                 )
 
-                print("=" * 50)
-                print("  RUBBER DUCK — Evaluation Service (Swift)")
-                print("  Dashboard:  http://localhost:\(port)")
-                print("  3D Viewer:  http://localhost:\(port)/viewer")
-                print("=" * 50)
+                DuckLog.log("[server] Started on http://localhost:\(port)")
 
                 await setRunning(true)
 
                 try await app.run()
 
             } catch {
-                print("[server] Failed to start: \(error)")
+                DuckLog.log("[server] Failed to start: \(error)")
                 await setRunning(false)
             }
         }
@@ -346,7 +345,7 @@ class DuckServer: ObservableObject {
         serverTask?.cancel()
         serverTask = nil
         isRunning = false
-        print("[server] Stopped")
+        DuckLog.log("[server] Stopped")
     }
 }
 

@@ -73,16 +73,6 @@ float getMicLevel() {
   return audioLevel;
 }
 
-// ============================================================
-// VU Meter mode (optional — shows audio level on LED bar when idle)
-// ============================================================
-void showVUMeter() {
-  // Requires LED hardware — no-op without it
-  #if !ENABLE_LED_DUCK
-    return;
-  #endif
-}
-
 #else
 
 // Stubs when USB Audio is disabled
@@ -91,6 +81,5 @@ void updateAudioBridge() {}
 void setMicGain(float gain) {}
 void setMicMute(bool mute) {}
 float getMicLevel() { return 0.0; }
-void showVUMeter() {}
 
 #endif

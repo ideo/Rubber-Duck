@@ -70,20 +70,20 @@ struct RubberDuckWidgetApp: App {
             evalService?.sendVoiceInput(text)
         }
 
-        // Permission response → send to service → unblock hook
-        speechService.onPermissionResponse = { [weak evalService] index in
-            evalService?.sendPermissionDecision(index: index)
+        // Permission response → send to service → unblock hook → tell Teensy
+        speechService.onPermissionResponse = { [weak coordinator] index in
+            coordinator?.handlePermissionDecision(index: index)
         }
 
         // Wake word → duck acknowledges
         speechService.onWakeWord = { [weak speechService] in
-            print("[app] Wake word detected")
+            DuckLog.log("[app] Wake word detected")
             _ = speechService // retain
         }
 
         // Teensy serial → log incoming messages
         serialManager.onLineReceived = { line in
-            print("[serial] \(line)")
+            DuckLog.log("[serial] \(line)")
         }
 
         // Teensy mode button → toggle coordinator mode
@@ -101,7 +101,7 @@ struct RubberDuckWidgetApp: App {
                     return
                 }
             }
-            print("[app] Permissions not granted after 10s. Use right-click → Start Listening.")
+            DuckLog.log("[app] Permissions not granted after 10s. Use right-click → Start Listening.")
         }
     }
 }

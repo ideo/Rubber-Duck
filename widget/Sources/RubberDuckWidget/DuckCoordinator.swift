@@ -30,6 +30,13 @@ class DuckCoordinator: ObservableObject {
         updateExpression()
         flashReaction()
 
+        // Any new eval means the session moved on — resolve permission if pending
+        // (Belt and suspenders: Teensy firmware also auto-resolves on new eval)
+        if evalService.permissionPending {
+            evalService.permissionPending = false
+        }
+        serialManager.sendCommand("P,0")
+
         // Send to Teensy via serial
         if let scores = evalService.scores {
             serialManager.sendScores(scores, source: evalService.source)
@@ -57,14 +64,30 @@ class DuckCoordinator: ObservableObject {
         speechService.speak(label)
     }
 
-    /// Called when permission state changes.
+    /// Called when a new permission request arrives.
     func handlePermissionChange() {
         updateExpression()
         if evalService.permissionPending {
+            serialManager.sendCommand("P,1")
             triggerPermissionWobble()
             speechService.askPermission(toolName: evalService.permissionTool,
                                         options: evalService.permissionOptions)
         }
+    }
+
+    /// Called when user approves/denies permission (voice or UI).
+    /// Direct path — doesn't depend on SwiftUI onChange.
+    func handlePermissionDecision(index: Int) {
+        evalService.sendPermissionDecision(index: index)
+        serialManager.sendCommand("P,0")
+        updateExpression()
+    }
+
+    /// Called when permission resolves (pending → false) via onChange.
+    /// Backup path in case decision comes from outside the widget.
+    func handlePermissionResolved() {
+        updateExpression()
+        serialManager.sendCommand("P,0")
     }
 
     // MARK: - Expression

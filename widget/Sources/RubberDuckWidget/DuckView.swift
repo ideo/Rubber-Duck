@@ -98,6 +98,11 @@ struct DuckView: View {
         .onChange(of: evalService.permissionRequestId) {
             coordinator.handlePermissionChange()
         }
+        .onChange(of: evalService.permissionPending) {
+            if !evalService.permissionPending {
+                coordinator.handlePermissionResolved()
+            }
+        }
     }
 
     // MARK: - Duck Body

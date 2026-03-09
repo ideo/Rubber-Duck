@@ -2,29 +2,40 @@
 //
 // Port of service/permission.py. Uses CheckedContinuation for async blocking
 // until the widget sends a voice response (allow/deny).
+//
+// Timeout uses DispatchQueue instead of Task.sleep to avoid the
+// swift_task_dealloc crash that occurs with Task.sleep(for:) in
+// certain actor/continuation contexts.
 
 import Foundation
 
 actor PermissionGate {
 
     private var continuation: CheckedContinuation<(String, Int?), Never>?
-    private var timeoutTask: Task<Void, Never>?
+    private var timeoutWorkItem: DispatchWorkItem?
 
     // MARK: - Wait / Resolve
 
     /// Block until the widget sends a permission response, or timeout.
     /// Returns (decision, suggestionIndex) where decision is "allow", "deny", or "timeout".
-    func waitForDecision(timeout: Duration = .seconds(30)) async -> (String, Int?) {
+    func waitForDecision(timeoutSeconds: Double = 30.0) async -> (String, Int?) {
         // Cancel any stale pending request
-        timeoutTask?.cancel()
-        timeoutTask = nil
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
         if let old = continuation {
             continuation = nil
             old.resume(returning: ("timeout", nil))
         }
 
         let result = await withCheckedContinuation { (cont: CheckedContinuation<(String, Int?), Never>) in
-            self.storeContinuationAndStartTimeout(cont, timeout: timeout)
+            continuation = cont
+
+            // Use GCD for timeout — avoids swift_task_dealloc crash from Task.sleep
+            let workItem = DispatchWorkItem { [weak self] in
+                Task { await self?.handleTimeout() }
+            }
+            timeoutWorkItem = workItem
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: workItem)
         }
 
         return result
@@ -33,10 +44,10 @@ actor PermissionGate {
     /// Called when the widget sends a permission response via WebSocket or local transport.
     func resolve(decision: String, suggestionIndex: Int? = nil) {
         let validDecision = (decision == "allow" || decision == "deny") ? decision : "deny"
-        print("[permission] Resolved: \(validDecision), suggestion_index=\(String(describing: suggestionIndex))")
+        DuckLog.log("[permission] Resolved: \(validDecision), suggestion_index=\(String(describing: suggestionIndex))")
 
-        timeoutTask?.cancel()
-        timeoutTask = nil
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
 
         if let cont = continuation {
             continuation = nil
@@ -44,26 +55,11 @@ actor PermissionGate {
         }
     }
 
-    /// Store continuation and launch a detached timeout task.
-    /// Using Task.detached avoids inheriting the suspended parent task context,
-    /// which prevents the swift_task_dealloc crash that occurs with Task { }.
-    private func storeContinuationAndStartTimeout(
-        _ cont: CheckedContinuation<(String, Int?), Never>,
-        timeout: Duration
-    ) {
-        continuation = cont
-        timeoutTask = Task.detached { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            await self?.handleTimeout()
-        }
-    }
-
     private func handleTimeout() {
         guard let cont = continuation else { return }
-        print("[permission] Timeout — no response from widget")
+        DuckLog.log("[permission] Timeout — no response from widget")
         continuation = nil
-        timeoutTask = nil
+        timeoutWorkItem = nil
         cont.resume(returning: ("timeout", nil))
     }
 
