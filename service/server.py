@@ -18,12 +18,13 @@ load_dotenv(pathlib.Path(__file__).parent / ".env", override=True)
 
 from aiohttp import web
 
+import duck_config
 import tmux_bridge
 from routes import create_app
 
 # --- Config ---
-PORT = 3333
-PID_PATH = pathlib.Path(__file__).parent / ".pid"
+PORT = duck_config.port
+PID_PATH = duck_config.pid_file
 
 
 # --- PID / Signal ---
@@ -52,8 +53,8 @@ def handle_signal(signum, frame):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Rubber Duck Evaluation Service")
-    parser.add_argument("--tmux-session", default="duck", help="tmux session name for voice bridge")
-    parser.add_argument("--tmux-pane", default="claude.0", help="tmux pane for Claude Code input")
+    parser.add_argument("--tmux-session", default=duck_config.tmux_session, help="tmux session name for voice bridge")
+    parser.add_argument("--tmux-pane", default=f"{duck_config.tmux_window}.0", help="tmux pane for Claude Code input")
     parser.add_argument("--port", type=int, default=PORT, help="HTTP server port")
     args = parser.parse_args()
 

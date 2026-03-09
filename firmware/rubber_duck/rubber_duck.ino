@@ -260,6 +260,7 @@ void enterPermission() {
 void exitPermission() {
   permissionPending = false;
   chirpServoOffset = 0.0;
+  resetAmbient();  // Settle back from nag positions
   Serial.println("[perm] === PERMISSION RESOLVED ===");
 }
 

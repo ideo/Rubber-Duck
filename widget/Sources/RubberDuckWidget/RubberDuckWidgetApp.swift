@@ -59,6 +59,9 @@ struct RubberDuckWidgetApp: App {
     // MARK: - Service Wiring
 
     private func wireServices() {
+        // Write runtime config for shell scripts and Python
+        DuckConfig.writeRuntimeConfig()
+
         // Start the embedded HTTP + WebSocket server
         duckServer.start()
 

@@ -3,7 +3,10 @@
 # POSTs to the eval service and BLOCKS until voice approval or timeout.
 # Returns hookSpecificOutput with behavior: "allow"/"deny" to Claude Code.
 
-LOG="/tmp/duck-permission-hook.log"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/duck-env.sh"
+
+LOG="${HOME}/.duck/permission.log"
 
 # 1. Log hook start with timestamp
 echo "========================================" >> "$LOG"
@@ -31,11 +34,11 @@ CURL_BODY=$(jq -n \
     --arg session "$SESSION_ID" \
     --argjson suggestions "$PERMISSION_SUGGESTIONS" \
     '{tool_name: $tool, tool_input: $input, session_id: $session, permission_suggestions: $suggestions}')
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] CURL REQUEST: POST http://localhost:3333/permission" >> "$LOG"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] CURL REQUEST: POST ${DUCK_SERVICE_URL}/permission" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] CURL BODY: $CURL_BODY" >> "$LOG"
 
 # POST to permission endpoint (blocks until voice response or 30s timeout)
-RESPONSE=$(curl -s -X POST http://localhost:3333/permission \
+RESPONSE=$(curl -s -X POST ${DUCK_SERVICE_URL}/permission \
   -H "Content-Type: application/json" \
   -d "$CURL_BODY" \
   --max-time 35)

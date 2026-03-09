@@ -2,6 +2,9 @@
 # Hook: UserPromptSubmit - fires when user hits enter
 # Sends the user's prompt to the evaluation service
 
+[ -f "${HOME}/.duck/config" ] && source "${HOME}/.duck/config"
+DUCK_SERVICE_URL="${DUCK_SERVICE_URL:-http://localhost:${DUCK_SERVICE_PORT:-3333}}"
+
 INPUT=$(cat)
 
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // ""')
@@ -19,7 +22,7 @@ PAYLOAD=$(jq -n \
   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{session_id: $session, timestamp: $timestamp, source: $source, text: $text}')
 
-curl -s -X POST http://localhost:3333/evaluate \
+curl -s -X POST "${DUCK_SERVICE_URL}/evaluate" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD" > /dev/null 2>&1
 

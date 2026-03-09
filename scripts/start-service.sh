@@ -3,8 +3,9 @@
 # Writes PID to service/.pid for lifecycle management.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/duck-env.sh"
 SERVICE_DIR="$(dirname "$SCRIPT_DIR")/service"
-PID_FILE="$SERVICE_DIR/.pid"
+PID_FILE="$DUCK_PID_FILE"
 
 # Check if already running
 if [ -f "$PID_FILE" ]; then
@@ -24,13 +25,13 @@ fi
 
 # Start service in background
 cd "$SERVICE_DIR"
-nohup python3 server.py "$@" > "$SERVICE_DIR/duck.log" 2>&1 &
+nohup python3 server.py --port "$DUCK_SERVICE_PORT" "$@" > "$SERVICE_DIR/duck.log" 2>&1 &
 SERVICE_PID=$!
 echo "$SERVICE_PID" > "$PID_FILE"
 
 # Wait for service to be ready
 for i in $(seq 1 10); do
-    if curl -s http://localhost:3333/health > /dev/null 2>&1; then
+    if curl -s "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
         echo "🦆 Service started (PID $SERVICE_PID)"
         exit 0
     fi

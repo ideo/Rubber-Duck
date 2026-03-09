@@ -2,15 +2,16 @@
 # Stop the Rubber Duck eval service gracefully.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/duck-env.sh"
 SERVICE_DIR="$(dirname "$SCRIPT_DIR")/service"
-PID_FILE="$SERVICE_DIR/.pid"
+PID_FILE="$DUCK_PID_FILE"
 
 if [ ! -f "$PID_FILE" ]; then
     # Try to find and kill by port as fallback
-    PIDS=$(lsof -ti:3333 2>/dev/null)
+    PIDS=$(lsof -ti:"$DUCK_SERVICE_PORT" 2>/dev/null)
     if [ -n "$PIDS" ]; then
         echo "$PIDS" | xargs kill 2>/dev/null
-        echo "🦆 Service stopped (found on port 3333)"
+        echo "🦆 Service stopped (found on port $DUCK_SERVICE_PORT)"
     else
         echo "🦆 Service not running"
     fi

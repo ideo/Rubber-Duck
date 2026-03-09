@@ -27,10 +27,12 @@ load_dotenv(pathlib.Path(__file__).parent / ".env", override=True)
 import anthropic
 import requests
 
+import duck_config
+
 # --- Config ---
 DEFAULT_VOICE = "Boing"
 DEFAULT_WAKE_WORD = "ducky"
-EVAL_URL = "http://localhost:3333/evaluate"
+EVAL_URL = duck_config.service_url + "/evaluate"
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 SYSTEM_PROMPT = """You are a rubber duck sitting on a developer's desk. You're having a voice conversation with the developer. Keep responses SHORT (1-3 sentences max) — you're chatty but concise. Be opinionated about code and tech. You have personality: sometimes snarky, sometimes encouraging, always honest. You occasionally say "quack" when surprised."""
 

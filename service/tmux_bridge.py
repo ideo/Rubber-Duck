@@ -4,9 +4,11 @@ tmux Bridge — inject voice commands into Claude Code CLI via tmux send-keys.
 
 import subprocess
 
+import duck_config
+
 # Configurable via CLI args (set by server.py main)
-session = "duck"
-pane = "claude.0"
+session = duck_config.tmux_session
+pane = f"{duck_config.tmux_window}.0"
 
 
 def send_to_claude_code(text: str):

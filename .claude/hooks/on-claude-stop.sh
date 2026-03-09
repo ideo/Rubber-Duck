@@ -2,6 +2,9 @@
 # Hook: Stop - fires when Claude finishes responding
 # Sends Claude's response (with user context) to the evaluation service
 
+[ -f "${HOME}/.duck/config" ] && source "${HOME}/.duck/config"
+DUCK_SERVICE_URL="${DUCK_SERVICE_URL:-http://localhost:${DUCK_SERVICE_PORT:-3333}}"
+
 INPUT=$(cat)
 
 LAST_MESSAGE=$(echo "$INPUT" | jq -r '.last_assistant_message // ""')
@@ -33,7 +36,7 @@ PAYLOAD=$(jq -n \
   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{session_id: $session, timestamp: $timestamp, source: $source, text: $text, user_context: $context}')
 
-curl -s -X POST http://localhost:3333/evaluate \
+curl -s -X POST "${DUCK_SERVICE_URL}/evaluate" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD" > /dev/null 2>&1
 

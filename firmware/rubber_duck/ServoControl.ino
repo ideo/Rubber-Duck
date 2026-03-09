@@ -24,7 +24,17 @@ float servoOscillationPhase = 0.0;
 unsigned long lastEvalTime = 0;  // For expression decay back to rest
 
 // --- Idle Heartbeat State ---
-unsigned long nextIdleHop = 0;   // When to pick a new idle target
+unsigned long nextIdleHop = 0;       // When to pick a new idle target
+int   idleClusterRemaining = 0;      // Micro-hops left in current cluster
+unsigned long nextClusterHop = 0;    // When to fire next micro-hop
+
+// --- Ambient (subconscious) Layer ---
+// Additive offset on top of conscious position. Owns idle drift,
+// permission nag positions, and (future) speaking wobble.
+float ambientCurrentOffset = 0.0;
+float ambientTargetOffset  = 0.0;
+float ambientVelocity      = 0.0;
+bool  ambientSpringActive  = false;  // true = spring chases target (nags), false = direct position
 
 // --- Calibration State ---
 bool  calibrationMode = false;
@@ -103,17 +113,42 @@ void updateServo() {
     servoVelocity += direction * EXPRESSION_RETURN_KICK;
   }
 
-  // Idle heartbeat: gentle random hops when at rest
-  if (!permissionPending && !i2sChirpActive &&
+  // Cluster micro-hops: tight follow-up positions (bird-like "choosing what to look at")
+  if (idleClusterRemaining > 0 && now > nextClusterHop &&
+      !permissionPending && !i2sChirpActive && !ttsActive) {
+    float raw = ((float)random(-100, 101) / 100.0f) * IDLE_CLUSTER_DELTA;
+    float delta = (raw >= 0) ? max(raw, IDLE_CLUSTER_MIN_DELTA) : min(raw, -IDLE_CLUSTER_MIN_DELTA);
+    ambientTargetOffset = constrain(ambientTargetOffset + delta, -IDLE_HOP_RANGE, IDLE_HOP_RANGE);
+    ambientVelocity = 0;
+    ambientSpringActive = false;
+    idleClusterRemaining--;
+    if (idleClusterRemaining > 0) {
+      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+    }
+  }
+
+  // Idle heartbeat: start a new hop cluster
+  if (idleClusterRemaining == 0 && !permissionPending && !i2sChirpActive && !ttsActive &&
       (now - lastEvalTime) > EXPRESSION_HOLD_MS && now > nextIdleHop) {
-    float hop = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;  // ±IDLE_HOP_RANGE
-    servoTargetAngle = hop;
-    float direction = (hop > servoCurrentAngle) ? 1.0f : -1.0f;
-    servoVelocity += direction * IDLE_HOP_KICK;
+    // Pick cluster size: 50% single, 40% double, 10% triple
+    int roll = random(100);
+    int clusterSize = (roll < 50) ? 1 : (roll < 90) ? 2 : 3;
+
+    // First position
+    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;
+    ambientVelocity = 0;
+    ambientSpringActive = false;
+
+    // Schedule remaining cluster micro-hops
+    idleClusterRemaining = clusterSize - 1;
+    if (idleClusterRemaining > 0) {
+      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+    }
+
     nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
   }
 
-  // Spring physics: pull toward target
+  // Spring physics: pull toward target (conscious layer)
   float diff = servoTargetAngle - servoCurrentAngle;
   servoVelocity += diff * SPRING_K;
   servoVelocity *= SPRING_DAMPING;
@@ -127,9 +162,20 @@ void updateServo() {
 
   servoCurrentAngle += servoVelocity;
 
+  // Ambient layer: spring (nag kicks) or simple ease (idle hops)
+  if (ambientSpringActive) {
+    float ambientDiff = ambientTargetOffset - ambientCurrentOffset;
+    ambientVelocity += ambientDiff * AMBIENT_SPRING_K;
+    ambientVelocity *= AMBIENT_SPRING_DAMPING;
+    ambientCurrentOffset += ambientVelocity;
+  } else {
+    // Exponential ease-out: fast start, gentle arrival
+    ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * AMBIENT_LERP_RATE;
+  }
+
   // Convert to absolute servo position and clamp
-  // chirpServoOffset adds real-time head kick during whistle
-  int pos = (int)(SERVO_CENTER + servoCurrentAngle + chirpServoOffset);
+  // Layers: conscious + ambient + chirp servo kick
+  int pos = (int)(SERVO_CENTER + servoCurrentAngle + ambientCurrentOffset + chirpServoOffset);
   pos = constrain(pos, SERVO_MIN, SERVO_MAX);
 
   servo.write(pos);
@@ -205,12 +251,30 @@ void setServoAngleDirect(int angle) {
                  String(servoCurrentAngle, 1) + " from center)");
 }
 
+// ============================================================
+// AMBIENT LAYER — kick to a random position
+// ============================================================
+// Called by idle hops, permission nags, and (future) speaking wobble.
+
+void kickAmbient(float range, float kick) {
+  ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * range;
+  float direction = (ambientTargetOffset > ambientCurrentOffset) ? 1.0f : -1.0f;
+  ambientVelocity += direction * kick;
+}
+
+void resetAmbient() {
+  ambientCurrentOffset = 0;
+  ambientTargetOffset = 0;
+  ambientVelocity = 0;
+}
+
 void snapToCenter() {
   servo.write(SERVO_CENTER);
   servoCurrentAngle = 0;
   servoTargetAngle = 0;
   servoVelocity = 0;
   servoOscillationAmp = 0;
+  resetAmbient();
   demoStep = 0;  // Reset demo cycle
 
   if (calibrationMode) {

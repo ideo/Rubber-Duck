@@ -107,4 +107,43 @@ enum DuckConfig {
     static let tmuxWindow: String = {
         ProcessInfo.processInfo.environment["DUCK_TMUX_WINDOW"] ?? "claude"
     }()
+
+    // MARK: - Runtime Config File
+
+    /// PID file path — in ~/.duck/ instead of service/.pid for multi-user safety.
+    static let pidFilePath: String = {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        return homeDir.appendingPathComponent(".duck/duck.pid").path
+    }()
+
+    /// Write resolved runtime values to ~/.duck/config so shell scripts and Python can read them.
+    /// Called once on app launch. Format is key=value for direct `source` in bash.
+    static func writeRuntimeConfig() {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let duckDir = homeDir.appendingPathComponent(".duck")
+        let configFile = duckDir.appendingPathComponent("config")
+
+        // Ensure ~/.duck/ exists
+        try? FileManager.default.createDirectory(at: duckDir, withIntermediateDirectories: true)
+
+        let contents = """
+        # Rubber Duck Runtime Config — written by widget on launch.
+        # Do not edit manually; regenerated each launch.
+        DUCK_SERVICE_PORT=\(servicePort)
+        DUCK_SERVICE_URL=http://localhost:\(servicePort)
+        DUCK_TMUX_SESSION=\(tmuxSession)
+        DUCK_TMUX_WINDOW=\(tmuxWindow)
+        DUCK_PID_FILE=\(pidFilePath)
+        DUCK_VOICE=\(ttsVoice)
+        DUCK_SERIAL_PREFIX=\(serialDevicePrefix)
+        DUCK_AUDIO_DEVICE_NAME=\(teensyAudioDeviceName)
+        """
+
+        do {
+            try contents.write(to: configFile, atomically: true, encoding: .utf8)
+            print("[config] Wrote runtime config to \(configFile.path)")
+        } catch {
+            print("[config] Failed to write config: \(error)")
+        }
+    }
 }

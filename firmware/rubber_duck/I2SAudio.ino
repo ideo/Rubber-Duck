@@ -351,8 +351,15 @@ void playPermissionChirp() {
 
   startChirp(root, WAVEFORM_SAWTOOTH);
 
-  // Jiggle the servo — reuse the oscillation system
-  servoOscillationAmp = 6.0;
+  // Snap to a random non-center position: ±[NAG_MIN..NAG_MAX] degrees
+  float nagOffset = PERMISSION_NAG_MIN +
+    ((float)random(0, 101) / 100.0f) * (PERMISSION_NAG_MAX - PERMISSION_NAG_MIN);
+  if (random(2) == 0) nagOffset = -nagOffset;
+  ambientTargetOffset = nagOffset;
+  ambientSpringActive = true;  // Nag kicks use spring for overshoot
+  float nagDir = (nagOffset > ambientCurrentOffset) ? 1.0f : -1.0f;
+  ambientVelocity += nagDir * PERMISSION_NAG_KICK;
+  servoOscillationAmp = 4.0;
   servoOscillationPhase = 0.0;
 
   Serial.println("[perm] uh-oh chirp");

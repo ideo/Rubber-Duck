@@ -15,9 +15,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/duck-env.sh"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SERVICE_DIR="$PROJECT_DIR/service"
-SESSION="duck"
+SESSION="$DUCK_TMUX_SESSION"
 VOICE="${DUCK_VOICE:-Boing}"
 WAKE_WORD="${DUCK_WAKE_WORD:-ducky}"
 MIC_INDEX="${DUCK_MIC:-}"
@@ -71,7 +72,7 @@ tmux send-keys -t "$SESSION:claude.1" \
 # Wait for service to be ready
 echo "   Waiting for service..."
 for i in $(seq 1 10); do
-    if curl -s http://localhost:3333/health > /dev/null 2>&1; then
+    if curl -s "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
         break
     fi
     sleep 0.5

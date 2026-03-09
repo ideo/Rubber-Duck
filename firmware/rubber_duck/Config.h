@@ -46,10 +46,34 @@
 #define EXPRESSION_RETURN_KICK 0.5f // Velocity kick for return (reaction kick is 1.5)
 
 // --- Idle Heartbeat (alive drift when at rest) ---
-#define IDLE_HOP_RANGE       5.0f   // ±degrees to drift (random target within this)
-#define IDLE_HOP_MIN_MS      3000   // Minimum time between hops (ms)
-#define IDLE_HOP_MAX_MS      8000   // Maximum time between hops (ms)
-#define IDLE_HOP_KICK        0.3f   // Gentle velocity kick toward new target
+#define IDLE_HOP_RANGE       30.0f  // ±degrees to drift (random target within this)
+#define IDLE_HOP_MIN_MS      4000   // Minimum time between hops (ms)
+#define IDLE_HOP_MAX_MS      15000  // Maximum time between hops (ms)
+#define IDLE_HOP_KICK        0.6f   // Velocity kick (unused with lerp, kept for reference)
+
+// --- Idle Cluster (bird-like micro-adjustments) ---
+#define IDLE_CLUSTER_DELTA     30.0f  // ±degrees max for follow-up micro-hops
+#define IDLE_CLUSTER_MIN_DELTA 10.0f   // Minimum degrees per micro-hop (below this is invisible)
+#define IDLE_CLUSTER_GAP_MIN   500   // Minimum ms between cluster positions
+#define IDLE_CLUSTER_GAP_MAX   1500   // Maximum ms between cluster positions
+
+// --- Ambient Spring Physics (nag kicks use spring for overshoot) ---
+#define AMBIENT_SPRING_K      0.03f  // Half stiffness of conscious spring
+#define AMBIENT_SPRING_DAMPING 0.88f // More damped = dreamier motion
+
+// --- Ambient Lerp (idle hops use simple ease — no overshoot) ---
+#define AMBIENT_LERP_RATE     0.25f  // Fraction per frame (0.05=slow, 0.3=snappy)
+
+// --- TTS Talking Head Animation ---
+#define TTS_DETECT_THRESHOLD  0.02f   // USB audio level to trigger speaking (0.0-1.0)
+#define TTS_SILENCE_TIMEOUT   400     // ms of silence before speaking ends (bridges word gaps)
+#define TTS_RETARGET_MS       300     // ms between ambient retargets while talking
+#define TTS_HOP_RANGE         8.0f    // ±degrees for talking head wobble
+
+// --- Permission Nag Motion ---
+#define PERMISSION_NAG_MIN    10.0f  // Minimum offset from center (avoids flat neutral)
+#define PERMISSION_NAG_MAX    30.0f  // Maximum offset from center
+#define PERMISSION_NAG_KICK   1.2f   // Stronger kick for attention-getting snap
 
 // --- LED Animation ---
 #define LED_LERP_SPEED   0.08f
@@ -129,9 +153,19 @@ extern float servoOscillationAmp;
 extern float servoOscillationPhase;
 extern int   demoStep;
 
+// Ambient (subconscious) layer (defined in ServoControl.ino)
+extern float ambientCurrentOffset;
+extern float ambientTargetOffset;
+extern float ambientVelocity;
+extern bool  ambientSpringActive;
+
 // Chirp state (defined in I2SAudio.ino)
 extern float chirpServoOffset;  // Real-time servo kick from whistle pitch
 extern bool  i2sChirpActive;    // True while any chirp is playing
+
+// TTS state (defined in AudioBridge.ino)
+extern bool  ttsActive;         // True while USB audio (TTS) is playing
+extern float usbAudioLevel;     // Current USB audio peak level
 
 // Permission state (defined in rubber_duck.ino)
 extern bool permissionPending;
@@ -145,6 +179,8 @@ void exitCalibration();
 void setServoAngleDirect(int angle);
 void snapToCenter();
 void triggerDemoPreset();
+void kickAmbient(float range, float kick);
+void resetAmbient();
 
 // Audio functions (defined in I2SAudio.ino)
 void playPermissionChirp();
