@@ -1,0 +1,52 @@
+{
+  "fill" : {
+    "solid" : "display-p3:0.89405,0.73339,0.36038,1.00000"
+  },
+  "groups" : [
+    {
+      "hidden" : false,
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "eyes.png",
+          "name" : "eyes",
+          "position" : {
+            "scale" : 1.4,
+            "translation-in-points" : [
+              0,
+              -34.66406249999994
+            ]
+          }
+        },
+        {
+          "glass" : false,
+          "image-name" : "beak@2x 2.png",
+          "name" : "beak@2x 2",
+          "position" : {
+            "scale" : 1.4,
+            "translation-in-points" : [
+              0,
+              162.43593750000002
+            ]
+          }
+        }
+      ],
+      "lighting" : "combined",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

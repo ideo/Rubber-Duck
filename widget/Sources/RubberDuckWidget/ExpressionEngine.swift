@@ -34,12 +34,9 @@ enum ExpressionEngine {
         // Good soundness = round happy eyes, bad = squint
         expr.eyeHeight = 1.0 + CGFloat(s.soundness) * 0.4  // 0.6 to 1.4
 
-        // --- Elegance → Transition smoothness (handled by animation, not state) ---
-        // (DuckView uses elegance to pick spring damping)
-
-        // --- Creativity → Hue shift ---
-        // High creativity = warmer/saturated, low = duller
-        expr.hueShift = s.creativity * 15.0  // ±15 degrees
+        // --- Creativity → Eye widening ---
+        // High creativity = wide curious eyes
+        expr.eyeHeight += CGFloat(s.creativity) * 0.2  // adds up to ±0.2
 
         // --- Ambition → Scale/breathing intensity ---
         // Higher ambition = bigger presence
@@ -55,7 +52,7 @@ enum ExpressionEngine {
             expr.beakOpen = 0.3
         }
 
-        // --- Glow based on overall sentiment ---
+        // --- Sentiment → body warmth + glow ---
         let sentiment = (
             s.soundness * 0.3 +
             s.elegance * 0.25 +
@@ -64,21 +61,23 @@ enum ExpressionEngine {
             s.risk * 0.1
         )
 
+        // Positive = warmer (toward orange), negative = cooler (toward green)
+        // Negate because hueRotation positive = green, negative = orange
+        expr.hueShift = sentiment * -15.0  // ±15 degrees
+
         if sentiment > 0.2 {
-            expr.glowColor = DuckTheme.positiveGlow
+            expr.glowColor = DuckTheme.positiveGlow  // warm
             expr.glowIntensity = sentiment
         } else if sentiment < -0.2 {
-            expr.glowColor = DuckTheme.negativeGlow
+            expr.glowColor = DuckTheme.negativeGlow  // cool
             expr.glowIntensity = abs(sentiment)
         }
 
         // --- Permission override ---
+        // Eyes become "!" in DuckView; just add a subtle warm glow here
         if permissionPending {
-            expr.eyeHeight = 1.5  // Wide eyes
-            expr.rotationAngle = 3.0  // Nervous tilt
             expr.glowColor = DuckTheme.permissionGlow
-            expr.glowIntensity = 0.8
-            expr.scaleAmount = 1.02
+            expr.glowIntensity = 0.4
         }
 
         return expr

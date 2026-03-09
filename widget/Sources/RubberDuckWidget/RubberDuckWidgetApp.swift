@@ -47,7 +47,7 @@ struct RubberDuckWidgetApp: App {
                 .environmentObject(evalService)
                 .environmentObject(speechService)
                 .environmentObject(serialManager)
-                .frame(width: DuckTheme.widgetSize, height: DuckTheme.widgetSize)
+                .frame(width: DuckTheme.widgetSize + 64, height: DuckTheme.widgetSize + 64)
                 .background(WindowDragArea())
                 .onAppear { wireServices() }
         }
@@ -125,16 +125,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.main.async {
             for window in NSApp.windows {
+                // Fully borderless — no titlebar, no glass, no chrome
+                window.styleMask = [.borderless]
+                window.isMovable = true
                 window.isMovableByWindowBackground = true
                 window.level = .floating
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                window.hasShadow = true
+                window.hasShadow = false
                 window.backgroundColor = .clear
                 window.isOpaque = false
+
+                // Ensure no content view background interferes
+                window.contentView?.wantsLayer = true
+                window.contentView?.layer?.backgroundColor = .clear
             }
         }
 
         // Cmd+Q handled automatically by menu bar
+        // App icon is loaded from duckIcon.icon in Resources via CFBundleIconFile
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

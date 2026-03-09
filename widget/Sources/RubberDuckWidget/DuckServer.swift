@@ -375,6 +375,14 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
         return "Read a file"
 
     default:
+        // MCP tools: mcp__server-name__tool_name → "Use a connector"
+        if toolName.hasPrefix("mcp__") {
+            return "Use a connector"
+        }
+        // Any other unknown tool with underscores → generic fallback
+        if toolName.contains("_") {
+            return "Use a tool"
+        }
         return toolName
     }
 }

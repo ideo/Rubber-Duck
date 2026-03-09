@@ -69,7 +69,6 @@ class DuckCoordinator: ObservableObject {
         updateExpression()
         if evalService.permissionPending {
             serialManager.sendCommand("P,1")
-            triggerPermissionWobble()
             speechService.askPermission(toolName: evalService.permissionTool,
                                         summary: evalService.permissionSummary,
                                         options: evalService.permissionOptions)

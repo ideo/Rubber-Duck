@@ -19,6 +19,10 @@
     <!-- Regular app: shows in Dock, has menu bar, Cmd+Q works -->
     <!-- Set LSUIElement true to hide from Dock (accessory mode) -->
     <!-- <key>LSUIElement</key><true/> -->
+    <key>CFBundleIconFile</key>
+    <string>duckIcon</string>
+    <key>CFBundleIconName</key>
+    <string>duckIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>

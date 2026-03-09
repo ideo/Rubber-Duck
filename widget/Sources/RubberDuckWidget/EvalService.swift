@@ -40,6 +40,7 @@ class EvalService: ObservableObject {
             }
         }
         transport.connect()
+        isConnected = transport.isConnected
     }
 
     deinit {
