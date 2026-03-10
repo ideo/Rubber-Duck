@@ -115,17 +115,17 @@ struct RubberDuckWidgetApp: App {
             duckServer: duckServer
         )
 
-        // Poll until permissions are granted, then start listening
+        // Poll until permissions are granted, then apply saved listen mode
         Task {
             for _ in 0..<20 { // Up to 10 seconds
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 if speechService.micPermissionGranted && speechService.speechPermissionGranted {
-                    speechService.startListening()
+                    speechService.applyListenMode()
                     speechService.speak("What are we up to?")
                     return
                 }
             }
-            DuckLog.log("[app] Permissions not granted after 10s. Use right-click → Start Listening.")
+            DuckLog.log("[app] Permissions not granted after 10s. Set listen mode from menu bar.")
         }
     }
 }

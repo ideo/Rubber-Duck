@@ -13,6 +13,26 @@ import Foundation
 import Speech
 import AVFoundation
 
+/// Mic listening level — Off → Permissions Only → Active (wake word).
+enum ListenMode: Int, CaseIterable {
+    case off = 0            // Mic off
+    case permissionsOnly    // Mic on, only responds to yes/no permission gate
+    case active             // Mic on, wake word + permissions
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .permissionsOnly: return "Permissions Only"
+        case .active: return "Active"
+        }
+    }
+
+    /// Cycle to the next mode.
+    var next: ListenMode {
+        ListenMode(rawValue: (rawValue + 1) % ListenMode.allCases.count) ?? .off
+    }
+}
+
 @MainActor
 class SpeechService: ObservableObject {
     // Published state
@@ -23,8 +43,18 @@ class SpeechService: ObservableObject {
     @Published var selectedMicName: String = ""
     @Published var lastError: String = ""
 
+    // Listen mode (persisted)
+    @Published var listenMode: ListenMode = {
+        let raw = UserDefaults.standard.integer(forKey: "duck_listen_mode")
+        return ListenMode(rawValue: raw) ?? .active
+    }() {
+        didSet {
+            UserDefaults.standard.set(listenMode.rawValue, forKey: "duck_listen_mode")
+            applyListenMode()
+        }
+    }
+
     // Config
-    @Published var wakeWordEnabled: Bool = true
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
     var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
@@ -121,6 +151,21 @@ class SpeechService: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    /// Apply the current listen mode — start or stop the mic as needed.
+    func applyListenMode() {
+        switch listenMode {
+        case .off:
+            if isListening { stopListening() }
+            log("[speech] Listen mode: Off")
+        case .permissionsOnly:
+            if !isListening { startListening() }
+            log("[speech] Listen mode: Permissions Only")
+        case .active:
+            if !isListening { startListening() }
+            log("[speech] Listen mode: Active (wake word)")
         }
     }
 
@@ -266,8 +311,8 @@ class SpeechService: ObservableObject {
             return
         }
 
-        // Wake word + command processing (skip if wake word disabled)
-        guard wakeWordEnabled else { return }
+        // Wake word + command processing (only in active mode)
+        guard listenMode == .active else { return }
         let result = wakeWordProcessor.process(transcript, isFinal: isFinal)
         switch result {
         case .nothing:

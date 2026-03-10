@@ -58,7 +58,13 @@ class DuckCoordinator: ObservableObject {
 
     /// Toggle between critic and relay mode. Speaks the new mode name as confirmation.
     func toggleMode() {
-        mode = (mode == .critic) ? .relay : .critic
+        setMode(mode == .critic ? .relay : .critic)
+    }
+
+    /// Set a specific mode. Speaks confirmation if the mode actually changed.
+    func setMode(_ newMode: DuckMode) {
+        guard newMode != mode else { return }
+        mode = newMode
         let label = mode == .critic ? "Critic mode" : "Relay mode"
         speechService.speak(label)
     }

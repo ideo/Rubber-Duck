@@ -44,6 +44,7 @@ struct DuckView: View {
             .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
+        .contentShape(Rectangle())
         .contextMenu { duckContextMenu }
         .onAppear {
             scheduleBlink()
@@ -93,6 +94,7 @@ struct DuckView: View {
                     .opacity(Double(s.soundness) * 0.5)
                 }
             }
+            .allowsHitTesting(false)
 
             // Mood tint overlay — on top of glass
             if coordinator.expression.glowIntensity > 0 {
@@ -188,10 +190,9 @@ struct DuckView: View {
 
         Divider()
 
-        if speechService.isListening {
-            Button("Stop Listening") { speechService.stopListening() }
-        } else {
-            Button("Start Listening") { speechService.startListening() }
+        // Cycle listen mode: Off → Permissions Only → Active
+        Button("Mic: \(speechService.listenMode.label)") {
+            speechService.listenMode = speechService.listenMode.next
         }
 
         Divider()

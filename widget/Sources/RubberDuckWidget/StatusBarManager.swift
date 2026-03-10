@@ -47,23 +47,25 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
         menu.addItem(.separator())
 
-        // Listening toggle
-        if speechService.isListening {
-            let item = item("Listening", action: #selector(toggleListening))
-            item.state = .on
-            menu.addItem(item)
-        } else {
-            menu.addItem(item("Start Listening", action: #selector(toggleListening)))
+        // Listen mode — 3 radio items
+        for mode in ListenMode.allCases {
+            let modeItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
+            modeItem.target = self
+            modeItem.tag = mode.rawValue
+            modeItem.state = speechService.listenMode == mode ? .on : .off
+            menu.addItem(modeItem)
         }
 
-        // Wake word toggle
-        let wakeItem = item(speechService.wakeWordEnabled ? "Wake Word" : "Wake Word (Muted)", action: #selector(toggleWakeWord))
-        wakeItem.state = speechService.wakeWordEnabled ? .on : .off
-        menu.addItem(wakeItem)
+        menu.addItem(.separator())
 
-        // Mode toggle
-        let modeLabel = coordinator.mode == .critic ? "Critic Mode" : "Relay Mode"
-        menu.addItem(item("Switch from \(modeLabel)", action: #selector(toggleMode)))
+        // Duck mode — 2 radio items
+        let criticItem = item("Critic (Inner Monologue)", action: #selector(setModeCritic))
+        criticItem.state = coordinator.mode == .critic ? .on : .off
+        menu.addItem(criticItem)
+
+        let relayItem = item("Relay", action: #selector(setModeRelay))
+        relayItem.state = coordinator.mode == .relay ? .on : .off
+        menu.addItem(relayItem)
 
         menu.addItem(.separator())
 
@@ -122,20 +124,17 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         ClaudeSession.launch()
     }
 
-    @objc private func toggleListening() {
-        if speechService.isListening {
-            speechService.stopListening()
-        } else {
-            speechService.startListening()
-        }
+    @objc private func setListenMode(_ sender: NSMenuItem) {
+        guard let mode = ListenMode(rawValue: sender.tag) else { return }
+        speechService.listenMode = mode
     }
 
-    @objc private func toggleWakeWord() {
-        speechService.wakeWordEnabled.toggle()
+    @objc private func setModeCritic() {
+        coordinator.setMode(.critic)
     }
 
-    @objc private func toggleMode() {
-        coordinator.toggleMode()
+    @objc private func setModeRelay() {
+        coordinator.setMode(.relay)
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {
