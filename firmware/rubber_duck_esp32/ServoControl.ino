@@ -1,0 +1,280 @@
+// ============================================================
+// Servo Control (ESP32 Duck) — Optional
+// ============================================================
+// Same spring physics and idle heartbeat as the Teensy duck.
+// Uses raw LEDC PWM instead of ESP32Servo library (which hangs on S3).
+//
+// LEDC: 50Hz, 14-bit resolution. 500µs = 0°, 2400µs = 180°.
+
+#if ENABLE_SERVO
+
+// LEDC config for servo PWM
+#define SERVO_LEDC_FREQ     50      // 50Hz for standard servos
+#define SERVO_LEDC_BITS     14      // 14-bit resolution = 16384 ticks per 20ms
+#define SERVO_PULSE_MIN     410     // 500µs  = 0°   (500/20000 * 16384)
+#define SERVO_PULSE_MAX     1966    // 2400µs = 180° (2400/20000 * 16384)
+
+void servoWriteAngle(int angle) {
+  angle = constrain(angle, 0, 180);
+  uint32_t duty = SERVO_PULSE_MIN + (uint32_t)((SERVO_PULSE_MAX - SERVO_PULSE_MIN) * angle) / 180;
+  ledcWrite(SERVO_PIN, duty);
+}
+
+// --- Servo State ---
+float servoCurrentAngle = 0.0;
+float servoTargetAngle  = 0.0;
+float servoVelocity     = 0.0;
+
+float servoOscillationAmp   = 0.0;
+float servoOscillationPhase = 0.0;
+
+unsigned long lastEvalTime = 0;
+
+// --- Idle Heartbeat ---
+unsigned long nextIdleHop = 0;
+
+// --- Ambient Layer ---
+float ambientCurrentOffset = 0.0;
+float ambientTargetOffset  = 0.0;
+
+// --- Calibration ---
+bool  calibrationMode = false;
+int   calibrationStep = 0;
+const int calibrationAngles[] = { SERVO_CENTER, SERVO_MIN, SERVO_MAX, SERVO_CENTER };
+const char* calibrationLabels[] = { "CENTER", "MIN", "MAX", "CENTER" };
+#define CALIBRATION_STEPS 4
+
+// --- Demo Presets ---
+const EvalScores demoPresets[] = {
+  {  0.70,  0.95,  0.50,  0.90, -0.30, 'U', true },  // Impressed
+  {  0.95,  0.50,  0.90,  0.60,  0.20, 'U', true },  // Excited
+  {  0.10, -0.30,  0.20, -0.10,  0.50, 'U', true },  // Skeptical
+  {  0.30,  0.20,  0.60,  0.10,  0.90, 'U', true },  // Nervous
+  { -0.60, -0.95,  0.20, -0.80,  0.85, 'U', true },  // Disgusted
+  { -0.20,  0.10, -0.80,  0.00, -0.10, 'U', true },  // Bored
+};
+const char* demoLabels[] = {
+  "IMPRESSED", "EXCITED", "SKEPTICAL", "NERVOUS", "DISGUSTED", "BORED"
+};
+#define NUM_DEMO_PRESETS 6
+int demoStep = 0;
+
+// ============================================================
+// REDUCER: scores → servo target
+// ============================================================
+ServoTarget servoReducer(EvalScores &scores) {
+  ServoTarget target;
+
+  float approval =
+    scores.soundness  * 0.35f +
+    scores.elegance   * 0.25f +
+    scores.creativity * 0.20f +
+    scores.ambition   * 0.10f -
+    scores.risk       * 0.10f;
+
+  target.angle = approval * (float)SERVO_RANGE;
+  target.oscillationAmp = max(0.0f, scores.risk) * 8.0f;
+
+  return target;
+}
+
+// ============================================================
+// Set target (called when eval arrives)
+// ============================================================
+void setServoTarget(ServoTarget &target) {
+  servoTargetAngle = target.angle;
+  servoOscillationAmp = target.oscillationAmp;
+  servoOscillationPhase = 0;
+  lastEvalTime = millis();
+
+  float direction = (servoTargetAngle > servoCurrentAngle) ? 1.0f : -1.0f;
+  servoVelocity += direction * 1.5f;
+}
+
+// ============================================================
+// Fixed-rate update
+// ============================================================
+void updateServo() {
+  unsigned long now = millis();
+
+  // Expression decay: return to center after hold period
+  if ((now - lastEvalTime) > EXPRESSION_HOLD_MS && fabs(servoTargetAngle) > 0.5f) {
+    float direction = (0 > servoCurrentAngle) ? 1.0f : -1.0f;
+    servoTargetAngle = 0;
+    servoVelocity += direction * EXPRESSION_RETURN_KICK;
+
+    // Also trigger LED breathe when expression expires
+    startBreathe();
+  }
+
+  // Idle heartbeat
+  if (!permissionPending &&
+      (now - lastEvalTime) > EXPRESSION_HOLD_MS && now > nextIdleHop) {
+    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;
+    nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
+  }
+
+  // Spring physics
+  float diff = servoTargetAngle - servoCurrentAngle;
+  servoVelocity += diff * SPRING_K;
+  servoVelocity *= SPRING_DAMPING;
+
+  // Risk oscillation
+  if (servoOscillationAmp > 0.1f) {
+    servoOscillationPhase += 0.3f;
+    servoVelocity += sin(servoOscillationPhase) * servoOscillationAmp * 0.05f;
+    servoOscillationAmp *= OSCILLATION_DECAY;
+  }
+
+  servoCurrentAngle += servoVelocity;
+
+  // Ambient layer: simple lerp
+  ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * 0.15f;
+
+  // Write to servo
+  int pos = (int)(SERVO_CENTER + servoCurrentAngle + ambientCurrentOffset);
+  pos = constrain(pos, SERVO_MIN, SERVO_MAX);
+  servoWriteAngle(pos);
+}
+
+// ============================================================
+// Setup
+// ============================================================
+void setupServo() {
+  ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ, SERVO_LEDC_BITS);
+  servoWriteAngle(SERVO_CENTER);
+  Serial.println("[servo] LEDC PWM on pin " + String(SERVO_PIN));
+}
+
+// ============================================================
+// Startup wiggle
+// ============================================================
+void startupServoAnimation() {
+  servoWriteAngle(SERVO_CENTER - 30);
+  delay(300);
+  servoWriteAngle(SERVO_CENTER + 30);
+  delay(300);
+  servoWriteAngle(SERVO_CENTER);
+  delay(200);
+}
+
+// ============================================================
+// Calibration
+// ============================================================
+void enterCalibration() {
+  calibrationMode = true;
+  calibrationStep = 0;
+  servoVelocity = 0;
+  servoOscillationAmp = 0;
+  servoWriteAngle(calibrationAngles[0]);
+  servoCurrentAngle = calibrationAngles[0] - SERVO_CENTER;
+  servoTargetAngle = servoCurrentAngle;
+  Serial.println("[cal] === CALIBRATION MODE ===");
+  Serial.println("[cal] Step 0: " + String(calibrationLabels[0]));
+}
+
+void advanceCalibration() {
+  calibrationStep++;
+  if (calibrationStep >= CALIBRATION_STEPS) {
+    exitCalibration();
+    return;
+  }
+  int angle = calibrationAngles[calibrationStep];
+  servoWriteAngle(angle);
+  servoCurrentAngle = angle - SERVO_CENTER;
+  servoTargetAngle = servoCurrentAngle;
+  servoVelocity = 0;
+  Serial.println("[cal] Step " + String(calibrationStep) + ": " + String(calibrationLabels[calibrationStep]));
+}
+
+void exitCalibration() {
+  calibrationMode = false;
+  calibrationStep = 0;
+  servoWriteAngle(SERVO_CENTER);
+  servoCurrentAngle = 0;
+  servoTargetAngle = 0;
+  servoVelocity = 0;
+  Serial.println("[cal] === EXITED CALIBRATION ===");
+}
+
+void setServoAngleDirect(int angle) {
+  angle = constrain(angle, SERVO_MIN, SERVO_MAX);
+  servoWriteAngle(angle);
+  servoCurrentAngle = angle - SERVO_CENTER;
+  servoTargetAngle = servoCurrentAngle;
+  servoVelocity = 0;
+  Serial.println("[servo] Direct: " + String(angle) + " deg");
+}
+
+void snapToCenter() {
+  servoWriteAngle(SERVO_CENTER);
+  servoCurrentAngle = 0;
+  servoTargetAngle = 0;
+  servoVelocity = 0;
+  ambientCurrentOffset = 0;
+  ambientTargetOffset = 0;
+  demoStep = 0;
+
+  if (calibrationMode) {
+    calibrationMode = false;
+    calibrationStep = 0;
+    Serial.println("[cal] Snapped to CENTER, exited calibration");
+  } else {
+    Serial.println("[servo] Snapped to CENTER");
+  }
+}
+
+void resetAmbient() {
+  ambientCurrentOffset = 0;
+  ambientTargetOffset = 0;
+}
+
+void triggerDemoPreset() {
+  latestScores = demoPresets[demoStep];
+  newEvalAvailable = true;
+  Serial.println("[demo] " + String(demoLabels[demoStep]));
+  demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
+}
+
+#else
+
+// Stubs when servo is disabled
+float servoCurrentAngle = 0;
+float servoTargetAngle = 0;
+bool  calibrationMode = false;
+int   demoStep = 0;
+unsigned long lastEvalTime = 0;
+
+void setupServo() {}
+void startupServoAnimation() {}
+void updateServo() {}
+void setServoTarget(ServoTarget &target) {}
+void enterCalibration() {}
+void advanceCalibration() {}
+void exitCalibration() {}
+void setServoAngleDirect(int angle) {}
+void snapToCenter() {}
+void resetAmbient() {}
+
+// Demo presets still needed for serial 'D' command
+const EvalScores demoPresets[] = {
+  {  0.70,  0.95,  0.50,  0.90, -0.30, 'U', true },
+  {  0.95,  0.50,  0.90,  0.60,  0.20, 'U', true },
+  {  0.10, -0.30,  0.20, -0.10,  0.50, 'U', true },
+  {  0.30,  0.20,  0.60,  0.10,  0.90, 'U', true },
+  { -0.60, -0.95,  0.20, -0.80,  0.85, 'U', true },
+  { -0.20,  0.10, -0.80,  0.00, -0.10, 'U', true },
+};
+const char* demoLabels[] = {
+  "IMPRESSED", "EXCITED", "SKEPTICAL", "NERVOUS", "DISGUSTED", "BORED"
+};
+#define NUM_DEMO_PRESETS 6
+
+void triggerDemoPreset() {
+  latestScores = demoPresets[demoStep];
+  newEvalAvailable = true;
+  Serial.println("[demo] " + String(demoLabels[demoStep]));
+  demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
+}
+
+#endif // ENABLE_SERVO
