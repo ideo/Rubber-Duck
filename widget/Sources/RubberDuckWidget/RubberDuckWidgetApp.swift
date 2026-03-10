@@ -18,6 +18,9 @@ struct RubberDuckWidgetApp: App {
     @StateObject private var serialManager = SerialManager()
     @StateObject private var coordinator: DuckCoordinator
 
+    /// Held strongly so the menu bar icon stays alive.
+    private static var statusBarManager: StatusBarManager?
+
     init() {
         // Create server (reads API key lazily from DuckConfig at eval time)
         let server = DuckServer()
@@ -47,7 +50,7 @@ struct RubberDuckWidgetApp: App {
                 .environmentObject(evalService)
                 .environmentObject(speechService)
                 .environmentObject(serialManager)
-                .frame(width: DuckTheme.widgetSize + 64, height: DuckTheme.widgetSize + 64)
+                .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
                 .background(WindowDragArea())
                 .onAppear { wireServices() }
         }
@@ -104,6 +107,14 @@ struct RubberDuckWidgetApp: App {
             coordinator?.toggleMode()
         }
 
+        // Menu bar status item (🦆) — settings live here instead of right-click menu
+        RubberDuckWidgetApp.statusBarManager = StatusBarManager(
+            speechService: speechService,
+            coordinator: coordinator,
+            serialManager: serialManager,
+            duckServer: duckServer
+        )
+
         // Poll until permissions are granted, then start listening
         Task {
             for _ in 0..<20 { // Up to 10 seconds
@@ -131,13 +142,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 window.isMovableByWindowBackground = true
                 window.level = .floating
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                window.hasShadow = false
+                window.hasShadow = true
                 window.backgroundColor = .clear
                 window.isOpaque = false
 
-                // Ensure no content view background interferes
+                // Match content view clip to duck glass corner radius
                 window.contentView?.wantsLayer = true
                 window.contentView?.layer?.backgroundColor = .clear
+                window.contentView?.layer?.cornerRadius = DuckTheme.cornerRadius
+                window.contentView?.layer?.masksToBounds = true
             }
         }
 

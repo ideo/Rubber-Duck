@@ -24,6 +24,7 @@ class SpeechService: ObservableObject {
     @Published var lastError: String = ""
 
     // Config
+    @Published var wakeWordEnabled: Bool = true
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
     var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
@@ -262,7 +263,8 @@ class SpeechService: ObservableObject {
             return
         }
 
-        // Wake word + command processing
+        // Wake word + command processing (skip if wake word disabled)
+        guard wakeWordEnabled else { return }
         let result = wakeWordProcessor.process(transcript, isFinal: isFinal)
         switch result {
         case .nothing:
@@ -321,6 +323,12 @@ class SpeechService: ObservableObject {
         log("[speech] Sending: \(text)")
         speak(["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!)
         onVoiceInput?(text)
+
+        // Clear the displayed text after a beat so user sees it was sent
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self.lastHeard = ""
+        }
 
         restartAfterTTS()
     }

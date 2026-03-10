@@ -18,29 +18,18 @@ struct DuckView: View {
             // Duck body (liquid glass — no rotation/scale; transforms break glass refraction)
             duckBody
 
-            // "Heard you" overlay when wake word detected
+            // Voice command text — forehead, below status dots
             if !speechService.lastHeard.isEmpty {
-                VStack {
-                    Text(speechService.lastHeard)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.black.opacity(0.6)))
-                        .lineLimit(1)
-                    Spacer()
-                }
-                .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
-                .transition(.opacity)
+                Text(speechService.lastHeard)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DuckTheme.eyeColor)
+                    .lineLimit(1)
+                    .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 22)
+                    .transition(.opacity)
             }
 
-            // Status indicators (bottom edge of duck body)
+            // Status indicators (top edge of duck body)
             HStack(spacing: 4) {
-                if speechService.isListening {
-                    Circle()
-                        .fill(Color.red.opacity(0.7))
-                        .frame(width: 6, height: 6)
-                }
                 if serialManager.isConnected {
                     Circle()
                         .fill(Color.blue.opacity(0.7))
@@ -52,9 +41,9 @@ struct DuckView: View {
                         .frame(width: 6, height: 6)
                 }
             }
-            .offset(y: (DuckTheme.widgetSize - 8) / 2 + 6)
+            .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
-        .frame(width: DuckTheme.widgetSize + 64, height: DuckTheme.widgetSize + 64)
+        .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         .contextMenu { duckContextMenu }
         .onAppear {
             scheduleBlink()
@@ -125,7 +114,7 @@ struct DuckView: View {
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         // Liquid Glass — real refraction + lensing, tinted duck yellow
         .glassEffect(
-            .regular.tint(DuckTheme.bodyColor),
+            .clear.tint(DuckTheme.bodyColor),
             in: RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
         )
     }
@@ -191,11 +180,11 @@ struct DuckView: View {
         }
     }
 
-    // MARK: - Context Menu
+    // MARK: - Context Menu (lean — settings live in menu bar 🦆)
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        Button("Start Claude Session") { startClaudeSession() }
+        Button("Start Claude Session") { ClaudeSession.launch() }
 
         Divider()
 
@@ -205,102 +194,11 @@ struct DuckView: View {
             Button("Start Listening") { speechService.startListening() }
         }
 
-        Button(coordinator.mode == .critic ? "Switch to Relay Mode" : "Switch to Critic Mode") {
-            coordinator.toggleMode()
-        }
-        Text("Mode: \(coordinator.mode == .critic ? "Critic" : "Relay")")
-
-        // Voice picker — grouped by category
-        Menu("Voice: \(DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)") {
-            Section("Novelty") {
-                ForEach(DuckVoices.novelty, id: \.sayName) { voice in
-                    voiceButton(voice)
-                }
-            }
-            Section("Siri") {
-                ForEach(DuckVoices.siri, id: \.sayName) { voice in
-                    voiceButton(voice)
-                }
-            }
-            Section("Classic") {
-                ForEach(DuckVoices.classic, id: \.sayName) { voice in
-                    voiceButton(voice)
-                }
-            }
-        }
-
-        Divider()
-
-        Text("Mic: \(speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName)")
-
-        if serialManager.isConnected {
-            Text("Teensy: \(serialManager.portName)")
-        } else {
-            Text("Teensy: Disconnected")
-        }
-
-        Text("Server: \(duckServer.isRunning ? "Running" : "Stopped")")
-
-        if !duckServer.isRunning {
-            Button("Start Server") { duckServer.start() }
-        }
-
         Divider()
 
         Button("Quit Duck") {
             duckServer.stop()
             NSApp.terminate(nil)
-        }
-    }
-
-    private func voiceButton(_ voice: DuckVoice) -> some View {
-        Button {
-            speechService.ttsVoice = voice.sayName
-            speechService.speak("Hi, I'm \(voice.label).")
-        } label: {
-            if speechService.ttsVoice == voice.sayName {
-                Text("✓ \(voice.label)")
-            } else {
-                Text("   \(voice.label)")
-            }
-        }
-    }
-
-    // MARK: - Claude Session
-
-    /// Launch Claude Code in Terminal.app inside a tmux session named "duck".
-    private func startClaudeSession() {
-        let session = DuckConfig.tmuxSession
-        let window = DuckConfig.tmuxWindow
-
-        // Try to find repo root by walking up from binary
-        var repoRoot = Bundle.main.bundleURL
-        for _ in 0..<10 {
-            repoRoot = repoRoot.deletingLastPathComponent()
-            let serverPath = repoRoot.appendingPathComponent("service/server.py")
-            if FileManager.default.fileExists(atPath: serverPath.path) {
-                break
-            }
-        }
-
-        let script = """
-        tell application "Terminal"
-            activate
-            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(window) 'claude'; fi && tmux set-option -t \(session) -w allow-rename off 2>/dev/null && tmux rename-window -t \(session) \(window) 2>/dev/null && tmux attach -t \(session)"
-        end tell
-        """
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
-
-        do {
-            try proc.run()
-            print("[app] Launched Claude terminal session")
-        } catch {
-            print("[app] Failed to launch Claude session: \(error)")
         }
     }
 
