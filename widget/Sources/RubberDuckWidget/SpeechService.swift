@@ -64,6 +64,9 @@ class SpeechService: ObservableObject {
         stt = STTEngine()
         tts = TTSEngine()
 
+        // Sync persisted voice to TTSEngine (didSet doesn't fire on init)
+        tts.voice = ttsVoice
+
         // Now that self is fully initialized, wire log + callbacks
         let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
         stt.log = logFn
