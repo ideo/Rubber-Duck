@@ -75,6 +75,9 @@ struct RubberDuckWidgetApp: App {
         // Write runtime config for shell scripts
         DuckConfig.writeRuntimeConfig()
 
+        // Install hook scripts to ~/.duck/hooks/ and register in ~/.claude/settings.json
+        HookInstaller.install()
+
         // Start the embedded HTTP + WebSocket server
         duckServer.start()
 
