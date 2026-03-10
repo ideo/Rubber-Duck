@@ -10,7 +10,6 @@ import SwiftUI
 class DuckCoordinator: ObservableObject {
     @Published var expression = DuckExpression()
     @Published var showReaction = false
-    @Published var permissionWobble = false
     @Published var mode: DuckMode = .critic
 
     private let evalService: EvalService
@@ -117,12 +116,4 @@ class DuckCoordinator: ObservableObject {
         }
     }
 
-    private func triggerPermissionWobble() {
-        withAnimation(
-            .easeInOut(duration: 0.15)
-            .repeatCount(6, autoreverses: true)
-        ) {
-            permissionWobble.toggle()
-        }
-    }
 }

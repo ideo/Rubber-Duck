@@ -11,18 +11,12 @@ struct DuckView: View {
     @EnvironmentObject var speechService: SpeechService
     @EnvironmentObject var serialManager: SerialManager
 
-    @State private var isBreathing = false
     @State private var isBlinking = false
 
     var body: some View {
         ZStack {
-            // Duck body (liquid glass)
+            // Duck body (liquid glass — no rotation/scale; transforms break glass refraction)
             duckBody
-                .rotationEffect(.degrees(
-                    coordinator.permissionWobble
-                        ? coordinator.expression.rotationAngle
-                        : -coordinator.expression.rotationAngle
-                ))
 
             // "Heard you" overlay when wake word detected
             if !speechService.lastHeard.isEmpty {
@@ -63,7 +57,6 @@ struct DuckView: View {
         .frame(width: DuckTheme.widgetSize + 64, height: DuckTheme.widgetSize + 64)
         .contextMenu { duckContextMenu }
         .onAppear {
-            isBreathing = true
             scheduleBlink()
         }
         .onChange(of: evalService.evalCount) {

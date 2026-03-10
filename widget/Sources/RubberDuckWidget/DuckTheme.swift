@@ -22,7 +22,6 @@ static let cornerRadius: CGFloat = 18
     static let permissionGlow = Color(red: 1.0, green: 0.8, blue: 0.0).opacity(0.5)
 
     // Animation
-    static let breathingDuration: Double = 3.0
     static let reactionDuration: Double = 0.6
     static let springResponse: Double = 0.5
     static let springDamping: Double = 0.6

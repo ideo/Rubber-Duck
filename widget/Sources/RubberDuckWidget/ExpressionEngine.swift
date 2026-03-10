@@ -8,9 +8,7 @@ struct DuckExpression {
     var eyeHeight: CGFloat = 1.0       // 1.0 = round, 0.3 = squint, 1.5 = wide
     var eyeOffsetY: CGFloat = 0.0      // Vertical eye position shift
 
-    // Body
-    var scaleAmount: CGFloat = 1.0     // Breathing / pulse
-    var rotationAngle: Double = 0.0    // Shake / tilt
+    // Body (no rotation/scale — transforms break liquid glass refraction)
     var hueShift: Double = 0.0         // Color temperature shift
 
     // Glow
@@ -37,15 +35,6 @@ enum ExpressionEngine {
         // --- Creativity → Eye widening ---
         // High creativity = wide curious eyes
         expr.eyeHeight += CGFloat(s.creativity) * 0.2  // adds up to ±0.2
-
-        // --- Ambition → Scale/breathing intensity ---
-        // Higher ambition = bigger presence
-        expr.scaleAmount = 1.0 + CGFloat(abs(s.ambition)) * 0.08  // 1.0 to 1.08
-
-        // --- Risk → Shake/wobble ---
-        if s.risk > 0.3 {
-            expr.rotationAngle = Double(s.risk) * 5.0  // Up to ±5 degrees
-        }
 
         // --- Beak opens when reaction exists ---
         if let reaction = s.reaction, !reaction.isEmpty {
