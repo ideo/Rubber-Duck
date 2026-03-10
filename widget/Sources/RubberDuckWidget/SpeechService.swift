@@ -25,7 +25,12 @@ class SpeechService: ObservableObject {
 
     // Config
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
-    var ttsVoice: String = "Boing" { didSet { tts.voice = ttsVoice } }
+    var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
+        didSet {
+            tts.voice = ttsVoice
+            UserDefaults.standard.set(ttsVoice, forKey: "duck_tts_voice")
+        }
+    }
 
     // Callbacks
     var onVoiceInput: ((String) -> Void)?
@@ -37,9 +42,14 @@ class SpeechService: ObservableObject {
     private let tts: TTSEngine
     private var wakeWordProcessor = WakeWordProcessor()
     private var permissionGate = PermissionVoiceGate()
+    private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
+
+    // Track whether we were using Teensy (so we know when it disappears or reappears)
+    private var usingTeensy = false
 
     // Timers
     private var voiceInputTimer: Task<Void, Never>?
+    private var deviceCheckTask: Task<Void, Never>?
 
     // Log file
     private let logURL: URL = {
@@ -67,6 +77,16 @@ class SpeechService: ObservableObject {
 
         // Share the TTS mute gate with STT so mic mutes during playback
         stt.setTTSGate(tts.gate)
+
+        // Watch for USB audio device plug/unplug.
+        // CoreAudio fires multiple callbacks per plug event (one per endpoint),
+        // so we debounce to let enumeration settle before checking state.
+        deviceListener.onChange = { [weak self] in
+            Task { @MainActor in
+                self?.scheduleDeviceCheck()
+            }
+        }
+        deviceListener.start()
     }
 
     // MARK: - Public API
@@ -133,6 +153,11 @@ class SpeechService: ObservableObject {
         speak(prompt)
     }
 
+    /// Clear the voice permission gate (permission resolved externally — CLI, timeout, etc.)
+    func clearPermissionGate() {
+        permissionGate.reset()
+    }
+
     static func listMicrophones() -> [(index: Int, name: String)] {
         AudioDeviceDiscovery.listMicrophones()
     }
@@ -147,6 +172,7 @@ class SpeechService: ObservableObject {
         }
 
         selectedMicName = mic.name
+        usingTeensy = mic.isTeensy
         log("[speech] Selected \(mic.isTeensy ? "Teensy" : "default") mic: \(mic.name)")
 
         if mic.isTeensy {
@@ -155,6 +181,59 @@ class SpeechService: ObservableObject {
                 stt.setTeensyDevice(teensy.deviceID)
                 tts.outputDeviceName = teensy.name
                 log("[tts] Will route TTS to Teensy via `say -a \"\(teensy.name)\"`")
+            }
+        } else {
+            // Ensure STT/TTS use system defaults
+            stt.clearTeensyDevice()
+            tts.outputDeviceName = nil
+        }
+    }
+
+    // MARK: - Device Hot-Plug
+
+    /// Debounce CoreAudio device-change callbacks.
+    /// USB enumeration fires multiple notifications (one per endpoint);
+    /// waiting 500ms lets the system settle so `findTeensy()` returns
+    /// a stable result instead of a momentary nil mid-enumeration.
+    private func scheduleDeviceCheck() {
+        deviceCheckTask?.cancel()
+        deviceCheckTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+            if !Task.isCancelled {
+                self.handleDeviceChange()
+            }
+        }
+    }
+
+    /// Called after debounce when audio devices change (USB plug/unplug).
+    /// Re-selects mic/TTS and restarts listening if the device changed.
+    private func handleDeviceChange() {
+        let wasTeensy = usingTeensy
+        let teensyNow = AudioDeviceDiscovery.findTeensy() != nil
+
+        if wasTeensy && !teensyNow {
+            // Teensy unplugged — switch to local audio
+            log("[speech] Teensy unplugged — switching to local mic + speakers")
+            stt.clearTeensyDevice()
+            tts.outputDeviceName = nil
+            selectMicrophone()
+
+            // Restart listening on the new device
+            if isListening {
+                stopListening()
+                stt.resetRestartAttempts()
+                startListening()
+            }
+        } else if !wasTeensy && teensyNow {
+            // Teensy plugged in — switch to Teensy audio
+            log("[speech] Teensy plugged in — switching to Teensy mic + speaker")
+            selectMicrophone()
+
+            // Restart listening on Teensy
+            if isListening {
+                stopListening()
+                stt.resetRestartAttempts()
+                startListening()
             }
         }
     }

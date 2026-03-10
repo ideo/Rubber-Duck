@@ -99,6 +99,11 @@ End-user story: **Install the plugin. Plug in the duck. Go.**
 - Plugin agents provide duck context, but does this apply across all projects automatically?
 - **Ask**: Confirm that user-scoped plugins inject their agent context into every session.
 
+### 5. PermissionResolved hook (or callback)
+- When a `PermissionRequest` hook returns empty/{} (timeout/no decision), Claude Code shows its own prompt and the user approves there. The hook system has no way to notify the external service that permission was granted.
+- The duck widget stays in "permission pending" alert mode indefinitely because it never learns the outcome. It only clears on voice approval (which bypasses the CLI prompt entirely) or when the next eval happens to arrive.
+- **Ask**: A `PermissionResolved` hook (or a callback URL in the hook output) that fires when the user grants/denies permission through Claude Code's own UI. Payload: `{tool_name, decision, session_id}`.
+
 ---
 
 ## Our TBDs (things we build)

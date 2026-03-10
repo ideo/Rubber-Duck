@@ -83,10 +83,11 @@ class DuckCoordinator: ObservableObject {
     }
 
     /// Called when permission resolves (pending → false) via onChange.
-    /// Backup path in case decision comes from outside the widget.
+    /// Backup path in case decision comes from outside the widget (CLI, timeout).
     func handlePermissionResolved() {
         updateExpression()
         serialManager.sendCommand("P,0")
+        speechService.clearPermissionGate()
     }
 
     // MARK: - Expression
