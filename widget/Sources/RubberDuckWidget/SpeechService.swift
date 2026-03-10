@@ -25,7 +25,12 @@ class SpeechService: ObservableObject {
 
     // Config
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
-    var ttsVoice: String = "Boing" { didSet { tts.voice = ttsVoice } }
+    var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
+        didSet {
+            tts.voice = ttsVoice
+            UserDefaults.standard.set(ttsVoice, forKey: "duck_tts_voice")
+        }
+    }
 
     // Callbacks
     var onVoiceInput: ((String) -> Void)?
@@ -146,6 +151,11 @@ class SpeechService: ObservableObject {
         let prompt = "\(label). Allow?"
         permissionGate.startWaiting(optionCount: options.count, prompt: prompt)
         speak(prompt)
+    }
+
+    /// Clear the voice permission gate (permission resolved externally — CLI, timeout, etc.)
+    func clearPermissionGate() {
+        permissionGate.reset()
     }
 
     static func listMicrophones() -> [(index: Int, name: String)] {

@@ -210,6 +210,25 @@ struct DuckView: View {
         }
         Text("Mode: \(coordinator.mode == .critic ? "Critic" : "Relay")")
 
+        // Voice picker — grouped by category
+        Menu("Voice: \(DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)") {
+            Section("Novelty") {
+                ForEach(DuckVoices.novelty, id: \.sayName) { voice in
+                    voiceButton(voice)
+                }
+            }
+            Section("Siri") {
+                ForEach(DuckVoices.siri, id: \.sayName) { voice in
+                    voiceButton(voice)
+                }
+            }
+            Section("Classic") {
+                ForEach(DuckVoices.classic, id: \.sayName) { voice in
+                    voiceButton(voice)
+                }
+            }
+        }
+
         Divider()
 
         Text("Mic: \(speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName)")
@@ -231,6 +250,19 @@ struct DuckView: View {
         Button("Quit Duck") {
             duckServer.stop()
             NSApp.terminate(nil)
+        }
+    }
+
+    private func voiceButton(_ voice: DuckVoice) -> some View {
+        Button {
+            speechService.ttsVoice = voice.sayName
+            speechService.speak("Hi, I'm \(voice.label).")
+        } label: {
+            if speechService.ttsVoice == voice.sayName {
+                Text("✓ \(voice.label)")
+            } else {
+                Text("   \(voice.label)")
+            }
         }
     }
 
