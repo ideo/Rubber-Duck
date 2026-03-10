@@ -58,10 +58,27 @@ class TTSEngine {
 
         let g = gate
         let logFn = log
+        let voiceName = voice              // capture for Sendable closure
+        let deviceName = outputDeviceName  // capture for retry
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 try task.run()
                 task.waitUntilExit()
+
+                // If say -a failed (device gone), retry on system default
+                if task.terminationStatus != 0, deviceName != nil {
+                    logFn?("[tts] say -a failed (exit \(task.terminationStatus)) — retrying on system audio")
+                    Task { @MainActor in
+                        self?.outputDeviceName = nil
+                    }
+                    let retry = Process()
+                    retry.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+                    retry.arguments = ["-v", voiceName, text]
+                    retry.standardOutput = FileHandle.nullDevice
+                    retry.standardError = FileHandle.nullDevice
+                    try retry.run()
+                    retry.waitUntilExit()
+                }
             } catch {
                 logFn?("[tts] say failed: \(error)")
             }

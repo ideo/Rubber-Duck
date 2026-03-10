@@ -46,6 +46,11 @@ class STTEngine: ObservableObject {
         self.teensyDeviceID = deviceID
     }
 
+    /// Clear the Teensy device so next start() uses the default system mic.
+    func clearTeensyDevice() {
+        self.teensyDeviceID = nil
+    }
+
     // MARK: - Listening
 
     func start() {

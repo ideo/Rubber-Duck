@@ -7,6 +7,20 @@ import Foundation
 import CoreAudio
 import AVFoundation
 
+/// CoreAudio property listener callback — must be a plain C function (not a closure).
+/// Bounces to main thread and calls the DeviceChangeListener's onChange handler.
+private func deviceChangeCallback(
+    _ objectID: AudioObjectID,
+    _ numberAddresses: UInt32,
+    _ addresses: UnsafePointer<AudioObjectPropertyAddress>,
+    _ clientData: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let ptr = clientData else { return noErr }
+    let listener = Unmanaged<AudioDeviceDiscovery.DeviceChangeListener>.fromOpaque(ptr).takeUnretainedValue()
+    DispatchQueue.main.async { listener.onChange?() }
+    return noErr
+}
+
 enum AudioDeviceDiscovery {
 
     /// Teensy device info found via CoreAudio.
@@ -69,6 +83,51 @@ enum AudioDeviceDiscovery {
         }
 
         return nil
+    }
+
+    // MARK: - Device Change Listener
+
+    /// Watches for USB audio device plug/unplug via CoreAudio property listener.
+    /// Fires callback on any device list change (add, remove, config change).
+    class DeviceChangeListener {
+        private var listening = false
+        var onChange: (() -> Void)?
+
+        func start() {
+            guard !listening else { return }
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDevices,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+            let status = AudioObjectAddPropertyListener(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                deviceChangeCallback,
+                selfPtr
+            )
+            listening = (status == noErr)
+        }
+
+        func stop() {
+            guard listening else { return }
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDevices,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+            AudioObjectRemovePropertyListener(
+                AudioObjectID(kAudioObjectSystemObject),
+                &address,
+                deviceChangeCallback,
+                selfPtr
+            )
+            listening = false
+        }
+
+        deinit { stop() }
     }
 
     // MARK: - CoreAudio Helpers

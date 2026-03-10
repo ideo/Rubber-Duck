@@ -77,3 +77,13 @@ P,0\n   — permission resolved (calm down)
 ```
 
 Sentiment formula: `soundness*0.3 + elegance*0.25 + creativity*0.2 + ambition*0.15 - risk*0.1`
+
+## Hot-unplug Teensy → fallback to local audio
+
+Implemented. When the Teensy USB device is unplugged mid-session, the widget detects the change and switches to local Mac mic + speakers. Plugging back in switches back to Teensy.
+
+**How it works:**
+- `AudioDeviceDiscovery.DeviceChangeListener` — CoreAudio `kAudioHardwarePropertyDevices` property listener fires on any device add/remove
+- `SpeechService.handleDeviceChange()` — detects Teensy appearing/disappearing, re-runs `selectMicrophone()`, restarts STT on the new device
+- `TTSEngine` — if `say -a "Teensy MIDI_Audio"` fails (non-zero exit), clears `outputDeviceName` and retries on system default
+- `STTEngine.clearTeensyDevice()` — lets SpeechService force STT back to default mic
