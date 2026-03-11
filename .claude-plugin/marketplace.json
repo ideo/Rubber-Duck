@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "duck-duck-duck",
-      "description": "Duck Duck Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
+      "description": "Duck Duck Duck companion — eval scoring, voice permissions, TTS reactions. Requires the Duck Duck Duck app: https://github.com/ideo/Rubber-Duck/releases",
       "author": {
         "name": "Daniel Deruntz",
         "url": "https://github.com/ideo"

@@ -43,11 +43,13 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Start Claude Session
-        menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
+        // Start Claude Session — gated behind plugin connection
         if duckServer.pluginConnected {
+            menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
             menu.addItem(disabledItem("Plugin Connected"))
         } else {
+            let sessionItem = disabledItem("Start Claude Session")
+            menu.addItem(sessionItem)
             menu.addItem(item("Install Claude Plugin", action: #selector(installPlugin)))
         }
         menu.addItem(.separator())
