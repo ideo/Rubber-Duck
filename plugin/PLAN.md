@@ -37,59 +37,61 @@ plugin/
 
 ### plugin.json
 
+> **Key learning**: Do NOT include a `"hooks"` field in plugin.json. Claude Code auto-discovers `hooks/hooks.json` from the `hooks/` directory. Including a `"hooks"` path breaks loading.
+
 ```json
 {
   "name": "rubber-duck",
-  "version": "0.1.0",
   "description": "Rubber Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
   "author": {
     "name": "Daniel Deruntz",
     "url": "https://github.com/ideo"
-  },
-  "repository": "https://github.com/ideo/Rubber-Duck",
-  "license": "MIT",
-  "keywords": ["eval", "feedback", "voice", "hardware", "companion"],
-  "hooks": "./hooks/hooks.json"
+  }
 }
 ```
 
 ### hooks/hooks.json
 
+> **Key learnings**:
+> - Must have a top-level `"description"` field
+> - Must NOT include `"matcher"` or `"async"` fields (those are settings.json format only)
+> - Use `"timeout"` instead of `"async"`
+> - Only `"type": "command"` and `"type": "prompt"` work in plugins — `"type": "http"` does NOT work in plugins
+> - Reference format: match the `hookify` plugin from the official Anthropic marketplace
+
 ```json
 {
+  "description": "Rubber Duck hooks — eval scoring, voice permissions for Claude Code",
   "hooks": {
     "UserPromptSubmit": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-user-prompt.sh",
-            "async": true
+            "timeout": 10
           }
         ]
       }
     ],
     "Stop": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-claude-stop.sh",
-            "async": true
+            "timeout": 10
           }
         ]
       }
     ],
     "PermissionRequest": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/on-permission-request.sh",
-            "async": false
+            "timeout": 35
           }
         ]
       }
@@ -155,7 +157,7 @@ Plugins can be installed at three scopes:
 ### Phase 1 (current): Auto-install via widget
 Widget extracts scripts to `~/.duck/hooks/` and writes to `~/.claude/settings.json`. Works today, no plugin system needed.
 
-### Phase 2 (this branch): Plugin structure
+### Phase 2 (this branch): Plugin structure ✅
 Create the plugin directory, test with `claude --plugin-dir ./plugin`. Keep the auto-install as fallback.
 
 ### Phase 3: Marketplace submission
@@ -290,8 +292,16 @@ curl -fsSL https://raw.githubusercontent.com/ideo/Rubber-Duck/main/scripts/insta
 
 - [ ] Should the plugin include a skill (e.g., `/rubber-duck:status`) that checks if the widget is running?
 - [ ] Should the plugin include an MCP server for richer Claude ↔ duck communication?
-- [ ] Can we use HTTP hooks (`"type": "http"`) instead of command hooks to skip shell scripts entirely? Need to verify input format compatibility.
+- [x] ~~Can we use HTTP hooks (`"type": "http"`) instead of command hooks?~~ **No.** HTTP hooks only work in `settings.json`, not in plugins. Plugins only support `"type": "command"` and `"type": "prompt"`.
 - [ ] Marketplace.json format — does it go at repo root or can it reference a subdirectory?
+
+## Completed (2026-03-10)
+
+- [x] Plugin structure created and tested with `claude --plugin-dir ./plugin`
+- [x] All 3 hooks (UserPromptSubmit, Stop, PermissionRequest) register and fire correctly
+- [x] Plugin mode sentinel (`~/.duck/.plugin-mode`) prevents HookInstaller from conflicting
+- [x] `/hook/*` HTTP endpoints added to DuckServer.swift (for potential future use)
+- [x] Hooks show as read-only "Plugin Hooks — disable rubber-duck to remove" in `/hooks` UI
 
 ## Testing
 
