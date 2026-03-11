@@ -36,6 +36,7 @@ Tested via `make sandbox` (ad-hoc signed with App Sandbox entitlements) on 2026-
 | Microphone + STT | "ducky hello" recognized | SFSpeechRecognizer + mic entitlement work |
 | PluginInstaller clipboard | Dialog appeared, copied command, pasted in Terminal | UX needs polish but functional |
 | SPM resource bundle | Beak PNG, dashboard HTML loaded | Fixed: copy to Contents/Resources/ + Resources.bundle helper |
+| USB serial (Teensy) | Servo movements + piezo chirps on eval | Requires `com.apple.security.device.serial` entitlement |
 
 ### Confirmed blocked in sandbox (GitHub-only features)
 
