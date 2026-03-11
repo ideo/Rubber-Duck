@@ -57,11 +57,19 @@ enum DuckConfig {
             return fileKey
         }
 
-        // 2b. Legacy ~/.duck/api_key (migrate if found)
+        // 2b. Legacy Application Support/RubberDuck/ (pre-rename, migrate if found)
+        let legacyAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("RubberDuck/api_key")
+        if let legacyKey = try? String(contentsOf: legacyAppSupport, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !legacyKey.isEmpty {
+            try? legacyKey.write(to: keyFile, atomically: true, encoding: .utf8)
+            return legacyKey
+        }
+
+        // 2c. Legacy ~/.duck/api_key (pre-sandbox, migrate if found)
         let legacyKeyFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".duck/api_key")
         if let legacyKey = try? String(contentsOf: legacyKeyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !legacyKey.isEmpty {
-            // Migrate to new location
             try? legacyKey.write(to: keyFile, atomically: true, encoding: .utf8)
             return legacyKey
         }
