@@ -228,30 +228,32 @@ enum PluginInstaller {
     }
 
     /// Install the Duck Duck Duck plugin. Shows an alert with the result.
-    @MainActor
     static func install() {
         guard let claude = findClaude() else {
-            let alert = NSAlert()
-            alert.messageText = "Claude Code Not Found"
-            alert.informativeText = "Could not find the claude CLI. Install Claude Code first:\nhttps://docs.anthropic.com/s/claude-code"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
+            print("[plugin] Claude CLI not found")
+            Task { @MainActor in
+                showResult(success: false, detail: "Could not find the claude CLI.\nInstall Claude Code first: https://docs.anthropic.com/s/claude-code")
+            }
             return
         }
+        print("[plugin] Found claude at \(claude)")
 
         // Run install on background thread to avoid blocking UI
         DispatchQueue.global(qos: .userInitiated).async {
+            print("[plugin] Running marketplace add...")
             let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", "ideo/Rubber-Duck"])
+            print("[plugin] Marketplace add: ok=\(mpOk) output=\(mpOut)")
             if !mpOk {
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     showResult(success: false, detail: "Marketplace add failed:\n\(mpOut)")
                 }
                 return
             }
 
+            print("[plugin] Running plugin install...")
             let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
-            DispatchQueue.main.async {
+            print("[plugin] Plugin install: ok=\(installOk) output=\(installOut)")
+            Task { @MainActor in
                 if installOk {
                     showResult(success: true, detail: "Start a new Claude Code session to activate the hooks.")
                 } else {
@@ -263,6 +265,8 @@ enum PluginInstaller {
 
     @MainActor
     private static func showResult(success: Bool, detail: String) {
+        // Activate app so the alert shows above other windows (menu-bar-only app)
+        NSApp.activate()
         let alert = NSAlert()
         alert.messageText = success ? "Plugin Installed" : "Install Failed"
         alert.informativeText = detail
