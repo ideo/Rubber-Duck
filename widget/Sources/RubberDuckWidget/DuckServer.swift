@@ -231,7 +231,7 @@ class DuckServer: ObservableObject {
 
         // GET / — dashboard
         srv.get("/") { _ in
-            guard let url = Bundle.module.url(forResource: "dashboard", withExtension: "html"),
+            guard let url = Resources.bundle.url(forResource: "dashboard", withExtension: "html"),
                   let html = try? String(contentsOf: url, encoding: .utf8) else {
                 return .notFound
             }
@@ -240,7 +240,7 @@ class DuckServer: ObservableObject {
 
         // GET /viewer — 3D viewer
         srv.get("/viewer") { _ in
-            guard let url = Bundle.module.url(forResource: "viewer", withExtension: "html"),
+            guard let url = Resources.bundle.url(forResource: "viewer", withExtension: "html"),
                   let html = try? String(contentsOf: url, encoding: .utf8) else {
                 return .notFound
             }

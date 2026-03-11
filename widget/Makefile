@@ -13,7 +13,7 @@ DIST_ZIP = $(DIST_DIR)/DuckDuckDuck.zip
 SIGN_IDENTITY = Developer ID Application: Daniel Deruntz (6E5CFN69H5)
 NOTARY_PROFILE = notarytool-profile
 
-.PHONY: build bundle run clean release dist sign notarize
+.PHONY: build bundle run sandbox clean release dist sign notarize
 
 build:
 	swift build -c release
@@ -33,10 +33,17 @@ bundle: build icon
 	@cp Info.plist $(CONTENTS)/
 	@cp $(ICON_OUT)/duckIcon.icns $(RESOURCES_DIR)/
 	@cp $(ICON_OUT)/Assets.car $(RESOURCES_DIR)/
+	@cp -R $(BUILD_DIR)/$(EXECUTABLE)_$(EXECUTABLE).bundle $(RESOURCES_DIR)/
 	@codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ Built $(APP_BUNDLE)"
 
 run: bundle
+	@open $(APP_BUNDLE)
+
+sandbox: bundle
+	@echo "🔒 Re-signing with App Sandbox entitlements..."
+	@codesign --force --deep --sign - --entitlements Sandbox.entitlements $(APP_BUNDLE)
+	@echo "🔒 Launching in sandbox mode"
 	@open $(APP_BUNDLE)
 
 debug:

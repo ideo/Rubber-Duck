@@ -156,7 +156,7 @@ struct DuckView: View {
     // MARK: - Beak
 
     private var beakImage: Image {
-        if let url = Bundle.module.url(forResource: "beak", withExtension: "png"),
+        if let url = Resources.bundle.url(forResource: "beak", withExtension: "png"),
            let nsImage = NSImage(contentsOf: url) {
             return Image(nsImage: nsImage)
         }

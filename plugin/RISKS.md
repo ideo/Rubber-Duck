@@ -20,24 +20,45 @@ The widget binds `localhost:3333` and the plugin scripts POST to it. If another 
 
 All widget storage moved to `~/Library/Application Support/DuckDuckDuck/` (sandbox-safe). The widget no longer writes to `~/.duck/`. Legacy migration code has been removed.
 
-## Mac App Store sandbox violations (open)
+## Mac App Store sandbox violations
 
-Audit of remaining Process() / filesystem violations that block App Store submission:
+Tested via `make sandbox` (ad-hoc signed with App Sandbox entitlements) on 2026-03-11.
 
-| Violation | File | What | Status |
-|-----------|------|------|--------|
-| **TmuxBridge** | TmuxBridge.swift | Shells out to `tmux send-keys` for voice → CLI | Blocker — needs redesign |
-| **ClaudeSession launcher** | StatusBarManager.swift | AppleScript `tell "Terminal"` + osascript | Blocker — needs redesign |
-| **TTSEngine** | TTSEngine.swift | `/usr/bin/say` via Process() | Replace with AVSpeechSynthesizer |
-| **PluginInstaller** | StatusBarManager.swift | Shells out to `claude` CLI binary | Replace with copy-paste instructions |
-| **PluginInstaller cache** | StatusBarManager.swift | Clears `~/.claude/plugins/cache/` | Remove — can't access from sandbox |
-| **SpeechService log** | SpeechService.swift | Writes to `~/Library/Logs/` | Move to Application Support |
+### Confirmed working in sandbox
 
-**Resolved (removed):**
+| Feature | How tested | Notes |
+|---------|-----------|-------|
+| App launch + storage dir | App launched, API key prompt appeared | `~/Library/Application Support/DuckDuckDuck/` works |
+| API key storage | Pasted key, app saved and loaded it | FileManager container APIs fine |
+| TTS via `/usr/bin/say` | Duck spoke greeting on launch | No Process() restriction for system binaries |
+| LaunchGreeting | "They're back already" — context-aware | Time/recency logic works |
+| NWListener (localhost:3333) | Dashboard loaded in browser | Server binding works |
+| Microphone + STT | "ducky hello" recognized | SFSpeechRecognizer + mic entitlement work |
+| PluginInstaller clipboard | Dialog appeared, copied command, pasted in Terminal | UX needs polish but functional |
+| SPM resource bundle | Beak PNG, dashboard HTML loaded | Fixed: copy to Contents/Resources/ + Resources.bundle helper |
+
+### Confirmed blocked in sandbox (GitHub-only features)
+
+These features work in the notarized GitHub release but not in App Store sandbox. This is by design — two distribution tiers:
+
+- **App Store**: critic mode + eval scoring + TTS reactions + voice permissions. The core experience.
+- **GitHub release**: everything above + relay mode (tmux voice → CLI commands). Power user install.
+
+| Feature | File | What happens | GitHub release? | Future path |
+|---------|------|-------------|----------------|-------------|
+| **TmuxBridge** | TmuxBridge.swift | Voice heard but command can't reach CLI | Works | Agent teams inbox (rethink needed) |
+| **ClaudeSession launcher** | StatusBarManager.swift | Nothing happens (osascript blocked) | Works | Clipboard fallback (like PluginInstaller) |
+
+### Previously resolved
+
+- ~~PluginInstaller~~ — dual-mode: automatic CLI in dev, clipboard + open Terminal in sandbox
+- ~~SpeechService log~~ — moved to `DuckConfig.storageDir` (Application Support)
 - ~~Legacy `~/.duck/api_key` migration~~ — removed from DuckConfig
 - ~~Legacy `Application Support/RubberDuck/` migration~~ — removed from DuckConfig
 - ~~HookInstaller.swift~~ — deleted (accessed `~/.duck/`, `~/.claude/settings.json`)
 - ~~`.env` file loader~~ — removed (walked filesystem outside sandbox)
+- ~~TTSEngine `/usr/bin/say`~~ — confirmed working in sandbox (no fix needed)
+- ~~Bundle.module crash~~ — fixed: resource bundle copied to Contents/Resources/, Resources.bundle helper
 
 ## Shell scripts in plugin require bash
 
