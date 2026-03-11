@@ -18,7 +18,26 @@ The widget binds `localhost:3333` and the plugin scripts POST to it. If another 
 
 ## ~/.duck/ directory (resolved)
 
-All widget storage moved to `~/Library/Application Support/DuckDuckDuck/` (sandbox-safe). The widget no longer writes to `~/.duck/`. Legacy migration in `HookInstaller.migrateLegacy()` cleans up old installs.
+All widget storage moved to `~/Library/Application Support/DuckDuckDuck/` (sandbox-safe). The widget no longer writes to `~/.duck/`. Legacy migration code has been removed.
+
+## Mac App Store sandbox violations (open)
+
+Audit of remaining Process() / filesystem violations that block App Store submission:
+
+| Violation | File | What | Status |
+|-----------|------|------|--------|
+| **TmuxBridge** | TmuxBridge.swift | Shells out to `tmux send-keys` for voice → CLI | Blocker — needs redesign |
+| **ClaudeSession launcher** | StatusBarManager.swift | AppleScript `tell "Terminal"` + osascript | Blocker — needs redesign |
+| **TTSEngine** | TTSEngine.swift | `/usr/bin/say` via Process() | Replace with AVSpeechSynthesizer |
+| **PluginInstaller** | StatusBarManager.swift | Shells out to `claude` CLI binary | Replace with copy-paste instructions |
+| **PluginInstaller cache** | StatusBarManager.swift | Clears `~/.claude/plugins/cache/` | Remove — can't access from sandbox |
+| **SpeechService log** | SpeechService.swift | Writes to `~/Library/Logs/` | Move to Application Support |
+
+**Resolved (removed):**
+- ~~Legacy `~/.duck/api_key` migration~~ — removed from DuckConfig
+- ~~Legacy `Application Support/RubberDuck/` migration~~ — removed from DuckConfig
+- ~~HookInstaller.swift~~ — deleted (accessed `~/.duck/`, `~/.claude/settings.json`)
+- ~~`.env` file loader~~ — removed (walked filesystem outside sandbox)
 
 ## Shell scripts in plugin require bash
 

@@ -72,9 +72,6 @@ struct RubberDuckWidgetApp: App {
             }
         }
 
-        // Clean up legacy hook artifacts (pre-plugin installs)
-        HookInstaller.migrateLegacy()
-
         // Start the embedded HTTP + WebSocket server
         duckServer.start()
 
@@ -115,13 +112,19 @@ struct RubberDuckWidgetApp: App {
             duckServer: duckServer
         )
 
+        // TTS greeting when a Claude session connects via /health
+        duckServer.onSessionConnect = { [weak speechService, weak coordinator] in
+            let mode = coordinator?.mode ?? .critic
+            speechService?.speak(LaunchGreeting.sessionConnect(mode: mode))
+        }
+
         // Poll until permissions are granted, then apply saved listen mode
         Task {
             for _ in 0..<20 { // Up to 10 seconds
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 if speechService.micPermissionGranted && speechService.speechPermissionGranted {
                     speechService.applyListenMode()
-                    speechService.speak("What are we up to?")
+                    speechService.speak(LaunchGreeting.pick(mode: coordinator.mode))
                     return
                 }
             }

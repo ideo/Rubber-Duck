@@ -20,6 +20,9 @@ class DuckServer: ObservableObject {
     /// True after a Claude Code session has pinged /health (SessionStart hook).
     @Published var pluginConnected = false
 
+    /// Called when a new session connects via /health. Wired to TTS greeting by the app.
+    var onSessionConnect: (() -> Void)?
+
     let evaluator: ClaudeEvaluator
     let permissionGate: PermissionGate
     let broadcaster: WebSocketBroadcaster
@@ -61,7 +64,13 @@ class DuckServer: ObservableObject {
         let localTransport = self.localTransport
         let port = self.port
         let markPluginConnected: @Sendable () async -> Void = {
-            await MainActor.run { self.pluginConnected = true }
+            await MainActor.run {
+                let wasConnected = self.pluginConnected
+                self.pluginConnected = true
+                if !wasConnected {
+                    self.onSessionConnect?()
+                }
+            }
         }
 
         let srv = MiniServer(port: UInt16(port))

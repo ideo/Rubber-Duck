@@ -83,6 +83,30 @@ A small onboarding panel on first launch:
 ### Gate "Start Claude Session" behind plugin state
 Only enable the menu item when `pluginConnected == true` or when the plugin is known to be installed. Problem: we can't detect plugin install state from the widget (sandboxed), only the /health ping.
 
+## Upgradability (unresolved)
+
+Two-piece install means two upgrade paths, neither of which is smooth today:
+
+**App updates:**
+- No auto-update mechanism — user must re-download from GitHub Releases
+- No version check — widget doesn't know if it's outdated
+- Future: Sparkle framework? Or just a "new version available" check against GitHub API
+
+**Plugin updates:**
+- `claude plugin update duck-duck-duck` has failed in testing ("not found")
+- Working path: full uninstall → cache clear → marketplace re-add → reinstall
+- The "Update Claude Plugin" menu button does this, but only available in dev mode (requires widget running + plugin already connected)
+- No way for the plugin to know its own version vs what's on remote
+- Plugin cache at `~/.claude/plugins/cache/` is aggressive — stale versions persist without manual clearing
+
+**Version coordination:**
+- App and plugin can drift out of sync (e.g., new hook format in plugin, old server in app)
+- No version handshake between plugin and widget
+- SessionStart /health response could include widget version for comparison
+- Plugin could embed its version and send it with /health ping
+
+**Risk:** User installs v0.1.0 app, plugin updates to v0.2.0 with breaking changes → silent failures.
+
 ## Plugin System Limitations
 
 - No first-install hook or event

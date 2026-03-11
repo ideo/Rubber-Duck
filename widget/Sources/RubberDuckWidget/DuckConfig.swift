@@ -36,14 +36,14 @@ enum DuckConfig {
     // MARK: - Anthropic API
 
     /// Anthropic API key for Claude evaluations.
-    /// Lookup order: ANTHROPIC_API_KEY env var → ~/.duck/api_key file → .env file in repo → prompt user
+    /// Lookup order: ANTHROPIC_API_KEY env var → Application Support key file → prompt user
     static var anthropicAPIKey: String = {
         if let key = resolveAPIKey() { return key }
         print("[config] WARNING: No ANTHROPIC_API_KEY found. Will prompt on launch.")
         return ""
     }()
 
-    /// Try all automatic sources for the API key.
+    /// Try all automatic sources for the API key (sandbox-safe only).
     private static func resolveAPIKey() -> String? {
         // 1. Environment variable (highest priority)
         if let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
@@ -55,28 +55,6 @@ enum DuckConfig {
         if let fileKey = try? String(contentsOf: keyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !fileKey.isEmpty {
             return fileKey
-        }
-
-        // 2b. Legacy Application Support/RubberDuck/ (pre-rename, migrate if found)
-        let legacyAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("RubberDuck/api_key")
-        if let legacyKey = try? String(contentsOf: legacyAppSupport, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-           !legacyKey.isEmpty {
-            try? legacyKey.write(to: keyFile, atomically: true, encoding: .utf8)
-            return legacyKey
-        }
-
-        // 2c. Legacy ~/.duck/api_key (pre-sandbox, migrate if found)
-        let legacyKeyFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".duck/api_key")
-        if let legacyKey = try? String(contentsOf: legacyKeyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-           !legacyKey.isEmpty {
-            try? legacyKey.write(to: keyFile, atomically: true, encoding: .utf8)
-            return legacyKey
-        }
-
-        // 3. .env file in repo (walk up from binary to find it)
-        if let envKey = loadFromDotEnv(key: "ANTHROPIC_API_KEY") {
-            return envKey
         }
 
         return nil
@@ -117,35 +95,6 @@ enum DuckConfig {
         if response == .alertFirstButtonReturn {
             let key = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !key.isEmpty { return key }
-        }
-        return nil
-    }
-
-    /// Load a key from a .env file by walking up from the binary to find the repo root.
-    /// Searches for .env and widget/.env at each level.
-    private static func loadFromDotEnv(key: String) -> String? {
-        var dir = Bundle.main.bundleURL
-        for _ in 0..<10 {
-            dir = dir.deletingLastPathComponent()
-            // Check .env at this level and widget/.env
-            for envPath in [dir.appendingPathComponent(".env"),
-                            dir.appendingPathComponent("widget/.env")] {
-                guard let contents = try? String(contentsOf: envPath, encoding: .utf8) else { continue }
-
-                for line in contents.components(separatedBy: .newlines) {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
-                    let parts = trimmed.components(separatedBy: "=")
-                    guard parts.count >= 2 else { continue }
-                    let k = parts[0].trimmingCharacters(in: .whitespaces)
-                    if k == key {
-                        let v = parts.dropFirst().joined(separator: "=")
-                            .trimmingCharacters(in: .whitespaces)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                        if !v.isEmpty { return v }
-                    }
-                }
-            }
         }
         return nil
     }
