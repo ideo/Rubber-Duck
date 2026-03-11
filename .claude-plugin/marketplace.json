@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "rubber-duck-marketplace",
+  "description": "Rubber Duck — a physical duck companion that watches, evaluates, and reacts to your Claude Code sessions",
+  "owner": {
+    "name": "Daniel Deruntz",
+    "url": "https://github.com/ideo"
+  },
+  "plugins": [
+    {
+      "name": "rubber-duck",
+      "description": "Rubber Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
+      "author": {
+        "name": "Daniel Deruntz",
+        "url": "https://github.com/ideo"
+      },
+      "source": "./plugin",
+      "category": "productivity",
+      "homepage": "https://github.com/ideo/Rubber-Duck"
+    }
+  ]
+}
