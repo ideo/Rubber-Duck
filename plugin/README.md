@@ -10,17 +10,17 @@ Eval scoring, voice permissions, and TTS reactions for Claude Code sessions.
 
 ## Install
 
-### From the widget app (recommended)
-
-Click **Install Claude Plugin** from the menu bar icon.
-
-### Manual
+### From the terminal (recommended)
 
 ```bash
-# Add marketplace
-/plugin marketplace add ideo/Rubber-Duck
+claude plugin marketplace add ideo/Rubber-Duck
+claude plugin install rubber-duck
+```
 
-# Install
+### From inside Claude Code
+
+```
+/plugin marketplace add ideo/Rubber-Duck
 /plugin install rubber-duck
 ```
 
@@ -32,12 +32,12 @@ claude --plugin-dir ./plugin
 
 ## How it works
 
-This plugin uses HTTP hooks — Claude Code POSTs directly to the widget's server on `localhost:3333`. No shell scripts involved.
+The plugin registers three hook scripts that POST to the widget's server on `localhost:3333`:
 
-| Hook | Endpoint | Purpose |
-|------|----------|---------|
-| UserPromptSubmit | `/hook/prompt` | Evaluate user prompts |
-| Stop | `/hook/stop` | Evaluate Claude responses |
-| PermissionRequest | `/hook/permission` | Voice-gated permission approval |
+| Hook | What it does |
+|------|-------------|
+| UserPromptSubmit | Sends your prompt to the duck for eval scoring |
+| Stop | Sends Claude's response to the duck for eval scoring |
+| PermissionRequest | Asks the duck (via voice) whether to allow the action |
 
 The widget app must be running to receive these events. If the widget isn't running, hooks fail silently and Claude Code continues normally.
