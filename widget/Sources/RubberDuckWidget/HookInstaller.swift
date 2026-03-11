@@ -16,8 +16,18 @@ enum HookInstaller {
     ]
 
     /// Extract scripts to ~/.duck/hooks/ and register in ~/.claude/settings.json.
+    /// Skips if the Claude Code plugin is handling hooks instead.
     static func install() {
         let home = FileManager.default.homeDirectoryForCurrentUser
+
+        // If plugin mode is active, the Claude Code plugin handles hooks via
+        // HTTP — no need to install shell scripts or modify settings.json.
+        let pluginSentinel = home.appendingPathComponent(".duck/.plugin-mode")
+        if FileManager.default.fileExists(atPath: pluginSentinel.path) {
+            DuckLog.log("[hooks] Plugin mode active — skipping auto-install")
+            return
+        }
+
         let hooksDir = home.appendingPathComponent(".duck/hooks")
         let settingsFile = home.appendingPathComponent(".claude/settings.json")
 
@@ -26,6 +36,64 @@ enum HookInstaller {
 
         // 2. Merge hook entries into ~/.claude/settings.json
         mergeSettings(settingsFile: settingsFile, hooksDir: hooksDir)
+    }
+
+    /// Remove shell script hooks from ~/.claude/settings.json.
+    /// Called when switching to plugin mode.
+    static func uninstallHooks() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let settingsFile = home.appendingPathComponent(".claude/settings.json")
+
+        guard let data = try? Data(contentsOf: settingsFile),
+              var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var hooks = settings["hooks"] as? [String: Any] else {
+            return
+        }
+
+        // Remove entries that reference .duck/hooks/
+        for (event, entries) in hooks {
+            guard var arr = entries as? [[String: Any]] else { continue }
+            arr.removeAll { entry in
+                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
+                return hookList.contains { ($0["command"] as? String)?.contains(".duck/hooks/") == true }
+            }
+            if arr.isEmpty {
+                hooks.removeValue(forKey: event)
+            } else {
+                hooks[event] = arr
+            }
+        }
+
+        if hooks.isEmpty {
+            settings.removeValue(forKey: "hooks")
+        } else {
+            settings["hooks"] = hooks
+        }
+
+        guard let updated = try? JSONSerialization.data(
+            withJSONObject: settings,
+            options: [.prettyPrinted, .sortedKeys]
+        ) else { return }
+
+        try? updated.write(to: settingsFile)
+        DuckLog.log("[hooks] Removed shell script hooks from settings.json")
+    }
+
+    /// Enable plugin mode — removes shell hooks and creates sentinel.
+    static func enablePluginMode() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let sentinel = home.appendingPathComponent(".duck/.plugin-mode")
+        FileManager.default.createFile(atPath: sentinel.path, contents: nil)
+        uninstallHooks()
+        DuckLog.log("[hooks] Plugin mode enabled")
+    }
+
+    /// Disable plugin mode — removes sentinel, next launch will auto-install.
+    static func disablePluginMode() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let sentinel = home.appendingPathComponent(".duck/.plugin-mode")
+        try? FileManager.default.removeItem(at: sentinel)
+        DuckLog.log("[hooks] Plugin mode disabled")
     }
 
     // MARK: - Extract Scripts
