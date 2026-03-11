@@ -16,14 +16,9 @@ The widget binds `localhost:3333` and the plugin scripts POST to it. If another 
 
 **Goal**: Nobody should ever have to think about this.
 
-## ~/.duck/ directory not sandbox-safe
+## ~/.duck/ directory (resolved)
 
-The widget currently writes to `~/.duck/` for:
-- `config` — port, API key, preferences
-- `.plugin-mode` — sentinel to prevent HookInstaller from running
-- `hooks/` — shell scripts (eliminated by plugin, but dir still exists)
-
-Under App Store sandbox, all of these need to move to the app's container or be eliminated. The plugin removed the need for `hooks/`, but `config` and `.plugin-mode` remain.
+All widget storage moved to `~/Library/Application Support/DuckDuckDuck/` (sandbox-safe). The widget no longer writes to `~/.duck/`. Legacy migration in `HookInstaller.migrateLegacy()` cleans up old installs.
 
 ## Shell scripts in plugin require bash
 
@@ -32,3 +27,33 @@ The plugin's hook scripts use `#!/bin/bash`. If a user's system doesn't have bas
 ## Hooks cached at session start
 
 Claude Code loads hooks once when a session starts. If the widget isn't running when Claude starts, hooks fire but fail (connection refused to localhost:3333). Restarting the widget mid-session fixes it, but the user might not realize they need to restart Claude too if hooks were misconfigured at launch.
+
+## Renaming checklist
+
+If the product name changes again, update all of these:
+
+| What | Where |
+|------|-------|
+| Plugin name | `plugin/.claude-plugin/plugin.json` → `"name"` |
+| Plugin description | `plugin/.claude-plugin/plugin.json` → `"description"` |
+| Marketplace name | `.claude-plugin/marketplace.json` → `"name"` |
+| Marketplace plugin entry | `.claude-plugin/marketplace.json` → `plugins[0].name` + `description` |
+| Hooks description | `plugin/hooks/hooks.json` → `"description"` |
+| Bundle ID | `widget/Info.plist` → `CFBundleIdentifier` |
+| Display name | `widget/Info.plist` → `CFBundleName` |
+| Permission strings | `widget/Info.plist` → `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription` |
+| App Support dir | `widget/Sources/.../DuckConfig.swift` → `storageDir` path component |
+| API key dialog | `widget/Sources/.../DuckConfig.swift` → `promptForAPIKey()` text |
+| Log file name | `widget/Sources/.../DuckLog.swift` → `logURL` path component |
+| Log file comment | `widget/Sources/.../DuckLog.swift` → header comment |
+| Speech log name | `widget/Sources/.../SpeechService.swift` → `logURL` + header comment |
+| Plugin README | `plugin/README.md` |
+| Plugin PLAN | `plugin/PLAN.md` (historical, bulk replace) |
+
+After updating, also:
+1. `cd widget && swift build` — verify it compiles
+2. Remove old marketplace: `claude plugin marketplace remove <old-name>-marketplace`
+3. Push changes to GitHub
+4. Re-add marketplace: `claude plugin marketplace add ideo/Rubber-Duck`
+5. Install new plugin: `claude plugin install <new-name>`
+6. Start a new Claude Code session (hooks are cached at session start)
