@@ -185,16 +185,14 @@ enum DuckConfig {
         storageDir.appendingPathComponent("duck.pid").path
     }()
 
-    /// Write resolved runtime values so shell scripts can read them.
-    /// Written to Application Support (sandbox-safe) and symlinked from ~/.duck/config
-    /// so legacy plugin scripts using `source ~/.duck/config` still work.
-    /// Called once on app launch. Format is key=value for direct `source` in bash.
+    /// Write resolved runtime values to Application Support for internal use.
+    /// Plugin scripts no longer read this — they use hardcoded defaults in duck-env.sh.
     static func writeRuntimeConfig() {
         let configFile = storageDir.appendingPathComponent("config")
 
         let contents = """
         # Rubber Duck Runtime Config — written by widget on launch.
-        # Do not edit manually; regenerated each launch.
+        # Internal use only. Plugin scripts use hardcoded defaults.
         DUCK_SERVICE_PORT=\(servicePort)
         DUCK_SERVICE_URL=http://localhost:\(servicePort)
         DUCK_TMUX_SESSION=\(tmuxSession)
@@ -212,15 +210,5 @@ enum DuckConfig {
         } catch {
             print("[config] Failed to write config: \(error)")
         }
-
-        // Also write to legacy ~/.duck/config for plugin scripts that source it.
-        // This is the ONE remaining write outside Application Support — needed because
-        // plugin shell scripts can't easily discover the sandbox container path.
-        // When fully sandboxed, the plugin scripts will hardcode port 3333 instead.
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let legacyDir = homeDir.appendingPathComponent(".duck")
-        let legacyConfig = legacyDir.appendingPathComponent("config")
-        try? FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
-        try? contents.write(to: legacyConfig, atomically: true, encoding: .utf8)
     }
 }
