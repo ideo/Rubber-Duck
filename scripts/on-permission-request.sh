@@ -6,7 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/duck-env.sh"
 
-LOG="${HOME}/.duck/permission.log"
+LOG="/tmp/rubber-duck-permission.log"
 
 # 1. Log hook start with timestamp
 echo "========================================" >> "$LOG"

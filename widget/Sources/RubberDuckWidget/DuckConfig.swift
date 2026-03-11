@@ -9,6 +9,18 @@ import Foundation
 
 enum DuckConfig {
 
+    // MARK: - Storage Directory
+
+    /// Application Support directory — sandbox-safe.
+    /// Unsandboxed: ~/Library/Application Support/RubberDuck/
+    /// Sandboxed: ~/Library/Containers/com.rubberduck.widget/Data/Library/Application Support/RubberDuck/
+    static let storageDir: URL = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("RubberDuck")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     // MARK: - Eval Service
 
     /// HTTP port for the embedded eval server.
@@ -38,12 +50,20 @@ enum DuckConfig {
             return envKey
         }
 
-        // 2. ~/.duck/api_key file
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let keyFile = homeDir.appendingPathComponent(".duck/api_key")
+        // 2. Application Support key file (sandbox-safe)
+        let keyFile = storageDir.appendingPathComponent("api_key")
         if let fileKey = try? String(contentsOf: keyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !fileKey.isEmpty {
             return fileKey
+        }
+
+        // 2b. Legacy ~/.duck/api_key (migrate if found)
+        let legacyKeyFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".duck/api_key")
+        if let legacyKey = try? String(contentsOf: legacyKeyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !legacyKey.isEmpty {
+            // Migrate to new location
+            try? legacyKey.write(to: keyFile, atomically: true, encoding: .utf8)
+            return legacyKey
         }
 
         // 3. .env file in repo (walk up from binary to find it)
@@ -54,13 +74,9 @@ enum DuckConfig {
         return nil
     }
 
-    /// Save an API key to ~/.duck/api_key and update the in-memory value.
+    /// Save an API key to Application Support and update the in-memory value.
     static func saveAPIKey(_ key: String) {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let duckDir = homeDir.appendingPathComponent(".duck")
-        let keyFile = duckDir.appendingPathComponent("api_key")
-
-        try? FileManager.default.createDirectory(at: duckDir, withIntermediateDirectories: true)
+        let keyFile = storageDir.appendingPathComponent("api_key")
 
         do {
             try key.write(to: keyFile, atomically: true, encoding: .utf8)
@@ -164,21 +180,17 @@ enum DuckConfig {
 
     // MARK: - Runtime Config File
 
-    /// PID file path — in ~/.duck/ instead of service/.pid for multi-user safety.
+    /// PID file path — in Application Support for sandbox safety.
     static let pidFilePath: String = {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        return homeDir.appendingPathComponent(".duck/duck.pid").path
+        storageDir.appendingPathComponent("duck.pid").path
     }()
 
-    /// Write resolved runtime values to ~/.duck/config so shell scripts can read them.
+    /// Write resolved runtime values so shell scripts can read them.
+    /// Written to Application Support (sandbox-safe) and symlinked from ~/.duck/config
+    /// so legacy plugin scripts using `source ~/.duck/config` still work.
     /// Called once on app launch. Format is key=value for direct `source` in bash.
     static func writeRuntimeConfig() {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let duckDir = homeDir.appendingPathComponent(".duck")
-        let configFile = duckDir.appendingPathComponent("config")
-
-        // Ensure ~/.duck/ exists
-        try? FileManager.default.createDirectory(at: duckDir, withIntermediateDirectories: true)
+        let configFile = storageDir.appendingPathComponent("config")
 
         let contents = """
         # Rubber Duck Runtime Config — written by widget on launch.
@@ -191,6 +203,7 @@ enum DuckConfig {
         DUCK_VOICE=\(ttsVoice)
         DUCK_SERIAL_PREFIX=\(serialDevicePrefix)
         DUCK_AUDIO_DEVICE_NAME=\(teensyAudioDeviceName)
+        DUCK_STORAGE_DIR=\(storageDir.path)
         """
 
         do {
@@ -199,5 +212,15 @@ enum DuckConfig {
         } catch {
             print("[config] Failed to write config: \(error)")
         }
+
+        // Also write to legacy ~/.duck/config for plugin scripts that source it.
+        // This is the ONE remaining write outside Application Support — needed because
+        // plugin shell scripts can't easily discover the sandbox container path.
+        // When fully sandboxed, the plugin scripts will hardcode port 3333 instead.
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let legacyDir = homeDir.appendingPathComponent(".duck")
+        let legacyConfig = legacyDir.appendingPathComponent("config")
+        try? FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        try? contents.write(to: legacyConfig, atomically: true, encoding: .utf8)
     }
 }
