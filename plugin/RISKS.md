@@ -1,4 +1,4 @@
-# Rubber Duck Plugin — Known Risks & Future Concerns
+# Duck Duck Duck Plugin — Known Risks & Future Concerns
 
 ## Port 3333 hardcoded
 

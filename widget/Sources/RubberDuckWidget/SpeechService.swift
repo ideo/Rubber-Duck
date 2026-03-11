@@ -7,7 +7,7 @@
 //   PermissionVoiceGate — yes/no/ordinal word matching
 //   AudioDeviceDiscovery — CoreAudio device enumeration
 //
-// Logs to ~/Library/Logs/RubberDuck.log for debugging.
+// Logs to ~/Library/Logs/DuckDuckDuck.log for debugging.
 
 import Foundation
 import Speech
@@ -87,7 +87,7 @@ class SpeechService: ObservableObject {
         let logs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        return logs.appendingPathComponent("RubberDuck.log")
+        return logs.appendingPathComponent("DuckDuckDuck.log")
     }()
 
     init() {

@@ -1,4 +1,4 @@
-# Rubber Duck — Claude Code Plugin
+# Duck Duck Duck — Claude Code Plugin
 
 Eval scoring, voice permissions, and TTS reactions for Claude Code sessions.
 
@@ -6,7 +6,7 @@ Eval scoring, voice permissions, and TTS reactions for Claude Code sessions.
 
 - macOS 26+ (Tahoe)
 - Claude Code 1.0.33+
-- Rubber Duck Widget app running (`localhost:3333`)
+- Duck Duck Duck widget app running (`localhost:3333`)
 
 ## Install
 
@@ -14,14 +14,14 @@ Eval scoring, voice permissions, and TTS reactions for Claude Code sessions.
 
 ```bash
 claude plugin marketplace add ideo/Rubber-Duck
-claude plugin install rubber-duck
+claude plugin install duck-duck-duck
 ```
 
 ### From inside Claude Code
 
 ```
 /plugin marketplace add ideo/Rubber-Duck
-/plugin install rubber-duck
+/plugin install duck-duck-duck
 ```
 
 ### Local development

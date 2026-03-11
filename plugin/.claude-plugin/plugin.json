@@ -1,6 +1,6 @@
 {
-  "name": "rubber-duck",
-  "description": "Rubber Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
+  "name": "duck-duck-duck",
+  "description": "Duck Duck Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
   "author": {
     "name": "Daniel Deruntz",
     "url": "https://github.com/ideo"

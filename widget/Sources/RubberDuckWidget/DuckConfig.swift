@@ -12,11 +12,11 @@ enum DuckConfig {
     // MARK: - Storage Directory
 
     /// Application Support directory — sandbox-safe.
-    /// Unsandboxed: ~/Library/Application Support/RubberDuck/
-    /// Sandboxed: ~/Library/Containers/com.rubberduck.widget/Data/Library/Application Support/RubberDuck/
+    /// Unsandboxed: ~/Library/Application Support/DuckDuckDuck/
+    /// Sandboxed: ~/Library/Containers/com.duckduckduck.widget/Data/Library/Application Support/DuckDuckDuck/
     static let storageDir: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("RubberDuck")
+        let dir = appSupport.appendingPathComponent("DuckDuckDuck")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -92,7 +92,7 @@ enum DuckConfig {
     static func promptForAPIKey() -> String? {
         let alert = NSAlert()
         alert.messageText = "Anthropic API Key Required"
-        alert.informativeText = "Rubber Duck needs an Anthropic API key to evaluate code.\n\nGet one at console.anthropic.com → API Keys."
+        alert.informativeText = "Duck Duck Duck needs an Anthropic API key to evaluate code.\n\nGet one at console.anthropic.com → API Keys."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Quit")

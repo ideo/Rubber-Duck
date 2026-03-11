@@ -1,12 +1,12 @@
-# Rubber Duck — Claude Code Plugin Plan
+# Duck Duck Duck — Claude Code Plugin Plan
 
 ## Goal
 
-Package the Rubber Duck hook scripts as a proper Claude Code plugin so users can install with:
+Package the Duck Duck Duck hook scripts as a proper Claude Code plugin so users can install with:
 
 ```
 /plugin marketplace add ideo/Rubber-Duck
-/plugin install rubber-duck
+/plugin install duck-duck-duck
 ```
 
 This replaces the current auto-install approach (widget writing to `~/.claude/settings.json`) with the official Claude Code plugin system.
@@ -41,8 +41,8 @@ plugin/
 
 ```json
 {
-  "name": "rubber-duck",
-  "description": "Rubber Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
+  "name": "duck-duck-duck",
+  "description": "Duck Duck Duck companion — eval scoring, voice permissions, TTS reactions for Claude Code",
   "author": {
     "name": "Daniel Deruntz",
     "url": "https://github.com/ideo"
@@ -61,7 +61,7 @@ plugin/
 
 ```json
 {
-  "description": "Rubber Duck hooks — eval scoring, voice permissions for Claude Code",
+  "description": "Duck Duck Duck hooks — eval scoring, voice permissions for Claude Code",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -119,7 +119,7 @@ The scripts themselves don't change — they still:
 Users add our repo as a marketplace source:
 ```
 /plugin marketplace add ideo/Rubber-Duck
-/plugin install rubber-duck
+/plugin install duck-duck-duck
 ```
 
 The `plugin/` directory in our repo IS the plugin. Marketplace discovery is via the repo itself.
@@ -148,7 +148,7 @@ Good for development and testing.
 ## Install Scopes
 
 Plugins can be installed at three scopes:
-- **User** — works across all projects (recommended for Rubber Duck)
+- **User** — works across all projects (recommended for Duck Duck Duck)
 - **Project** — added to `.claude/settings.json`, shared with collaborators
 - **Local** — only for current user in current repo
 
@@ -173,7 +173,7 @@ The **widget** handles everything else (eval server, TTS, voice gate, serial, UI
 
 Both are needed:
 1. Install widget app (macOS .app)
-2. Install plugin (`/plugin install rubber-duck`)
+2. Install plugin (`/plugin install duck-duck-duck`)
 3. Widget runs the server, plugin sends events to it
 
 The widget still writes `~/.duck/config` on launch so the plugin's hook scripts know the port/URL.
@@ -183,13 +183,13 @@ The widget still writes `~/.duck/config` on launch so the plugin's hook scripts 
 - macOS 26+ (Tahoe)
 - Claude Code 1.0.33+ (plugin support)
 - Anthropic API key (for eval scoring)
-- Rubber Duck Widget app running
+- Duck Duck Duck Widget app running
 
 ## UX Considerations — Onboarding
 
 ### The Two-Piece Problem
 
-Rubber Duck requires both a **Mac app** (widget) and a **Claude Code plugin** (hooks). Neither works alone. The onboarding challenge: how to make installing two things feel like one.
+Duck Duck Duck requires both a **Mac app** (widget) and a **Claude Code plugin** (hooks). Neither works alone. The onboarding challenge: how to make installing two things feel like one.
 
 ### What the Plugin System Can Do
 
@@ -200,8 +200,8 @@ Rubber Duck requires both a **Mac app** (widget) and a **Claude Code plugin** (h
 
 ### What the Mac App Can Do
 
-- **Install the plugin itself** — the app can run `claude plugin marketplace add ideo/Rubber-Duck && claude plugin install rubber-duck` via a `Process` shell command. Could be a menu bar item: "Install Claude Code Plugin".
-- **Detect if plugin is installed** — check for the plugin in `~/.claude/` or run `claude plugin list` and grep for rubber-duck.
+- **Install the plugin itself** — the app can run `claude plugin marketplace add ideo/Rubber-Duck && claude plugin install duck-duck-duck` via a `Process` shell command. Could be a menu bar item: "Install Claude Code Plugin".
+- **Detect if plugin is installed** — check for the plugin in `~/.claude/` or run `claude plugin list` and grep for duck-duck-duck.
 - **Fallback to auto-install** — if the plugin system isn't available (old Claude Code version), fall back to the current `HookInstaller.swift` approach of writing to `~/.claude/settings.json`.
 
 ### Ideal Onboarding Flow
@@ -214,9 +214,9 @@ Rubber Duck requires both a **Mac app** (widget) and a **Claude Code plugin** (h
 5. If Claude Code not installed, falls back to auto-install hooks (current behavior)
 
 **Path B: Start from the plugin**
-1. User runs `/plugin marketplace add ideo/Rubber-Duck` → `/plugin install rubber-duck`
+1. User runs `/plugin marketplace add ideo/Rubber-Duck` → `/plugin install duck-duck-duck`
 2. First Claude Code session: `SessionStart` hook checks for widget
-3. Widget not found → Claude tells user: "Rubber Duck plugin is installed but the widget app isn't running. Download it from github.com/ideo/Rubber-Duck/releases"
+3. Widget not found → Claude tells user: "Duck Duck Duck plugin is installed but the widget app isn't running. Download it from github.com/ideo/Rubber-Duck/releases"
 4. Widget found → "Duck is watching this session" (silent, conversational)
 
 **Path C: One-liner install script**
@@ -232,9 +232,9 @@ Add a `SessionStart` hook that runs every session:
 #!/bin/bash
 # check-widget.sh — silent health check, injects context
 if curl -sf http://localhost:3333/health > /dev/null 2>&1; then
-  echo "Rubber Duck is watching this session."
+  echo "Duck Duck Duck is watching this session."
 else
-  echo "Rubber Duck Widget is not running. Start it: open -a RubberDuckWidget"
+  echo "Duck Duck Duck Widget is not running. Start it: open -a RubberDuckWidget"
 fi
 exit 0
 ```
@@ -249,16 +249,16 @@ Claude sees this output and knows whether the duck is active. No user action nee
 
 ### Project-Level Auto-Prompt
 
-For repos that use Rubber Duck, `.claude/settings.json` can include:
+For repos that use Duck Duck Duck, `.claude/settings.json` can include:
 ```json
 {
   "extraKnownMarketplaces": {
-    "rubber-duck-marketplace": {
+    "duck-duck-duck-marketplace": {
       "source": { "source": "github", "repo": "ideo/Rubber-Duck" }
     }
   },
   "enabledPlugins": {
-    "rubber-duck@rubber-duck-marketplace": true
+    "duck-duck-duck@duck-duck-duck-marketplace": true
   }
 }
 ```
@@ -285,12 +285,12 @@ curl -fsSL https://raw.githubusercontent.com/ideo/Rubber-Duck/main/scripts/insta
 ### Option 3: Manual
 1. Download and run the widget app
 2. In Claude Code: /plugin marketplace add ideo/Rubber-Duck
-3. Then: /plugin install rubber-duck
+3. Then: /plugin install duck-duck-duck
 ```
 
 ## Open Questions
 
-- [ ] Should the plugin include a skill (e.g., `/rubber-duck:status`) that checks if the widget is running?
+- [ ] Should the plugin include a skill (e.g., `/duck-duck-duck:status`) that checks if the widget is running?
 - [ ] Should the plugin include an MCP server for richer Claude ↔ duck communication?
 - [x] ~~Can we use HTTP hooks (`"type": "http"`) instead of command hooks?~~ **No.** HTTP hooks only work in `settings.json`, not in plugins. Plugins only support `"type": "command"` and `"type": "prompt"`.
 - [x] ~~Marketplace.json format — does it go at repo root or can it reference a subdirectory?~~ **Repo root.** `.claude-plugin/marketplace.json` at repo root, with `"source": "./plugin"` pointing to the plugin subdirectory. Users add via `claude plugin marketplace add ideo/Rubber-Duck`.
@@ -301,7 +301,7 @@ curl -fsSL https://raw.githubusercontent.com/ideo/Rubber-Duck/main/scripts/insta
 - [x] All 3 hooks (UserPromptSubmit, Stop, PermissionRequest) register and fire correctly
 - [x] Plugin mode sentinel (`~/.duck/.plugin-mode`) prevents HookInstaller from conflicting
 - [x] `/hook/*` HTTP endpoints added to DuckServer.swift (for potential future use)
-- [x] Hooks show as read-only "Plugin Hooks — disable rubber-duck to remove" in `/hooks` UI
+- [x] Hooks show as read-only "Plugin Hooks — disable duck-duck-duck to remove" in `/hooks` UI
 
 ## Testing
 

@@ -5,9 +5,9 @@
     <key>CFBundleExecutable</key>
     <string>RubberDuckWidget</string>
     <key>CFBundleIdentifier</key>
-    <string>com.rubberduck.widget</string>
+    <string>com.duckduckduck.widget</string>
     <key>CFBundleName</key>
-    <string>Rubber Duck</string>
+    <string>Duck Duck Duck</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
@@ -26,8 +26,8 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Rubber Duck needs microphone access to listen for voice commands.</string>
+    <string>Duck Duck Duck needs microphone access to listen for voice commands.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Rubber Duck uses speech recognition to transcribe your voice into Claude Code.</string>
+    <string>Duck Duck Duck uses speech recognition to transcribe your voice into Claude Code.</string>
 </dict>
 </plist>

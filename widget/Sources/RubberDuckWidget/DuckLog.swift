@@ -1,13 +1,13 @@
-// Duck Log — Unified logging to Application Support/RubberDuck/RubberDuck.log
+// Duck Log — Unified logging to Application Support/DuckDuckDuck/DuckDuckDuck.log
 //
 // All components (server, evaluator, permission, etc.) log through this
-// so you can watch everything with: tail -f ~/Library/Application\ Support/RubberDuck/RubberDuck.log
+// so you can watch everything with: tail -f ~/Library/Application\ Support/DuckDuckDuck/DuckDuckDuck.log
 
 import Foundation
 
 enum DuckLog {
     private static let logURL: URL = {
-        DuckConfig.storageDir.appendingPathComponent("RubberDuck.log")
+        DuckConfig.storageDir.appendingPathComponent("DuckDuckDuck.log")
     }()
 
     /// Log a message to both stdout and the log file.

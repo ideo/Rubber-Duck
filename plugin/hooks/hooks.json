@@ -1,5 +1,5 @@
 {
-  "description": "Rubber Duck hooks — eval scoring, voice permissions for Claude Code",
+  "description": "Duck Duck Duck hooks — eval scoring, voice permissions for Claude Code",
   "hooks": {
     "UserPromptSubmit": [
       {
