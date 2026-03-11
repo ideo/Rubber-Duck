@@ -1,12 +1,16 @@
 #!/bin/bash
 # On session start — health check + context injection.
-# Output is injected into Claude's context at session start.
+# SessionStart hooks must return JSON with additionalContext to inject into Claude's context.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/duck-env.sh"
 
 if curl -sf "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
-    echo "Duck Duck Duck is watching this session."
+    MSG="Duck Duck Duck is watching this session."
 else
-    echo "Duck Duck Duck widget is not running. Launch it from Applications or: cd widget && make run"
+    MSG="Duck Duck Duck widget is not running. Launch it from Applications or: cd widget && make run"
 fi
+
+cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"${MSG}"}}
+EOF
 exit 0
