@@ -64,17 +64,8 @@ class DuckServer: ObservableObject {
         // Per-session memory: last Claude response, so user evals have context
         let sessionContext = SessionContext()
 
-        // POST /evaluate
-        srv.post("/evaluate") { request in
-            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
-                return .badRequest("invalid json")
-            }
-
-            let text = json["text"] as? String ?? ""
-            let source = json["source"] as? String ?? "unknown"
-            let userContext = json["user_context"] as? String ?? ""
-            let sessionId = json["session_id"] as? String ?? ""
-
+        // Shared evaluation logic for /evaluate and /hook/* endpoints
+        let runEval: @Sendable (_ text: String, _ source: String, _ userContext: String, _ sessionId: String) async -> HTTPResponse = { text, source, userContext, sessionId in
             guard !text.isEmpty else {
                 return .badRequest("no text")
             }
@@ -87,7 +78,6 @@ class DuckServer: ObservableObject {
                 claudeContext = sessionContext.recall(sessionId: sessionId)
             }
 
-            // Evaluate via Claude
             let scores: EvalScores
             do {
                 scores = try await evaluator.evaluate(text: text, source: source,
@@ -115,15 +105,9 @@ class DuckServer: ObservableObject {
                 scores: scores
             )
 
-            // Broadcast to WebSocket clients (dashboard, viewer)
             await broadcaster.broadcast(result)
+            await MainActor.run { localTransport.deliver(result) }
 
-            // Deliver locally to widget UI
-            await MainActor.run {
-                localTransport.deliver(result)
-            }
-
-            // Log
             DuckLog.log("[\(source)] \(scores.reaction ?? "...")  |  \(scores.summary ?? "")  |  "
                 + "cr:\(String(format: "%+.1f", scores.creativity)) "
                 + "sn:\(String(format: "%+.1f", scores.soundness)) "
@@ -131,11 +115,22 @@ class DuckServer: ObservableObject {
                 + "el:\(String(format: "%+.1f", scores.elegance)) "
                 + "ri:\(String(format: "%+.1f", scores.risk))")
 
-            // Return JSON response
             guard let responseData = try? JSONEncoder().encode(result) else {
                 return .badRequest("encode error")
             }
             return .json(responseData)
+        }
+
+        // POST /evaluate (legacy — used by shell hook scripts and dashboard)
+        srv.post("/evaluate") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+            let text = json["text"] as? String ?? ""
+            let source = json["source"] as? String ?? "unknown"
+            let userContext = json["user_context"] as? String ?? ""
+            let sessionId = json["session_id"] as? String ?? ""
+            return await runEval(text, source, userContext, sessionId)
         }
 
         // POST /permission
@@ -201,6 +196,113 @@ class DuckServer: ObservableObject {
                 responseDict["suggestion_index"] = idx
             }
             guard let responseData = try? JSONSerialization.data(withJSONObject: responseDict) else {
+                return .badRequest("encode error")
+            }
+            return .json(responseData)
+        }
+
+        // MARK: - Plugin HTTP Hook Endpoints
+        // These accept raw Claude Code hook JSON — no shell scripts needed.
+
+        // POST /hook/prompt — HTTP hook for UserPromptSubmit
+        srv.post("/hook/prompt") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+            let text = json["prompt"] as? String ?? ""
+            let sessionId = json["session_id"] as? String ?? ""
+            return await runEval(text, "user", "", sessionId)
+        }
+
+        // POST /hook/stop — HTTP hook for Stop
+        srv.post("/hook/stop") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+            let sessionId = json["session_id"] as? String ?? ""
+            let stopActive = json["stop_hook_active"] as? Bool ?? false
+            if stopActive { return .json("{}".data(using: .utf8)!) }
+
+            // Extract assistant message — string or array of content blocks
+            var text = ""
+            if let msg = json["last_assistant_message"] as? String {
+                text = msg
+            } else if let blocks = json["last_assistant_message"] as? [[String: Any]] {
+                text = blocks.compactMap { block -> String? in
+                    guard block["type"] as? String == "text" else { return nil }
+                    return block["text"] as? String
+                }.joined(separator: " ")
+            }
+
+            // Read user context from transcript if available
+            var userContext = ""
+            if let transcriptPath = json["transcript_path"] as? String {
+                userContext = readLastUserMessage(from: transcriptPath)
+            }
+
+            return await runEval(text, "claude", userContext, sessionId)
+        }
+
+        // POST /hook/permission — HTTP hook for PermissionRequest
+        // Returns hookSpecificOutput directly (no shell script wrapper needed)
+        srv.post("/hook/permission") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+
+            let toolName = json["tool_name"] as? String ?? "unknown"
+            let toolInput = json["tool_input"] ?? "{}"
+            let suggestions = json["permission_suggestions"] as? [[String: Any]] ?? []
+
+            let optionLabels = suggestions.map { PermissionGate.describeSuggestion($0) }
+            let summary = summarizePermission(toolName: toolName, toolInput: toolInput)
+
+            DuckLog.log("[hook/permission] Request: \(toolName) → \"\(summary)\" (\(suggestions.count) options)")
+
+            let pendingEvent = PermissionEvent(
+                type: "permission",
+                status: "pending",
+                toolName: toolName,
+                toolInput: String(describing: toolInput).prefix(200).description,
+                optionLabels: optionLabels,
+                actionSummary: summary
+            )
+            await broadcaster.broadcast(pendingEvent)
+            await MainActor.run { localTransport.deliverPermission(pendingEvent) }
+
+            let (decision, suggestionIndex) = await permissionGate.waitForDecision()
+
+            if decision == "timeout" {
+                DuckLog.log("[hook/permission] Timeout — no response")
+                let timeoutEvent = PermissionEvent(
+                    type: "permission", status: "timeout",
+                    toolName: toolName, toolInput: nil, optionLabels: nil, actionSummary: nil
+                )
+                await broadcaster.broadcast(timeoutEvent)
+                await MainActor.run { localTransport.deliverPermission(timeoutEvent) }
+                return .json("{}".data(using: .utf8)!)
+            }
+
+            let resolvedEvent = PermissionEvent(
+                type: "permission", status: decision,
+                toolName: toolName, toolInput: nil, optionLabels: nil, actionSummary: nil
+            )
+            await broadcaster.broadcast(resolvedEvent)
+            await MainActor.run { localTransport.deliverPermission(resolvedEvent) }
+
+            // Build hookSpecificOutput for Claude Code HTTP hooks
+            var decisionDict: [String: Any] = ["behavior": decision]
+            if decision == "allow", let idx = suggestionIndex, idx > 0, idx <= suggestions.count {
+                decisionDict["updatedPermissions"] = suggestions[idx - 1]
+            }
+
+            let hookResponse: [String: Any] = [
+                "hookSpecificOutput": [
+                    "hookEventName": "PermissionRequest",
+                    "decision": decisionDict
+                ]
+            ]
+            guard let responseData = try? JSONSerialization.data(withJSONObject: hookResponse) else {
                 return .badRequest("encode error")
             }
             return .json(responseData)
@@ -385,4 +487,32 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
         }
         return toolName
     }
+}
+
+// MARK: - Transcript Reader
+
+/// Read the last user message from a Claude Code transcript JSONL file.
+/// Used by /hook/stop to provide user context for eval scoring.
+func readLastUserMessage(from path: String) -> String {
+    guard let data = FileManager.default.contents(atPath: path),
+          let content = String(data: data, encoding: .utf8) else {
+        return ""
+    }
+    for line in content.components(separatedBy: .newlines).reversed() {
+        guard !line.isEmpty,
+              let lineData = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+              json["type"] as? String == "human",
+              let message = json["message"] as? [String: Any] else {
+            continue
+        }
+        if let text = message["content"] as? String {
+            return text
+        }
+        if let blocks = message["content"] as? [[String: Any]] {
+            return blocks.compactMap { ($0["type"] as? String == "text") ? $0["text"] as? String : nil }
+                .joined(separator: " ")
+        }
+    }
+    return ""
 }
