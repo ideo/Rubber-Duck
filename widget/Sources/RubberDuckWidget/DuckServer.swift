@@ -17,6 +17,8 @@ import Foundation
 @MainActor
 class DuckServer: ObservableObject {
     @Published var isRunning = false
+    /// True after a Claude Code session has pinged /health (SessionStart hook).
+    @Published var pluginConnected = false
 
     let evaluator: ClaudeEvaluator
     let permissionGate: PermissionGate
@@ -58,6 +60,9 @@ class DuckServer: ObservableObject {
         let tmuxBridge = self.tmuxBridge
         let localTransport = self.localTransport
         let port = self.port
+        let markPluginConnected: @Sendable () async -> Void = {
+            await MainActor.run { self.pluginConnected = true }
+        }
 
         let srv = MiniServer(port: UInt16(port))
 
@@ -203,6 +208,7 @@ class DuckServer: ObservableObject {
 
         // GET /health
         srv.get("/health") { _ in
+            await markPluginConnected()
             let clientCount = await broadcaster.clientCount
             let healthDict: [String: Any] = [
                 "status": "ok",

@@ -45,6 +45,11 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         // Start Claude Session
         menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
+        if duckServer.pluginConnected {
+            menu.addItem(disabledItem("Plugin Connected"))
+        } else {
+            menu.addItem(item("Install Claude Plugin", action: #selector(installPlugin)))
+        }
         menu.addItem(.separator())
 
         // Listen mode — 3 radio items
@@ -124,6 +129,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         ClaudeSession.launch()
     }
 
+    @objc private func installPlugin() {
+        PluginInstaller.install()
+    }
+
     @objc private func setListenMode(_ sender: NSMenuItem) {
         guard let mode = ListenMode(rawValue: sender.tag) else { return }
         speechService.listenMode = mode
@@ -161,6 +170,105 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
+    }
+}
+
+// MARK: - Plugin Installer
+
+enum PluginInstaller {
+    /// Find the `claude` CLI binary.
+    private static func findClaude() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            "\(home)/.local/bin/claude",
+            "\(home)/.claude/local/bin/claude",
+            "/usr/local/bin/claude",
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        // Fall back to `which claude`
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["which", "claude"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !path.isEmpty && proc.terminationStatus == 0 {
+                return path
+            }
+        } catch {}
+        return nil
+    }
+
+    /// Run a claude CLI command. Returns (success, combined output).
+    private static func run(_ claudePath: String, args: [String]) -> (Bool, String) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: claudePath)
+        proc.arguments = args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return (proc.terminationStatus == 0, output)
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    /// Install the Duck Duck Duck plugin. Shows an alert with the result.
+    @MainActor
+    static func install() {
+        guard let claude = findClaude() else {
+            let alert = NSAlert()
+            alert.messageText = "Claude Code Not Found"
+            alert.informativeText = "Could not find the claude CLI. Install Claude Code first:\nhttps://docs.anthropic.com/s/claude-code"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        // Run install on background thread to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", "ideo/Rubber-Duck"])
+            if !mpOk {
+                DispatchQueue.main.async {
+                    showResult(success: false, detail: "Marketplace add failed:\n\(mpOut)")
+                }
+                return
+            }
+
+            let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
+            DispatchQueue.main.async {
+                if installOk {
+                    showResult(success: true, detail: "Start a new Claude Code session to activate the hooks.")
+                } else {
+                    showResult(success: false, detail: "Plugin install failed:\n\(installOut)")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private static func showResult(success: Bool, detail: String) {
+        let alert = NSAlert()
+        alert.messageText = success ? "Plugin Installed" : "Install Failed"
+        alert.informativeText = detail
+        alert.alertStyle = success ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }
 

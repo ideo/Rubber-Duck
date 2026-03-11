@@ -1,6 +1,44 @@
-# Rubber Duck
+# Duck Duck Duck
 
-A physical IoT companion for Claude Code. It watches your coding sessions, evaluates both your prompts and Claude's responses on multiple dimensions, then expresses its judgment through servo movements, audio chirps, voice, and a liquid-glass desktop widget. You can talk to it — say "ducky" to give voice commands that get injected directly into Claude Code via tmux.
+A companion for Claude Code that watches your coding sessions, evaluates both your prompts and Claude's responses, then expresses its judgment through voice, a liquid-glass desktop widget, and (optionally) physical hardware. Say "ducky" to give voice commands that get injected directly into Claude Code.
+
+## Install
+
+**Hardware is optional.** The widget works standalone — voice, eval scoring, and the desktop duck all work without any physical components.
+
+### Option A: Download (recommended)
+
+1. Download `DuckDuckDuck.app` from [GitHub Releases](https://github.com/ideo/Rubber-Duck/releases)
+2. Move to Applications and launch
+3. Enter your Anthropic API key when prompted
+4. Click **"Install Claude Plugin"** from the 🦆 menu bar icon
+5. Open Claude Code in any repo — the duck is watching
+
+### Option B: Build from source
+
+```bash
+git clone https://github.com/ideo/Rubber-Duck.git
+cd Rubber-Duck/widget
+make run
+```
+
+Then click **"Install Claude Plugin"** from the 🦆 menu bar.
+
+### Option C: Manual plugin install
+
+If you prefer CLI commands instead of the menu bar button:
+
+```bash
+claude plugin marketplace add ideo/Rubber-Duck
+claude plugin install duck-duck-duck
+```
+
+### Requirements
+
+- macOS 26+ (Tahoe)
+- Claude Code 1.0.33+
+- Anthropic API key (prompted on first launch, saved to `~/Library/Application Support/DuckDuckDuck/`)
+- tmux for voice commands (`brew install tmux`)
 
 ## Architecture
 
@@ -183,11 +221,18 @@ Right-click menu: Start Claude Session, Start/Stop Listening, Mode Toggle, statu
 | `POST /permission` | Voice permission gate — blocks until response |
 | `GET /health` | Server status JSON |
 
+### Plugin (`plugin/`)
+Claude Code plugin — installed via `claude plugin install duck-duck-duck`. Hooks fire on Claude Code events and POST to the widget's server.
+
+| Hook | What it does |
+|------|-------------|
+| **SessionStart** | Health check — tells Claude if the duck is active |
+| **UserPromptSubmit** | Sends your prompt to the duck for eval scoring |
+| **Stop** | Sends Claude's response for eval scoring |
+| **PermissionRequest** | Asks the duck (via voice) whether to allow the action |
+
 ### Scripts (`scripts/`)
 - `duck-session` — tmux launcher for Claude Code (widget must be running)
-- `on-user-prompt.sh` — hook: captures user input (UserPromptSubmit)
-- `on-claude-stop.sh` — hook: captures Claude's response (Stop)
-- `on-permission-request.sh` — hook: voice-gated permission approval (blocking)
 
 ### Firmware (`firmware/rubber_duck/`)
 Teensy 4.0 Arduino firmware — multi-file sketch:
@@ -208,48 +253,28 @@ Three.js scene with both duck prototypes side by side:
 - **Servo Duck** — yellow panel with rotating beak disc, spring physics
 - **LED Duck** — green PCB with 10-segment bar graph, piezo sound
 
-## Quick Start
+## Development
 
-### Prerequisites
+### Building from source
 
-- macOS Tahoe (26.0+) — required for `.glassEffect()` liquid glass
-- Xcode with Swift 6.2+ (widget builds with `swift-tools-version: 6.2`, Swift 5 language mode)
-- [Teensy 4.0](https://www.pjrc.com/store/teensy40.html) + [Teensyduino](https://www.pjrc.com/teensy/td_download.html) (for hardware)
-- tmux (`brew install tmux`)
-- Anthropic API key (prompted on first launch, stored in `~/.duck/api_key`)
-
-### Setup
+Requires Xcode with Swift 6.2+ (swift-tools-version: 6.2, Swift 5 language mode).
 
 ```bash
-# 1. Clone and enter repo
-git clone https://github.com/ideo/Rubber-Duck.git
-cd Rubber-Duck
-
-# 2. Set API key (pick one — or skip; the widget prompts on first launch)
-export ANTHROPIC_API_KEY=sk-ant-...          # env var (session)
-echo "sk-ant-..." > ~/.duck/api_key          # persistent file
-echo "ANTHROPIC_API_KEY=sk-ant-..." > widget/.env    # .env in widget dir
-# If none set, the widget opens a dialog on first launch and saves to ~/.duck/api_key
-
-# 3. Flash Teensy firmware (Arduino IDE)
-#    Board: Teensy 4.0
-#    USB Type: Serial + MIDI + Audio
-#    Open firmware/rubber_duck/rubber_duck.ino → Upload
-
-# 4. Launch the widget (builds + runs, starts embedded server)
-cd widget
-make run
+cd widget && make run      # release build + launch
+cd widget && make debug    # debug build in terminal (mic may not work)
 ```
 
 ### Running
 
-**Widget (recommended):** Launch with `cd widget && make run`. The widget starts an embedded HTTP+WebSocket server on `:3333`. Right-click the duck to start a Claude Code terminal session (tmux), toggle voice listening, or quit.
+The widget starts an embedded HTTP+WebSocket server on `:3333`. Use the 🦆 menu bar to start a Claude Code terminal session (tmux), install the plugin, toggle voice, or change settings.
 
-**Full session:** `./scripts/duck-session` starts a tmux session with Claude Code in the main pane.
+**Full session:** `./scripts/duck-session` starts a tmux session with Claude Code.
 
-**Debug mode:** `cd widget && make debug` runs in the terminal with full log output. Note: mic permissions may not work in this mode — use `make run` for full functionality.
+### Teensy hardware (optional)
 
-**Without hardware:** Everything works except physical servo/audio. The widget still animates, speaks through Mac speakers, and bridges voice to Claude Code.
+Flash `firmware/rubber_duck/rubber_duck.ino` via Arduino IDE:
+- Board: Teensy 4.0, USB Type: Serial + MIDI + Audio
+- See [Hardware](#hardware) section for wiring
 
 ## Reducer Pattern
 
