@@ -260,9 +260,17 @@ Three.js scene with both duck prototypes side by side:
 Requires Xcode with Swift 6.2+ (swift-tools-version: 6.2, Swift 5 language mode).
 
 ```bash
-cd widget && make run      # release build + launch
-cd widget && make debug    # debug build in terminal (mic may not work)
+cd widget && make run       # release build + launch (unsandboxed, full features)
+cd widget && make sandbox   # release build + re-sign with App Sandbox entitlements
+cd widget && make debug     # debug build in terminal (mic may not work)
+cd widget && make release   # notarize for GitHub distribution
 ```
+
+`make run` and `make sandbox` use the same binary — the only difference is the codesign entitlements. Flip between them freely to test sandbox behavior.
+
+**Two distribution tiers:**
+- **App Store** (sandbox) — critic mode + eval + TTS + voice permissions
+- **Developer Edition** (GitHub release, notarized) — everything + relay mode (tmux voice → CLI)
 
 ### Running
 

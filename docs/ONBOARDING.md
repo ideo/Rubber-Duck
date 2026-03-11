@@ -83,6 +83,37 @@ A small onboarding panel on first launch:
 ### Gate "Start Claude Session" behind plugin state
 Only enable the menu item when `pluginConnected == true` or when the plugin is known to be installed. Problem: we can't detect plugin install state from the widget (sandboxed), only the /health ping.
 
+## Distribution Strategy (two-tier)
+
+Always build and release two versions:
+
+- **App Store** — sandboxed, critic mode only. Eval scoring, TTS reactions, voice permissions all work. Relay mode disabled with explanatory alert.
+- **Developer Edition** (GitHub Release) — notarized, unsandboxed. Full feature set including relay mode (tmux voice → CLI commands).
+
+### Sandbox detection and graceful degradation
+
+The App Store version should detect it's running in sandbox at runtime. When the user triggers a sandbox-blocked feature, show a factual alert with no external links:
+
+**Relay mode toggle:**
+> "Relay mode requires terminal access, which isn't available in App Store apps. This feature is available in the Developer Edition."
+>
+> [OK]
+
+**"Start Claude Session" (if we keep it in sandbox build):**
+> "Starting a Claude session requires terminal access. Open Terminal and run `claude` to start a session — the duck will connect automatically."
+>
+> [OK]
+
+No links, no redirects, no upsell buttons. Just a factual explanation. Users who want the Developer Edition can find it on GitHub themselves.
+
+### Build pipeline
+
+The Makefile should support building both tiers:
+- `make run` — dev (unsandboxed)
+- `make sandbox` — sandbox test
+- `make release` — GitHub release (notarized, unsandboxed)
+- Future: `make appstore` — Xcode archive with sandbox entitlements for App Store submission
+
 ## Upgradability (unresolved)
 
 Two-piece install means two upgrade paths, neither of which is smooth today:
