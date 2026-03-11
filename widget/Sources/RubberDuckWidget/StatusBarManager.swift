@@ -227,7 +227,8 @@ enum PluginInstaller {
         }
     }
 
-    /// Install the Duck Duck Duck plugin. Shows an alert with the result.
+    /// Install (or reinstall) the Duck Duck Duck plugin.
+    /// Cleans up any existing install first to avoid stale cache issues.
     static func install() {
         guard let claude = findClaude() else {
             print("[plugin] Claude CLI not found")
@@ -238,9 +239,19 @@ enum PluginInstaller {
         }
         print("[plugin] Found claude at \(claude)")
 
-        // Run install on background thread to avoid blocking UI
         DispatchQueue.global(qos: .userInitiated).async {
-            print("[plugin] Running marketplace add...")
+            // 1. Remove old install (ignore failures — may not exist)
+            print("[plugin] Cleaning previous install...")
+            _ = run(claude, args: ["plugin", "uninstall", "duck-duck-duck"])
+            _ = run(claude, args: ["plugin", "marketplace", "remove", "duck-duck-duck-marketplace"])
+
+            // Clear stale cache so marketplace re-fetches from remote
+            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".claude/plugins/cache/duck-duck-duck-marketplace")
+            try? FileManager.default.removeItem(at: cacheDir)
+
+            // 2. Add marketplace (fresh pull from GitHub)
+            print("[plugin] Adding marketplace...")
             let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", "ideo/Rubber-Duck"])
             print("[plugin] Marketplace add: ok=\(mpOk) output=\(mpOut)")
             if !mpOk {
@@ -250,7 +261,8 @@ enum PluginInstaller {
                 return
             }
 
-            print("[plugin] Running plugin install...")
+            // 3. Install plugin
+            print("[plugin] Installing plugin...")
             let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
             print("[plugin] Plugin install: ok=\(installOk) output=\(installOut)")
             Task { @MainActor in
