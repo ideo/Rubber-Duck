@@ -72,9 +72,6 @@ struct RubberDuckWidgetApp: App {
             }
         }
 
-        // Write runtime config for shell scripts
-        DuckConfig.writeRuntimeConfig()
-
         // Clean up legacy hook artifacts (pre-plugin installs)
         HookInstaller.migrateLegacy()
 

@@ -178,37 +178,11 @@ enum DuckConfig {
         ProcessInfo.processInfo.environment["DUCK_TMUX_WINDOW"] ?? "claude"
     }()
 
-    // MARK: - Runtime Config File
+    // MARK: - PID File
 
     /// PID file path — in Application Support for sandbox safety.
     static let pidFilePath: String = {
         storageDir.appendingPathComponent("duck.pid").path
     }()
 
-    /// Write resolved runtime values to Application Support for internal use.
-    /// Plugin scripts no longer read this — they use hardcoded defaults in duck-env.sh.
-    static func writeRuntimeConfig() {
-        let configFile = storageDir.appendingPathComponent("config")
-
-        let contents = """
-        # Rubber Duck Runtime Config — written by widget on launch.
-        # Internal use only. Plugin scripts use hardcoded defaults.
-        DUCK_SERVICE_PORT=\(servicePort)
-        DUCK_SERVICE_URL=http://localhost:\(servicePort)
-        DUCK_TMUX_SESSION=\(tmuxSession)
-        DUCK_TMUX_WINDOW=\(tmuxWindow)
-        DUCK_PID_FILE=\(pidFilePath)
-        DUCK_VOICE=\(ttsVoice)
-        DUCK_SERIAL_PREFIX=\(serialDevicePrefix)
-        DUCK_AUDIO_DEVICE_NAME=\(teensyAudioDeviceName)
-        DUCK_STORAGE_DIR=\(storageDir.path)
-        """
-
-        do {
-            try contents.write(to: configFile, atomically: true, encoding: .utf8)
-            print("[config] Wrote runtime config to \(configFile.path)")
-        } catch {
-            print("[config] Failed to write config: \(error)")
-        }
-    }
 }

@@ -171,12 +171,12 @@ enum ClaudeSession {
         let session = DuckConfig.tmuxSession
         let window = DuckConfig.tmuxWindow
 
-        // Walk up from binary to find repo root
+        // Walk up from binary to find repo root (look for Package.swift as marker)
         var repoRoot = Bundle.main.bundleURL
         for _ in 0..<10 {
             repoRoot = repoRoot.deletingLastPathComponent()
-            let serverPath = repoRoot.appendingPathComponent("service/server.py")
-            if FileManager.default.fileExists(atPath: serverPath.path) {
+            let marker = repoRoot.appendingPathComponent("widget/Package.swift")
+            if FileManager.default.fileExists(atPath: marker.path) {
                 break
             }
         }
