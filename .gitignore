@@ -2,3 +2,4 @@
 node_modules/
 widget/.build/
 widget/.swiftpm/
+.release/
