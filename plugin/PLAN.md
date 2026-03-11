@@ -293,7 +293,7 @@ curl -fsSL https://raw.githubusercontent.com/ideo/Rubber-Duck/main/scripts/insta
 - [ ] Should the plugin include a skill (e.g., `/rubber-duck:status`) that checks if the widget is running?
 - [ ] Should the plugin include an MCP server for richer Claude ↔ duck communication?
 - [x] ~~Can we use HTTP hooks (`"type": "http"`) instead of command hooks?~~ **No.** HTTP hooks only work in `settings.json`, not in plugins. Plugins only support `"type": "command"` and `"type": "prompt"`.
-- [ ] Marketplace.json format — does it go at repo root or can it reference a subdirectory?
+- [x] ~~Marketplace.json format — does it go at repo root or can it reference a subdirectory?~~ **Repo root.** `.claude-plugin/marketplace.json` at repo root, with `"source": "./plugin"` pointing to the plugin subdirectory. Users add via `claude plugin marketplace add ideo/Rubber-Duck`.
 
 ## Completed (2026-03-10)
 
