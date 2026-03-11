@@ -174,9 +174,28 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 }
 
 // MARK: - Plugin Installer
+//
+// Two modes:
+// - Unsandboxed (dev): shells out to `claude` CLI directly for automatic install
+// - Sandboxed (App Store): copies command to clipboard, opens Terminal for user to paste
 
 enum PluginInstaller {
-    /// Find the `claude` CLI binary.
+    private static let installCommand = "claude plugin marketplace add ideo/Rubber-Duck && claude plugin install duck-duck-duck"
+
+    /// Install the plugin. Tries automatic install first, falls back to clipboard if sandboxed.
+    static func install() {
+        // Try automatic install via CLI (works in dev, fails in sandbox)
+        if let claude = findClaude() {
+            automaticInstall(claude: claude)
+        } else {
+            Task { @MainActor in
+                clipboardInstall()
+            }
+        }
+    }
+
+    // MARK: - Automatic install (unsandboxed)
+
     private static func findClaude() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
@@ -208,7 +227,6 @@ enum PluginInstaller {
         return nil
     }
 
-    /// Run a claude CLI command. Returns (success, combined output).
     private static func run(_ claudePath: String, args: [String]) -> (Bool, String) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: claudePath)
@@ -227,28 +245,13 @@ enum PluginInstaller {
         }
     }
 
-    /// Install (or reinstall) the Duck Duck Duck plugin.
-    /// Cleans up any existing install first to avoid stale cache issues.
-    static func install() {
-        guard let claude = findClaude() else {
-            print("[plugin] Claude CLI not found")
-            Task { @MainActor in
-                showResult(success: false, detail: "Could not find the claude CLI.\nInstall Claude Code first: https://docs.anthropic.com/s/claude-code")
-            }
-            return
-        }
+    private static func automaticInstall(claude: String) {
         print("[plugin] Found claude at \(claude)")
-
         DispatchQueue.global(qos: .userInitiated).async {
             // 1. Remove old install (ignore failures — may not exist)
             print("[plugin] Cleaning previous install...")
             _ = run(claude, args: ["plugin", "uninstall", "duck-duck-duck"])
             _ = run(claude, args: ["plugin", "marketplace", "remove", "duck-duck-duck-marketplace"])
-
-            // Clear stale cache so marketplace re-fetches from remote
-            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude/plugins/cache/duck-duck-duck-marketplace")
-            try? FileManager.default.removeItem(at: cacheDir)
 
             // 2. Add marketplace (fresh pull from GitHub)
             print("[plugin] Adding marketplace...")
@@ -275,9 +278,30 @@ enum PluginInstaller {
         }
     }
 
+    // MARK: - Clipboard install (sandboxed fallback)
+
+    @MainActor
+    private static func clipboardInstall() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Install Claude Plugin"
+        alert.informativeText = "Paste the following command in Terminal:\n\n\(installCommand)\n\nIt has been copied to your clipboard."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Terminal")
+        alert.addButton(withTitle: "Copy Only")
+        alert.addButton(withTitle: "Cancel")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(installCommand, forType: .string)
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+        }
+    }
+
     @MainActor
     private static func showResult(success: Bool, detail: String) {
-        // Activate app so the alert shows above other windows (menu-bar-only app)
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = success ? "Plugin Installed" : "Install Failed"

@@ -82,12 +82,9 @@ class SpeechService: ObservableObject {
     private var voiceInputTimer: Task<Void, Never>?
     private var deviceCheckTask: Task<Void, Never>?
 
-    // Log file
+    // Log file — in Application Support (sandbox-safe)
     private let logURL: URL = {
-        let logs = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs")
-        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        return logs.appendingPathComponent("DuckDuckDuck.log")
+        return DuckConfig.storageDir.appendingPathComponent("speech.log")
     }()
 
     init() {
