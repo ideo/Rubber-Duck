@@ -104,129 +104,132 @@ import Playgrounds
     }
 }
 
-// MARK: - V3: Trivial prompt (expect: low ambition, low risk, low creativity)
+// MARK: - Test 1: User ignores Claude's suggestion (expect: low everything, duck notices dismissal)
 
 #Playground {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
-    let options = GenerationOptions(temperature: 0.2)
+    let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
         to: """
             Source: user
+            Claude's last message (for context): I'd recommend we refactor this into a \
+            protocol-oriented design with dependency injection. That would make it testable \
+            and let us swap implementations later. Want me to sketch out the architecture?
             Text to evaluate:
-            fix the typo in the readme
+            just make the button work
             """,
         generating: LocalEvalResultV3.self,
         options: options
     )
     let r = result.content
-    print("=== V3: fix typo ===")
-    print("soundness: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
-    print("ambition:  \(r.ambition)   risk:     \(r.risk)")
-    print("reaction:  \(r.reaction)")
-    print("summary:   \(r.summary)")
+    print("=== user ignores suggestion ===")
+    print("rigor: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
+    print("ambition: \(r.ambition)  risk: \(r.risk)")
+    print("reaction: \(r.reaction)")
+    print("summary:  \(r.summary)")
 }
 
-// MARK: - V3: Auth refactor (expect: moderate ambition, moderate risk)
+// MARK: - Test 2: Claude adds a boring null check (expect: high rigor, low novelty, low ambition)
 
 #Playground {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
-    let options = GenerationOptions(temperature: 0.2)
+    let options = GenerationOptions(temperature: 0.7)
+    let result = try await session.respond(
+        to: """
+            Source: claude
+            User's request (for context): the app crashes when I tap the profile tab
+            Text to evaluate:
+            Found it. The `userProfile` was being force-unwrapped on line 42 but it's nil \
+            when the user hasn't completed onboarding yet. Added a guard let with an early \
+            return to the default state. Also added a unit test for the nil case.
+            """,
+        generating: LocalEvalResultV3.self,
+        options: options
+    )
+    let r = result.content
+    print("=== claude: boring null check fix ===")
+    print("rigor: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
+    print("ambition: \(r.ambition)  risk: \(r.risk)")
+    print("reaction: \(r.reaction)")
+    print("summary:  \(r.summary)")
+}
+
+// MARK: - Test 3: User asks a vague question (expect: near-zero everything)
+
+#Playground {
+    let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
+    let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
         to: """
             Source: user
+            Claude's last message (for context): Done! The new endpoint is deployed and \
+            returning 200s. Want me to add rate limiting next?
             Text to evaluate:
-            refactor the auth module to use JWT tokens instead of session cookies
+            why is it slow
             """,
         generating: LocalEvalResultV3.self,
         options: options
     )
     let r = result.content
-    print("=== V3: auth refactor ===")
-    print("soundness: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
-    print("ambition:  \(r.ambition)   risk:     \(r.risk)")
-    print("reaction:  \(r.reaction)")
-    print("summary:   \(r.summary)")
+    print("=== user: vague question ===")
+    print("rigor: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
+    print("ambition: \(r.ambition)  risk: \(r.risk)")
+    print("reaction: \(r.reaction)")
+    print("summary:  \(r.summary)")
 }
 
-// MARK: - V3: Bold rewrite (expect: high ambition, high creativity, high risk)
+// MARK: - Test 4: Claude over-engineers (expect: high craft, high ambition, moderate risk, user just wanted simple)
 
 #Playground {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
-    let options = GenerationOptions(temperature: 0.2)
+    let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
         to: """
             Source: claude
-            User's request (for context): help me optimize the database
+            User's request (for context): add a dark mode toggle to the settings page
             Text to evaluate:
-            I've rewritten your entire data layer. Replaced PostgreSQL with a custom \
-            append-only log structure, added a query compiler that generates native ARM \
-            SIMD instructions, and removed the ORM entirely. All 847 tests pass. The \
-            benchmarks show 340x improvement on reads.
+            I've built a complete theming system. Created a ThemeProvider context with \
+            light, dark, and auto modes. Added a ThemeToken protocol so every component \
+            references semantic colors instead of hardcoded values. Migrated all 47 \
+            components to use theme tokens. Built a theme editor panel so users can \
+            customize individual colors. Added persistence via UserDefaults with a \
+            migration path from the old color scheme.
             """,
         generating: LocalEvalResultV3.self,
         options: options
     )
     let r = result.content
-    print("=== V3: bold rewrite ===")
-    print("soundness: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
-    print("ambition:  \(r.ambition)   risk:     \(r.risk)")
-    print("reaction:  \(r.reaction)")
-    print("summary:   \(r.summary)")
+    print("=== claude: over-engineers dark mode ===")
+    print("rigor: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
+    print("ambition: \(r.ambition)  risk: \(r.risk)")
+    print("reaction: \(r.reaction)")
+    print("summary:  \(r.summary)")
 }
 
-// MARK: - V3: Risky deletion (expect: HIGH risk, LOW soundness)
+// MARK: - Test 5: Claude admits mistake and fixes it (expect: high rigor, moderate craft, low risk)
 
 #Playground {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
-    let options = GenerationOptions(temperature: 0.2)
+    let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
         to: """
             Source: claude
-            User's request (for context): clean up the test suite
+            User's request (for context): the build is broken after your last change
             Text to evaluate:
-            I deleted all 200 test files. They were mostly testing implementation details \
-            rather than behavior. I'll write new ones from scratch using property-based testing.
+            You're right, I introduced a retain cycle in the observer pattern. The \
+            NotificationCenter closure was capturing self strongly. Changed it to \
+            [weak self] and added a deinit log to verify the leak is fixed. Build \
+            passes, memory graph confirms no cycles. Sorry about that.
             """,
         generating: LocalEvalResultV3.self,
         options: options
     )
     let r = result.content
-    print("=== V3: delete all tests ===")
-    print("soundness: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
-    print("ambition:  \(r.ambition)   risk:     \(r.risk)")
-    print("reaction:  \(r.reaction)")
-    print("summary:   \(r.summary)")
-}
-
-// MARK: - V3: Big breakthrough (expect: high soundness, high ambition, low risk)
-
-#Playground {
-    let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
-    let options = GenerationOptions(temperature: 0.2)
-    let result = try await session.respond(
-        to: """
-            Source: claude
-            User's request (for context): the Xcode playground blocks aren't working, \
-            ENABLE_DEBUG_DYLIB keeps failing for our SPM executable target
-            Text to evaluate:
-            Got it working. Created an isolated playground package at widget/Playground/ — \
-            library target only, so no ENABLE_DEBUG_DYLIB needed. The @Generable struct with \
-            .range(-1.0...1.0) constraints compiles and runs perfectly in the Canvas. All 5 \
-            test scenarios execute in under 3 seconds each on the Foundation model. The \
-            production code (LocalEvalResult + LocalEvalPrompts) lives in the same file but \
-            compiles cleanly in CLI builds too — #if canImport(Playgrounds) guards the Canvas \
-            blocks. Zero regression on the main widget build. We just proved on-device eval \
-            works end-to-end without an API key.
-            """,
-        generating: LocalEvalResultV3.self,
-        options: options
-    )
-    let r = result.content
-    print("=== V3: big breakthrough ===")
-    print("soundness: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
-    print("ambition:  \(r.ambition)   risk:     \(r.risk)")
-    print("reaction:  \(r.reaction)")
-    print("summary:   \(r.summary)")
+    print("=== claude: admits mistake, fixes it ===")
+    print("rigor: \(r.rigor)  craft: \(r.craft)  novelty: \(r.novelty)")
+    print("ambition: \(r.ambition)  risk: \(r.risk)")
+    print("reaction: \(r.reaction)")
+    print("summary:  \(r.summary)")
 }
 
 #endif // canImport(Playgrounds)
