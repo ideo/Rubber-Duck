@@ -141,5 +141,5 @@ Context helps the duck understand the conversation dynamic (user ignoring advice
 - [ ] Vague user questions score too high on rigor/craft (75/85 for "why is it slow")
 - [ ] Two-pass approach: score at one temperature, react at another (or separate prompt entirely)
 - [ ] Compare with Haiku via curl for side-by-side quality benchmarking
-- [ ] Wire tuned prompt into production `LocalEvaluator.swift`
-- [ ] Map new dimension names (rigor/craft/novelty) to protocol names (soundness/elegance/creativity)
+- [x] Wire tuned prompt into production `LocalEvaluator.swift` — done in `f757a41`
+- [x] Map new dimension names (rigor/craft/novelty) to protocol names (soundness/elegance/creativity) — done in `LocalEvaluator.evaluate()`, divides Int by 100.0
