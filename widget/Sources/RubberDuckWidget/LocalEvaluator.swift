@@ -1,8 +1,8 @@
 // Local Evaluator — Scores text via Apple Foundation Models on-device (~3B).
 //
-// Uses the tuned V3 prompt from LLMPlayground research. Maps Foundation Models
-// dimension names (rigor/craft/novelty) back to the production protocol names
-// (soundness/elegance/creativity). See docs/FOUNDATION-MODELS-RESEARCH.md.
+// Uses the tuned V3 prompt (see widget/Playground/ for iteration notes).
+// Maps Foundation Models dimension names (rigor/craft/novelty) back to
+// production names (soundness/elegance/creativity). See FOUNDATION-MODELS-RESEARCH.md.
 //
 // Requires macOS 26 + Apple Silicon. Falls back gracefully when unavailable.
 
@@ -79,21 +79,11 @@ actor LocalEvaluator {
     }
 
     func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
-        let truncated = String(text.prefix(3000)) + (text.count > 3000 ? "..." : "")
-
-        var contextLine = ""
-        if !userContext.isEmpty && source == "claude" {
-            contextLine = "User's request (for context): \(String(userContext.prefix(500)))\n"
-        } else if !claudeContext.isEmpty && source == "user" {
-            contextLine = "Claude's last message (for context): \(String(claudeContext.prefix(1000)))\n"
-        }
-
-        let userPrompt = """
-            Source: \(source)
-            \(contextLine)\
-            Text to evaluate:
-            \(truncated)
-            """
+        let userPrompt = EvalPromptBuilder.buildPrompt(
+            text: text, source: source,
+            userContext: userContext, claudeContext: claudeContext,
+            maxTextLength: 3000  // Foundation Models ~4K token window
+        )
 
         let session = LanguageModelSession(instructions: Instructions(Self.systemPrompt))
         let options = GenerationOptions(temperature: 0.7)

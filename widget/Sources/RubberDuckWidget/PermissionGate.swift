@@ -1,7 +1,7 @@
 // Permission Gate — Voice-gated permission approval for Claude Code actions.
 //
-// Port of service/permission.py. Uses CheckedContinuation for async blocking
-// until the widget sends a voice response (allow/deny).
+// Uses CheckedContinuation for async blocking until the widget sends a
+// voice response (allow/deny). Timeout after 30s if no response.
 //
 // Timeout uses DispatchQueue instead of Task.sleep to avoid the
 // swift_task_dealloc crash that occurs with Task.sleep(for:) in

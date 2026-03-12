@@ -95,9 +95,21 @@ enum DuckConfig {
         }
     }
 
+    /// Ensure an API key is available. Prompts the user if needed.
+    /// Returns true if a key is ready, false if the user cancelled.
+    @MainActor
+    static func ensureAPIKey() -> Bool {
+        if !anthropicAPIKey.isEmpty { return true }
+        if let key = promptForAPIKey() {
+            saveAPIKey(key)
+            return true
+        }
+        return false
+    }
+
     /// Show a blocking dialog to ask the user for their API key. Returns the key or nil if cancelled.
     @MainActor
-    static func promptForAPIKey() -> String? {
+    private static func promptForAPIKey() -> String? {
         let alert = NSAlert()
         alert.messageText = "Anthropic API Key"
         alert.informativeText = "Enter your Anthropic API key to use Claude for evaluation.\n\nGet one at console.anthropic.com → API Keys."

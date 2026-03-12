@@ -1,6 +1,6 @@
 // Tmux Bridge — Inject voice commands into Claude Code CLI via tmux send-keys.
 //
-// Port of service/tmux_bridge.py. Uses Process to run tmux commands.
+// Uses Process to shell out to tmux. Only active in unsandboxed (dev) builds.
 
 import Foundation
 

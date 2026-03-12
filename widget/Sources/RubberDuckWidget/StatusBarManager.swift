@@ -164,15 +164,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     }
 
     @objc private func setProviderAnthropic() {
-        // If no API key saved, prompt for one
-        if DuckConfig.anthropicAPIKey.isEmpty {
-            if let key = DuckConfig.promptForAPIKey() {
-                DuckConfig.saveAPIKey(key)
-            } else {
-                // User cancelled — stay on current provider
-                return
-            }
-        }
+        guard DuckConfig.ensureAPIKey() else { return }
         DuckConfig.evalProvider = .anthropic
     }
 

@@ -1,7 +1,8 @@
 // Claude Evaluator — Scores text via Claude Haiku on 5 dimensions.
 //
-// Direct port of service/evaluator.py. Calls the Anthropic Messages API
-// via URLSession — no SDK needed. Returns EvalScores with reaction + summary.
+// Calls the Anthropic Messages API via URLSession — no SDK needed.
+// Returns EvalScores with reaction + summary. Optional engine — users
+// can switch to this from the menu bar for higher-quality scoring.
 
 import Foundation
 
@@ -27,21 +28,11 @@ actor ClaudeEvaluator {
     // MARK: - Evaluate
 
     func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
-        let truncated = String(text.prefix(4000)) + (text.count > 4000 ? "..." : "")
-
-        var contextLine = ""
-        if !userContext.isEmpty && source == "claude" {
-            contextLine = "User's request (for context): \(String(userContext.prefix(500)))\n"
-        } else if !claudeContext.isEmpty && source == "user" {
-            contextLine = "Claude's last response (for context): \(String(claudeContext.prefix(1000)))\n"
-        }
-
-        let userPrompt = """
-            Source: \(source)
-            \(contextLine)
-            Text to evaluate:
-            \(truncated)
-            """
+        let userPrompt = EvalPromptBuilder.buildPrompt(
+            text: text, source: source,
+            userContext: userContext, claudeContext: claudeContext,
+            maxTextLength: 4000  // Haiku has a larger context window
+        )
 
         let requestBody: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
@@ -109,7 +100,7 @@ actor ClaudeEvaluator {
         // Ensure summary is always present — Haiku sometimes drops it
         var summary = scoreDict["summary"] as? String ?? ""
         if summary.isEmpty {
-            summary = String(truncated.prefix(80)).components(separatedBy: "\n").first ?? ""
+            summary = String(text.prefix(80)).components(separatedBy: "\n").first ?? ""
         }
 
         return EvalScores(

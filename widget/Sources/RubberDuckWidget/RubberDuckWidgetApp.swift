@@ -66,9 +66,7 @@ struct RubberDuckWidgetApp: App {
         // This is the only case where the API key prompt appears on startup.
         if !duckServer.foundationModelsAvailable && DuckConfig.anthropicAPIKey.isEmpty {
             DuckConfig.evalProvider = .anthropic
-            if let key = DuckConfig.promptForAPIKey() {
-                DuckConfig.saveAPIKey(key)
-            } else {
+            if !DuckConfig.ensureAPIKey() {
                 NSApp.terminate(nil)
                 return
             }

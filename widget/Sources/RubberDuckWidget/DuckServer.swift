@@ -1,8 +1,8 @@
-// Duck Server — Embedded HTTP + WebSocket server replacing the Python eval service.
+// Duck Server — Embedded HTTP + WebSocket server for eval, permissions, and dashboard.
 //
-// Replaces service/server.py + service/routes.py. Runs inside the widget app
-// on port 3333. Hook scripts POST to the same endpoints as before — they
-// don't know it's Swift now.
+// Runs inside the widget app on port 3333. Hook scripts POST eval payloads
+// and permission requests. Dispatches to LocalEvaluator (Foundation Models)
+// or ClaudeEvaluator (Anthropic API) based on DuckConfig.evalProvider.
 //
 // Routes:
 //   POST /evaluate    — receive hook payload, evaluate via Claude, broadcast + deliver locally
