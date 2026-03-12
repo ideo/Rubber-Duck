@@ -262,6 +262,7 @@ Patterns proven in choir-editor that apply here:
 - **Latency**: How fast is on-device eval for a typical code prompt (200-500 tokens)? If >5s, may need "evaluating..." indicator. Choir-editor's phoneme extraction gives a baseline.
 - **Quality floor**: If local scores are too low-quality to be useful, is it better to show no scores than bad scores? Playground testing will answer this.
 - **Intel Macs**: Foundation Models requires Apple Silicon. macOS 26 still supports some Intel Macs — those users get neither local nor cloud eval without a key. Show "API key required" for them.
+- **Permission options beyond yes/no**: The current voice permission gate only supports allow/deny. But Claude Code permissions are often more nuanced — "allow once", "allow for session", "allow always", or choosing between multiple options. The Foundation Models local eval doesn't change this, but the permission UX needs a rethink to handle richer option sets. Revisit separately.
 
 ## Files to modify
 

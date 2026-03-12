@@ -17,6 +17,24 @@
             "name": "Release RubberDuckWidget (widget)",
             "program": "${workspaceFolder:Rubber-Duck}/widget/.build/release/RubberDuckWidget",
             "preLaunchTask": "swift: Build Release RubberDuckWidget (widget)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Rubber-Duck}/widget",
+            "name": "Debug LLMPlayground (widget)",
+            "program": "${workspaceFolder:Rubber-Duck}/widget/.build/debug/LLMPlayground",
+            "preLaunchTask": "swift: Build Debug LLMPlayground (widget)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Rubber-Duck}/widget",
+            "name": "Release LLMPlayground (widget)",
+            "program": "${workspaceFolder:Rubber-Duck}/widget/.build/release/LLMPlayground",
+            "preLaunchTask": "swift: Build Release LLMPlayground (widget)"
         }
     ]
 }
