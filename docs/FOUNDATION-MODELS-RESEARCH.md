@@ -132,7 +132,7 @@ Context helps the duck understand the conversation dynamic (user ignoring advice
 - ALL-CAPS directives ("DO NOT") work well on Apple's 3B model
 - `#Playground` blocks require ENABLE_DEBUG_DYLIB for executable targets — use a library target in a separate package to avoid this
 - Each `#Playground` block runs independently in the Xcode Canvas
-- Latency: ~2 seconds per eval on Apple Silicon
+- Latency: sub-second per eval on Apple Silicon (initial estimate of ~2s was too conservative)
 
 ## Known Issues / Future Work
 

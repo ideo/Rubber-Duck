@@ -38,7 +38,7 @@ claude plugin install duck-duck-duck
 - Claude Code 1.0.33+
 - tmux for voice commands (`brew install tmux`)
 
-**Eval engine:** Defaults to Apple Foundation Models (free, on-device, ~2s per eval). Optionally switch to Anthropic API (Claude Haiku) from the 🦆 menu bar for higher-quality scoring — requires an API key.
+**Eval engine:** Defaults to Apple Foundation Models (free, on-device, sub-second). Optionally switch to Anthropic API (Claude Haiku) from the 🦆 menu bar for higher-quality scoring — requires an API key.
 
 ## Architecture
 

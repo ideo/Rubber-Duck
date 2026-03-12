@@ -26,7 +26,7 @@
 
 **What works end-to-end:**
 - `make run` → widget launches with on-device eval (no API key needed), server binds `:3333`, hooks fire, duck evaluates + speaks + animates + moves servo
-- Default eval: Apple Foundation Models (~3B, free, ~2s per eval). Optional: Anthropic API (Claude Haiku) via menu bar toggle.
+- Default eval: Apple Foundation Models (~3B, free, sub-second). Optional: Anthropic API (Claude Haiku) via menu bar toggle.
 - Voice input via "ducky [command]" → transcribed → tmux → Claude Code
 - Voice permissions: duck asks, you answer yes/no/first/second
 - Dashboard at `localhost:3333`, 3D viewer at `localhost:3333/viewer`

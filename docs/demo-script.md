@@ -119,6 +119,6 @@ When the duck speaks: "Claude wants to use Bash. Yes to allow, first to always a
 - **Why a duck?** Rubber duck debugging is a real practice. We made the duck opinionated and voice-interactive.
 - **Why voice?** Hands-free approval. You're coding, Claude needs permission, you just say yes. No context switch.
 - **Why hardware?** Ambient awareness. You see the duck's mood change on your desk without looking at a screen. Physical presence.
-- **What about latency?** Voice permission round-trip is ~6 seconds (STT + TTS + network). Eval scoring is ~2 seconds (Haiku API call).
+- **What about latency?** Voice permission round-trip is ~6 seconds (STT + TTS + network). Eval scoring is sub-second with Foundation Models (on-device), ~2 seconds with Anthropic API.
 - **Works with any project?** Currently hooks are per-project. Plugin packaging solves this — install once at user scope, works everywhere.
 - **Desktop vs Terminal?** Terminal works cleaner (permission prompts clear properly). Desktop has a stale modal bug — that's one of our asks.

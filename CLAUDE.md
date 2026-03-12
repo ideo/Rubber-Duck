@@ -4,7 +4,7 @@ You are running inside the **Rubber Duck** project. A physical rubber duck compa
 
 ## What's happening
 
-- Every prompt you receive and every response you generate is scored on creativity, soundness, ambition, elegance, and risk. By default this uses Apple Foundation Models on-device (~3B, free, ~2s per eval). Optionally switches to Anthropic API (Claude Haiku) for higher-quality scoring.
+- Every prompt you receive and every response you generate is scored on creativity, soundness, ambition, elegance, and risk. By default this uses Apple Foundation Models on-device (~3B, free, sub-second). Optionally switches to Anthropic API (Claude Haiku) for higher-quality scoring.
 - The duck widget (a liquid glass SwiftUI duck floating on the desktop) animates based on those scores and speaks gut reactions out loud.
 - If you are running in a tmux session named "duck", the user can speak voice commands to you by saying "ducky [command]".
 
