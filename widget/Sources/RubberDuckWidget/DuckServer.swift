@@ -1,8 +1,8 @@
-// Duck Server — Embedded HTTP + WebSocket server replacing the Python eval service.
+// Duck Server — Embedded HTTP + WebSocket server for eval, permissions, and dashboard.
 //
-// Replaces service/server.py + service/routes.py. Runs inside the widget app
-// on port 3333. Hook scripts POST to the same endpoints as before — they
-// don't know it's Swift now.
+// Runs inside the widget app on port 3333. Hook scripts POST eval payloads
+// and permission requests. Dispatches to LocalEvaluator (Foundation Models)
+// or ClaudeEvaluator (Anthropic API) based on DuckConfig.evalProvider.
 //
 // Routes:
 //   POST /evaluate    — receive hook payload, evaluate via Claude, broadcast + deliver locally
@@ -23,18 +23,24 @@ class DuckServer: ObservableObject {
     /// Called when a new session connects via /health. Wired to TTS greeting by the app.
     var onSessionConnect: (() -> Void)?
 
-    let evaluator: ClaudeEvaluator
+    let claudeEvaluator: ClaudeEvaluator
+    let localEvaluator: LocalEvaluator
     let permissionGate: PermissionGate
     let broadcaster: WebSocketBroadcaster
     let tmuxBridge: TmuxBridge
     let localTransport: LocalEvalTransport
+
+    /// True when Foundation Models is available on this device.
+    let foundationModelsAvailable: Bool
 
     private var server: MiniServer?
     private let port: Int
 
     init(port: Int = DuckConfig.servicePort) {
         self.port = port
-        self.evaluator = ClaudeEvaluator()
+        self.claudeEvaluator = ClaudeEvaluator()
+        self.localEvaluator = LocalEvaluator()
+        self.foundationModelsAvailable = LocalEvaluator.isAvailable
         self.permissionGate = PermissionGate()
         self.broadcaster = WebSocketBroadcaster()
         self.tmuxBridge = TmuxBridge()
@@ -57,7 +63,8 @@ class DuckServer: ObservableObject {
         guard server == nil else { return }
 
         // Capture service references for route handler closures
-        let evaluator = self.evaluator
+        let claudeEvaluator = self.claudeEvaluator
+        let localEvaluator = self.localEvaluator
         let permissionGate = self.permissionGate
         let broadcaster = self.broadcaster
         let tmuxBridge = self.tmuxBridge
@@ -94,9 +101,16 @@ class DuckServer: ObservableObject {
 
             let scores: EvalScores
             do {
-                scores = try await evaluator.evaluate(text: text, source: source,
-                                                       userContext: userContext,
-                                                       claudeContext: claudeContext)
+                switch DuckConfig.evalProvider {
+                case .foundation:
+                    scores = try await localEvaluator.evaluate(text: text, source: source,
+                                                                userContext: userContext,
+                                                                claudeContext: claudeContext)
+                case .anthropic:
+                    scores = try await claudeEvaluator.evaluate(text: text, source: source,
+                                                                 userContext: userContext,
+                                                                 claudeContext: claudeContext)
+                }
             } catch {
                 DuckLog.log("[server] Eval error: \(error)")
                 scores = EvalScores(
@@ -224,6 +238,7 @@ class DuckServer: ObservableObject {
                 "connected_clients": clientCount,
                 "dimensions": ["creativity", "soundness", "ambition", "elegance", "risk"],
                 "server": "swift",
+                "eval_provider": DuckConfig.evalProvider.rawValue,
                 "tmux_target": "\(DuckConfig.tmuxSession):\(DuckConfig.tmuxWindow).0",
             ]
             return .json(healthDict)

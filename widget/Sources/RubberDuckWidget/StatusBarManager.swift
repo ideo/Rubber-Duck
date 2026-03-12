@@ -74,6 +74,19 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // Eval provider — radio items
+        if duckServer.foundationModelsAvailable {
+            let foundationItem = item("Foundation (On-Device)", action: #selector(setProviderFoundation))
+            foundationItem.state = DuckConfig.evalProvider == .foundation ? .on : .off
+            menu.addItem(foundationItem)
+        }
+
+        let anthropicItem = item("Anthropic API", action: #selector(setProviderAnthropic))
+        anthropicItem.state = DuckConfig.evalProvider == .anthropic ? .on : .off
+        menu.addItem(anthropicItem)
+
+        menu.addItem(.separator())
+
         // Voice submenu
         let voiceLabel = DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
@@ -144,6 +157,15 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func setModeRelay() {
         coordinator.setMode(.relay)
+    }
+
+    @objc private func setProviderFoundation() {
+        DuckConfig.evalProvider = .foundation
+    }
+
+    @objc private func setProviderAnthropic() {
+        guard DuckConfig.ensureAPIKey() else { return }
+        DuckConfig.evalProvider = .anthropic
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {

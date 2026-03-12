@@ -9,10 +9,9 @@ A companion for Claude Code that watches your coding sessions, evaluates both yo
 ### Option A: Download (recommended)
 
 1. Download `DuckDuckDuck.app` from [GitHub Releases](https://github.com/ideo/Rubber-Duck/releases)
-2. Move to Applications and launch
-3. Enter your Anthropic API key when prompted
-4. Click **"Install Claude Plugin"** from the 🦆 menu bar icon
-5. Open Claude Code in any repo — the duck is watching
+2. Move to Applications and launch — works immediately with on-device eval (no API key needed)
+3. Click **"Install Claude Plugin"** from the 🦆 menu bar icon
+4. Open Claude Code in any repo — the duck is watching
 
 ### Option B: Build from source
 
@@ -35,10 +34,11 @@ claude plugin install duck-duck-duck
 
 ### Requirements
 
-- macOS 26+ (Tahoe)
+- macOS 26+ (Tahoe) with Apple Silicon
 - Claude Code 1.0.33+
-- Anthropic API key (prompted on first launch, saved to `~/Library/Application Support/DuckDuckDuck/`)
 - tmux for voice commands (`brew install tmux`)
+
+**Eval engine:** Defaults to Apple Foundation Models (free, on-device, ~2s per eval). Optionally switch to Anthropic API (Claude Haiku) from the 🦆 menu bar for higher-quality scoring — requires an API key.
 
 ## Architecture
 
@@ -70,7 +70,7 @@ Claude Code    Dashboard/    Teensy 4.0
 ### Data Flow
 
 1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the widget's embedded server on `:3333`
-2. **ClaudeEvaluator** scores text via Claude Haiku on 5 dimensions, returns scores + reaction + summary
+2. **LocalEvaluator** (default) scores text on-device via Apple Foundation Models, or **ClaudeEvaluator** scores via Claude Haiku API — both return scores + reaction + summary
 3. **Widget** receives scores in-process via `LocalEvalTransport`, animates the duck face, speaks reactions via TTS, sends scores to Teensy via serial
 4. **WebSocketBroadcaster** fans out results to any connected dashboard/viewer clients
 5. **Teensy** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
@@ -180,7 +180,8 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 
 **Server (embedded):**
 - **DuckServer** — zero-dependency HTTP + WebSocket server on `:3333` built on Network.framework (`MiniServer`)
-- **ClaudeEvaluator** — calls Anthropic Messages API directly via URLSession (Claude Haiku)
+- **LocalEvaluator** — on-device eval via Apple Foundation Models (~3B, free, default)
+- **ClaudeEvaluator** — calls Anthropic Messages API directly via URLSession (Claude Haiku, optional)
 - **PermissionGate** — actor-based async blocking until voice response or 30s timeout
 - **WebSocketBroadcaster** — fans out eval results and permission events to dashboard/viewer clients
 - **TmuxBridge** — injects voice commands into Claude Code via `tmux send-keys`

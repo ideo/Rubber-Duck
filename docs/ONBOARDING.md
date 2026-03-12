@@ -26,7 +26,7 @@ Duck Duck Duck is a two-piece install (app + Claude Code plugin). Today nothing 
 
 3. **No Claude CLI prerequisite check** — Widget assumes `claude` binary exists. If it doesn't, "Install Claude Plugin" silently fails.
 
-4. **No onboarding flow** — First launch should walk through: API key → install plugin → start session. Currently these are independent menu items.
+4. **~~No onboarding flow~~** — ~~First launch should walk through: API key → install plugin → start session.~~ Partially resolved: Foundation Models is the default eval engine, so no API key is needed on first launch. The remaining onboarding gap is plugin install → start session.
 
 5. **Start Claude Session gating** — "Start Claude Session" could be gated behind "Plugin Connected" to force the correct order. Risk: annoying if the plugin is installed but the health ping hasn't fired yet.
 
@@ -38,12 +38,13 @@ The user said: "I don't want menu items that read like a todo list." The menu sh
 
 ```
 1. User downloads app from GitHub Releases
-2. First launch: prompted for API key (already implemented)
+2. First launch: duck works immediately with on-device Foundation Models eval (no API key)
 3. Widget detects no plugin installed → shows "Install Claude Plugin" in menu
 4. User clicks it → plugin installs → menu updates to show plugin state
 5. User clicks "Start Claude Session" → tmux session opens
 6. SessionStart hook pings /health → "Plugin Connected" shows in menu
 7. Duck is alive, watching, and opinionated
+8. (Optional) User switches to Anthropic API from menu → prompted for API key
 ```
 
 ### Ideal plugin-first flow (reverse direction)
@@ -76,7 +77,7 @@ Fragile — depends on Claude choosing to surface it.
 
 ### First-launch checklist in widget
 A small onboarding panel on first launch:
-- ✅ API key configured
+- ✅ Eval engine active (Foundation Models on-device, or Anthropic API)
 - ⬜ Claude plugin installed
 - ⬜ First session started
 

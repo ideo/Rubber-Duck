@@ -62,11 +62,11 @@ struct RubberDuckWidgetApp: App {
     // MARK: - Service Wiring
 
     private func wireServices() {
-        // Prompt for API key on first launch if none found
-        if DuckConfig.anthropicAPIKey.isEmpty {
-            if let key = DuckConfig.promptForAPIKey() {
-                DuckConfig.saveAPIKey(key)
-            } else {
+        // If Foundation Models isn't available and no API key exists, prompt for one.
+        // This is the only case where the API key prompt appears on startup.
+        if !duckServer.foundationModelsAvailable && DuckConfig.anthropicAPIKey.isEmpty {
+            DuckConfig.evalProvider = .anthropic
+            if !DuckConfig.ensureAPIKey() {
                 NSApp.terminate(nil)
                 return
             }

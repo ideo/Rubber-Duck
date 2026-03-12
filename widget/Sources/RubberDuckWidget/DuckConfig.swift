@@ -33,6 +33,28 @@ enum DuckConfig {
         return 3333
     }()
 
+    // MARK: - Eval Provider
+
+    /// Which eval engine to use.
+    enum EvalProvider: String {
+        case foundation  // On-device Foundation Models (free, Apple Silicon only)
+        case anthropic   // Anthropic API (requires API key)
+    }
+
+    /// Current eval provider. Defaults to `.foundation` (free, no API key needed).
+    static var evalProvider: EvalProvider {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: "evalProvider"),
+               let provider = EvalProvider(rawValue: raw) {
+                return provider
+            }
+            return .foundation
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "evalProvider")
+        }
+    }
+
     // MARK: - Anthropic API
 
     /// Anthropic API key for Claude evaluations.
@@ -73,15 +95,27 @@ enum DuckConfig {
         }
     }
 
+    /// Ensure an API key is available. Prompts the user if needed.
+    /// Returns true if a key is ready, false if the user cancelled.
+    @MainActor
+    static func ensureAPIKey() -> Bool {
+        if !anthropicAPIKey.isEmpty { return true }
+        if let key = promptForAPIKey() {
+            saveAPIKey(key)
+            return true
+        }
+        return false
+    }
+
     /// Show a blocking dialog to ask the user for their API key. Returns the key or nil if cancelled.
     @MainActor
-    static func promptForAPIKey() -> String? {
+    private static func promptForAPIKey() -> String? {
         let alert = NSAlert()
-        alert.messageText = "Anthropic API Key Required"
-        alert.informativeText = "Duck Duck Duck needs an Anthropic API key to evaluate code.\n\nGet one at console.anthropic.com → API Keys."
+        alert.messageText = "Anthropic API Key"
+        alert.informativeText = "Enter your Anthropic API key to use Claude for evaluation.\n\nGet one at console.anthropic.com → API Keys."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         textField.placeholderString = "sk-ant-..."
