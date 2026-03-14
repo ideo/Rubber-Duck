@@ -64,6 +64,16 @@ class SpeechService: ObservableObject {
         }
     }
 
+    /// Whether Wildcard mode is active (AI picks voice per utterance).
+    var isWildcardMode: Bool { ttsVoice == DuckVoices.wildcardSayName }
+
+    /// Set voice on the active TTS engine for one utterance, without persisting to UserDefaults.
+    /// Used by Wildcard mode to swap voices per-eval.
+    func setVoiceTransient(_ sayName: String) {
+        tts.voice = sayName
+        serialTTS?.voice = sayName
+    }
+
     // Callbacks
     var onVoiceInput: ((String) -> Void)?
     var onWakeWord: (() -> Void)?

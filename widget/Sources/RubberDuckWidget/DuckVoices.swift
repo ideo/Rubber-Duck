@@ -42,7 +42,7 @@ enum DuckVoices {
         DuckVoice(label: "Whisper", sayName: "Whisper", voiceId: "com.apple.speech.synthesis.voice.Whisper"),
         DuckVoice(label: "Trinoids", sayName: "Trinoids", voiceId: "com.apple.speech.synthesis.voice.Trinoids"),
         DuckVoice(label: "Zarvox", sayName: "Zarvox", voiceId: "com.apple.speech.synthesis.voice.Zarvox"),
-        DuckVoice(label: "Jester", sayName: "Jester", voiceId: "com.apple.speech.synthesis.voice.Jester"),
+        DuckVoice(label: "Jester", sayName: "Jester", voiceId: "com.apple.speech.synthesis.voice.Hysterical"),
         DuckVoice(label: "Bubbles", sayName: "Bubbles", voiceId: "com.apple.speech.synthesis.voice.Bubbles"),
     ]
 
@@ -61,4 +61,63 @@ enum DuckVoices {
     static func voiceId(for sayName: String) -> String? {
         all.first { $0.sayName == sayName }?.voiceId
     }
+
+    // MARK: - Wildcard Mode
+
+    /// Sentinel value stored in UserDefaults when Wildcard is active.
+    static let wildcardSayName = "__wildcard__"
+
+    /// Check persisted voice setting (for use outside SpeechService, e.g. DuckServer).
+    static var isWildcardPersisted: Bool {
+        UserDefaults.standard.string(forKey: "duck_tts_voice") == wildcardSayName
+    }
+
+    /// Default voice when Wildcard can't pick (or AI returns unknown key).
+    static let wildcardDefault = main.first { $0.label == "Superstar" }!
+
+    /// Map AI voice keys → DuckVoice entries.
+    /// Keys match what we tell the AI in the eval prompt.
+    private static let wildcardKeyMap: [String: DuckVoice] = {
+        var map: [String: DuckVoice] = [:]
+        let pairs: [(String, String)] = [
+            ("superstar", "Superstar"),
+            ("ralph", "Ralph"),
+            ("bad_news", "Bad News"),
+            ("good_news", "Good News"),
+            ("cellos", "Cellos"),
+            ("organ", "Organ"),
+            ("whisper", "Whisper"),
+            ("trinoids", "Trinoids"),
+            ("zarvox", "Zarvox"),
+            ("jester", "Jester"),
+            ("bubbles", "Bubbles"),
+        ]
+        for (key, label) in pairs {
+            if let voice = all.first(where: { $0.label == label }) {
+                map[key] = voice
+            }
+        }
+        return map
+    }()
+
+    /// Resolve an AI-returned voice key to a DuckVoice. Falls back to Superstar.
+    static func wildcardVoice(for key: String) -> DuckVoice {
+        wildcardKeyMap[key] ?? wildcardDefault
+    }
+
+    /// Voice descriptions for the AI prompt (Haiku eval).
+    static let wildcardPromptDescription = """
+        Pick the voice that best delivers your reaction. Use superstar about half the time — use the others whenever the moment has a clear vibe.
+        - superstar: upbeat sparkly pop star. for positive, energetic, or neutral reactions.
+        - ralph: deeper serious voice. ONLY for truly dull moments — pure boilerplate, config files, nothing remotely interesting.
+        - bad_news: somber ominous organ. ONLY for genuinely bad news — failures, breaking changes, deleted data.
+        - good_news: bright cheerful singing. for when the code is really good — elegant solution, impressive fix, high scores across the board.
+        - cellos: deep dramatic strings. for big surprising changes — major refactors, unexpected approaches, "wait they did WHAT?"
+        - organ: grand church-like. for ambitious scope — massive PRs, bold architecture decisions, swinging for the fences.
+        - whisper: quiet secretive. for secrets, very internal thoughts, confiding something private. the inner voice.
+        - trinoids: alien robotic. for inhuman things — bizarre code, incomprehensible logic.
+        - zarvox: electronic sci-fi. for inhuman things — alien approaches, machine-like precision.
+        - jester: silly court jester. ONLY when something is genuinely funny or absurd. must be hilarious.
+        - bubbles: bubbly underwater. ONLY for overwhelm — "I'm drowning here", too much at once.
+        """
 }

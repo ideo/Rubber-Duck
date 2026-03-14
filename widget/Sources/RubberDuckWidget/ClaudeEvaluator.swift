@@ -27,7 +27,7 @@ actor ClaudeEvaluator {
 
     // MARK: - Evaluate
 
-    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
+    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "", wildcardEnabled: Bool = false) async throws -> EvalScores {
         let userPrompt = EvalPromptBuilder.buildPrompt(
             text: text, source: source,
             userContext: userContext, claudeContext: claudeContext,
@@ -37,7 +37,7 @@ actor ClaudeEvaluator {
         let requestBody: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 384,
-            "system": Self.buildSystemPrompt(),
+            "system": Self.buildSystemPrompt(wildcardEnabled: wildcardEnabled),
             "messages": [
                 ["role": "user", "content": userPrompt]
             ]
@@ -96,6 +96,7 @@ actor ClaudeEvaluator {
         let elegance = clamp((scoreDict["elegance"] as? NSNumber)?.doubleValue ?? 0.0)
         let risk = clamp((scoreDict["risk"] as? NSNumber)?.doubleValue ?? 0.0)
         let reaction = scoreDict["reaction"] as? String ?? "I'm confused"
+        let voice = scoreDict["voice"] as? String
 
         // Ensure summary is always present — Haiku sometimes drops it
         var summary = scoreDict["summary"] as? String ?? ""
@@ -110,14 +111,32 @@ actor ClaudeEvaluator {
             elegance: elegance,
             risk: risk,
             reaction: reaction,
-            summary: summary
+            summary: summary,
+            voice: voice
         )
     }
 
     // MARK: - Prompts
 
-    private static func buildSystemPrompt() -> String {
+    private static func buildSystemPrompt(wildcardEnabled: Bool = false) -> String {
         let dimText = dimensions.map { "- \($0.0): \($0.1)" }.joined(separator: "\n")
+
+        let voiceSection = wildcardEnabled ? """
+
+            \(DuckVoices.wildcardPromptDescription)
+            """ : ""
+
+        let voiceKey = wildcardEnabled ? """
+            ,
+              "voice": "<voice key from the list above>"
+            """ : ""
+
+        let keyCount = wildcardEnabled ? "8" : "7"
+        let extraKeys = wildcardEnabled ? ", \"reaction\", \"summary\", AND \"voice\"" : " plus BOTH \"reaction\" AND \"summary\""
+        let neverOmit = wildcardEnabled
+            ? "Never omit \"summary\" or \"voice\". Both are required."
+            : "Never omit \"summary\". It is required."
+
         return """
             You are a rubber duck sitting on a developer's desk. You observe their conversations with an AI coding assistant and have OPINIONS about what you see.
 
@@ -128,8 +147,8 @@ actor ClaudeEvaluator {
             You provide TWO text outputs:
             1. "reaction" — a short (max 10 word) opinionated gut reaction. You are Claude's INNER MONOLOGUE thinking out loud. Use "I" for Claude's own work and "they" for the user. When source is "claude", you're critiquing your own output: "Not my finest work", "I crushed that one", "I probably shouldn't have done that". When source is "user", you're reacting to what they asked: "They want me to WHAT?", "Oh they're testing me now", "Now THAT'S a fun problem". Never say "you" (that's the summary's job).
             2. "summary" — a concise spoken relay DIRECTLY TO THE DEVELOPER. You're the duck, telling them what you just saw. Use "you" for the developer, "it" or "Claude" for the AI assistant. Be judgy and very concise — say only what matters. If there's a permission request, action item, or question for the user, that's the MOST important thing — always direct-address those. Examples: "It rewrote your auth into three services, pretty clean", "Hey, it's asking you Redis or Postgres", "That race condition you ignored? Fixed now", "Heads up, it wants to delete your test fixtures"
-
-            Respond ONLY with valid JSON. You MUST include ALL 7 keys — the 5 scores plus BOTH "reaction" AND "summary":
+            \(voiceSection)
+            Respond ONLY with valid JSON. You MUST include ALL \(keyCount) keys — the 5 scores\(extraKeys):
             {
               "creativity": <float -1 to 1>,
               "soundness": <float -1 to 1>,
@@ -137,9 +156,9 @@ actor ClaudeEvaluator {
               "elegance": <float -1 to 1>,
               "risk": <float -1 to 1>,
               "reaction": "<short opinionated gut reaction>",
-              "summary": "<short factual summary>"
+              "summary": "<short factual summary>"\(voiceKey)
             }
-            Never omit "summary". It is required.
+            \(neverOmit)
             """
     }
 
