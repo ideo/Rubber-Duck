@@ -1,383 +1,279 @@
-# Hardware Migration: Teensy 4.0 → ESP32-C3
+# Duck Hardware Reference
 
-## Status: Planned (not started)
+Three board variants. Same serial protocol, same widget, different audio paths.
 
-## Why
+## Board Comparison
 
-The Teensy 4.0 works but it's overpowered and expensive for what the duck actually needs. The XIAO ESP32-C3 is $5, tiny, has USB-C, and covers every pin we use. The one catch — USB Audio class — is solved by streaming TTS audio from the widget over serial and playing it via I2S on the ESP32.
+| | Teensy 4.0 | XIAO ESP32-S3 Sense | XIAO ESP32-C3 |
+|---|---|---|---|
+| **Status** | Working (production) | Working (dev) | Pending (hardware on order) |
+| **CPU** | 600MHz Cortex-M7 | 240MHz Xtensa dual-core | 160MHz RISC-V |
+| **Cost** | ~$30 | ~$14 | ~$5 |
+| **Speaker** | MAX98357 via I2S | MAX98357 via I2S | MAX98357 via I2S |
+| **TTS audio path** | USB Audio Class (Mac → Teensy as sound card) | Serial PCM streaming (widget → ESP32) | Serial PCM streaming (widget → ESP32) |
+| **Mic path** | USB Audio Class (Teensy appears as USB mic) | Onboard PDM mic → serial streaming | External INMP441 I2S mic or ADC analog mic → serial streaming |
+| **Chirps** | Teensy Audio library (waveform + filter) | Software synth → ring buffer → I2S | Software synth → ring buffer → I2S |
+| **Servo** | Hardware PWM (Servo library) | LEDC PWM | LEDC PWM |
+| **I2S driver** | Teensy Audio library | New IDF (`driver/i2s_std.h` + `driver/i2s_pdm.h`) | New IDF (`driver/i2s_std.h`) |
 
-## What the Teensy currently does
+## Teensy 4.0
 
-| Function | Teensy feature | Pins |
-|----------|---------------|------|
-| Servo PWM | Hardware PWM | Pin 3 |
-| I2S speaker output | I2S peripheral → MAX98357 DAC | BCLK=21, LRCLK=20, DIN=7 |
-| USB Audio out (mic) | USB Audio class — appears as USB mic to macOS | USB (built-in) |
-| USB Audio in (TTS) | USB Audio class — Mac routes `say` audio here | USB (built-in) |
-| Chirp synthesis | Teensy Audio library (waveform + bandpass filter) | Internal (I2S output) |
-| Serial comms | USB Serial (CDC) | USB (built-in) |
-| Button input | Digital input with pullup | Pin 11 |
-| Piezo (unused) | PWM | Pin 9 (wired but not driven) |
-| Analog mic | ADC input → USB Audio output | A0 |
+Firmware: `firmware/rubber_duck/`
 
-Active pins: 5 (servo, button, I2S BCLK/LRCLK/DIN) + USB
+The original. Mac sees it as a USB Audio device — `say -a "Teensy MIDI_Audio"` routes TTS directly, and the analog mic on A0 appears as a USB microphone. No widget involvement for audio.
 
-## Why ESP32-C3, not ESP32-S3
+### Wiring
 
-The S3 has USB OTG and could theoretically do USB Audio class via TinyUSB UAC2. But:
+| Function | Pin | Notes |
+|---|---|---|
+| Servo | 3 | Hardware PWM |
+| Button | 11 | Internal pullup |
+| I2S BCLK | 21 | → MAX98357 |
+| I2S LRCLK | 20 | → MAX98357 |
+| I2S DIN | 7 | → MAX98357 |
+| Analog mic | A0 | → USB Audio out |
+| USB | — | CDC serial + UAC audio (composite device) |
 
-- TinyUSB UAC2 on ESP32-S3 is complex — manual descriptor setup, isochronous transfers, composite device config
-- The Teensy Audio library made USB Audio trivial; there's no equivalent on ESP32
-- The serial streaming approach is simpler and works on **both** C3 and S3
-- C3 is cheaper, lower power, and has everything we need
-- We already proved the XIAO ESP32-S3 works for the LED duck — the C3 is the same form factor, even simpler
-
-The S3 stays in the LED duck. The C3 takes over from the Teensy.
-
-## The big change: TTS audio streaming
-
-### Current (Teensy)
+### Audio architecture
 
 ```
-macOS                          Teensy
-  say -a "Teensy" "Hello" ───→ USB Audio In ──→ I2S mixer ──→ MAX98357 speaker
-                                                      ↑
-                                              chirp synthesis
+macOS                              Teensy 4.0
+  say -a "Teensy" "Hello" ───────→ USB Audio In → I2S mixer → MAX98357 → speaker
+  System mic (USB Audio) ←──────── Analog mic (A0) → USB Audio Out
+                                                 ↑
+                                         chirp synthesis (AudioSynthWaveform)
 ```
 
-macOS sees the Teensy as a USB sound card. `say` routes audio directly. Zero widget involvement.
+Mac handles noise cancellation on the mic path (UAC). Zero widget involvement for audio.
 
-### New (ESP32-C3)
+### What works
+- Everything: servo, chirps, TTS, mic, button, permission nags
+- Hot-unplug detection (widget falls back to Mac mic/speaker)
+
+---
+
+## XIAO ESP32-S3 Sense
+
+Firmware: `firmware/rubber_duck_c3/` (shared codebase, board-selected at compile time)
+
+Arduino IDE board: **"XIAO_ESP32S3"**
+
+The S3 Sense has a built-in PDM microphone (MSM261D3526H1CPM) that requires the new IDF I2S PDM driver. This forced a full migration from the legacy `driver/i2s.h` to the new `driver/i2s_std.h` / `driver/i2s_pdm.h` API for the entire audio system.
+
+### Wiring
+
+| Function | Pin | GPIO | Notes |
+|---|---|---|---|
+| Servo | D0 | GPIO1 | LEDC PWM |
+| I2S BCLK | D2 | GPIO3 | → MAX98357 |
+| I2S LRCLK | D3 | GPIO4 | → MAX98357 |
+| I2S DIN | D4 | GPIO5 | → MAX98357 |
+| Mic | — | GPIO42 CLK, GPIO41 DATA | Onboard PDM, no wiring needed |
+| Button | D8 | GPIO7 | Internal pullup |
+| USB | — | USB CDC serial only |
+
+Expansion board must be attached for the onboard PDM mic to work.
+
+### Audio architecture
+
+```
+Widget (macOS)                              ESP32-S3
+  AVSpeechSynthesizer                         │
+    → capture PCM (22050Hz)                   │
+    → binary frame: 0x01 [len] [PCM] ──────→ ring buffer → I2S DMA → MAX98357 → speaker
+                                                               ↑
+                                                       chirp synthesis
+                                              │
+  STT engine ←── 0x04 [len] [PCM] ─────────── PDM mic (I2S_NUM_0) → DC removal + gain
+```
+
+### I2S port assignment (critical)
+
+The S3 has 2 I2S ports. The PDM mic driver **must** use I2S_NUM_0 on S3 (hardware limitation). Speaker goes on I2S_NUM_1.
+
+```c
+// Config.h
+#define AUDIO_I2S_PORT   I2S_NUM_1  // Speaker on port 1
+// Mic uses I2S_NUM_AUTO → gets port 0
+```
+
+**Init order matters:** `setupMic()` must run before `setupAudio()` so the PDM driver claims port 0 first.
+
+### I2S driver: legacy vs new IDF (critical learning)
+
+The legacy `driver/i2s.h` and new `driver/i2s_std.h` / `driver/i2s_pdm.h` **cannot coexist at runtime**. Even in separate `.cpp` files, IDF has a runtime check that aborts:
+
+```
+CONFLICT! The new i2s driver can't work along with the legacy i2s driver
+```
+
+Since the PDM mic requires the new driver, we migrated the speaker to the new driver too:
+
+| Legacy API | New IDF API |
+|---|---|
+| `i2s_driver_install()` | `i2s_new_channel()` + `i2s_channel_init_std_mode()` + `i2s_channel_enable()` |
+| `i2s_write()` | `i2s_channel_write(txHandle, ...)` |
+| `i2s_read()` | `i2s_channel_read(rxHandle, ...)` |
+| `i2s_set_sample_rates()` | `i2s_channel_disable()` + `i2s_channel_reconfig_std_clock()` + `i2s_channel_enable()` |
+| `i2s_zero_dma_buffer()` | `chanCfg.auto_clear = true` (silence on underrun) |
+| `tx_desc_auto_clear` | `auto_clear` in channel config |
+
+### PDM mic signal processing
+
+Raw PDM→PCM output has a large DC bias (~1300–2500 depending on board) with small AC signal. Processing chain:
+
+1. **Calibration at boot:** Read 4 frames to measure DC offset, 1 frame for noise RMS
+2. **DC removal:** Single-pole high-pass filter: `pdmDC += 0.001 * (raw - pdmDC)`
+3. **Auto-gain:** `gain = constrain(1600.0 / noiseRMS, 16.0, 512.0)`
+4. **Clamp:** ±32767
+
+Typical calibration values: DC ~1300, noise RMS ~2087, gain hits floor at 16.0. Speech peaks reach ~25% of full range — adequate for STT but not loud. The onboard PDM mic has a high noise floor.
+
+**Noise:** The serial mic path bypasses Mac's built-in noise cancellation (which the Teensy UAC path got for free). Denoise must happen widget-side before feeding STT. Not yet implemented.
+
+### Auto-mute during TTS
+
+When audio streaming begins (`A,16000,16,1`), mic is muted to prevent speaker→mic feedback loop. Unmuted when stream ends (`A,0`).
+
+### Known issues
+
+- Noise floor is high on onboard PDM mic — denoise needed widget-side
+- `ADC_ATTEN_DB_11` was renamed to `ADC_ATTENDB_MAX` in ESP32 Arduino core 3.x
+- Arduino IDE merges all `.ino` files into one translation unit — can't isolate driver includes via separate files
+
+---
+
+## XIAO ESP32-C3 (planned)
+
+Firmware: `firmware/rubber_duck_c3/` (same codebase as S3, compile-time board selection)
+
+Arduino IDE board: **"XIAO_ESP32C3"**
+
+Hardware on order. The C3 has only 1 I2S port, so the speaker and mic can't both use I2S simultaneously. Speaker gets I2S; mic uses ADC + hardware timer.
+
+### Wiring (planned)
+
+| Function | Pin | GPIO | Notes |
+|---|---|---|---|
+| Servo | D0 | GPIO2 | LEDC PWM |
+| I2S BCLK | D2 | GPIO4 | → MAX98357 |
+| I2S LRCLK | D3 | GPIO5 | → MAX98357 |
+| I2S DIN | D4 | GPIO6 | → MAX98357 |
+| Mic | D5 | GPIO6/A5 | Analog MEMS mic (SPW2430) or I2S mic (INMP441, needs testing) |
+| Button | D8 | GPIO7 | Internal pullup |
+
+### Audio architecture (planned)
 
 ```
 Widget (macOS)                              ESP32-C3
   AVSpeechSynthesizer                         │
-    → capture PCM samples                     │
-    → stream over USB CDC serial  ──────────→ ring buffer ──→ I2S DMA ──→ MAX98357 speaker
-                                                                   ↑
-                                                           chirp synthesis
+    → binary frame: 0x01 [len] [PCM] ──────→ ring buffer → I2S DMA → MAX98357 → speaker
+                                                               ↑
+                                                       chirp synthesis
+                                              │
+  STT engine ←── 0x04 [len] [PCM] ─────────── ADC mic (hardware timer ISR) → DC removal + gain
 ```
 
-The widget renders TTS to audio samples using `AVSpeechSynthesizer.write(_:toBufferCallback:)`, then streams raw PCM over USB serial. The ESP32 buffers and plays via I2S.
+### I2S port assignment
 
-### Why this works
+C3 has 1 I2S port. Speaker uses it. Mic uses ADC + timer (no I2S conflict).
 
-**Bandwidth:** USB CDC serial on ESP32-C3 runs at USB Full Speed (12 Mbps). Speech audio at 16kHz 16-bit mono = 32 KB/s. That's 2.6% of available bandwidth. Even at 22kHz it's trivial.
-
-**Latency:** The widget can start streaming as soon as the first audio buffer arrives from AVSpeechSynthesizer. With a ~100ms ring buffer on the ESP32, perceived latency is negligible — the duck starts talking almost immediately.
-
-**Buffering:** ESP32-C3 has 400KB SRAM. A 200ms ring buffer at 16kHz/16-bit = 6.4KB. Plenty of room.
-
-## Interruption handling
-
-The critical question: what happens when a Claude event (eval score, permission request) arrives while TTS audio is streaming?
-
-### Answer: the widget controls both streams, so it arbitrates
-
-All serial data flows **widget → ESP32**. The widget is the single sender. It knows when it's streaming audio and when an eval arrives. Strategies, in order of preference:
-
-**1. Interleave control messages in the audio stream**
-
-The audio streaming protocol uses a binary mode with framing. Text-mode control messages (`C,0.72,...\n` or `P,1\n`) can be sent between audio frames during natural gaps:
-
-```
-[audio frame 1: 512 bytes PCM]
-[audio frame 2: 512 bytes PCM]
-C,0.72,0.85,0.40,0.61,-0.20\n     ← eval arrives, widget sends during frame gap
-[audio frame 3: 512 bytes PCM]
+```c
+// Config.h
+#define AUDIO_I2S_PORT   I2S_NUM_0  // Only port available
 ```
 
-The ESP32 parser knows whether it's in audio mode or text mode (based on the framing protocol). A text line during audio mode gets parsed as a control command and the audio ring buffer continues playing — no audible gap.
+### ADC mic path (implemented, untested on C3)
 
-At 32 KB/s audio rate, a ~30-byte score message takes <1ms to send. The ring buffer covers it.
+Hardware timer fires at 16kHz, reads `analogRead(MIC_PIN)` in ISR, writes to double buffer. Main loop applies DC removal + gain, sends serial frames. No I2S involvement.
 
-**2. Chirps preempt TTS**
-
-When an eval triggers a chirp, the duck should react physically — chirp + servo move — even if it was mid-sentence. The widget can:
-
-1. Pause the audio stream (stop sending PCM frames)
-2. Send the eval score message
-3. ESP32 plays its chirp (synthesized locally, same as today)
-4. After chirp finishes (~300-1500ms), widget resumes streaming
-
-This feels natural — the duck interrupts itself to react, then continues. Like someone going "wait, hold on — *chirp* — anyway, as I was saying..."
-
-**3. Permission events stop TTS entirely**
-
-If `P,1` arrives, the duck should stop talking and start its uh-oh nag loop. Widget cancels the current TTS stream, sends `P,1`, and the ESP32 takes over with permission chirps. When permission resolves, widget can restart TTS if needed.
-
-### Summary of interrupt behavior
-
-| Event | During TTS? | Behavior |
-|-------|------------|----------|
-| Eval score (no chirp) | Yes | Interleave — send score between audio frames, no audible gap |
-| Eval score (with chirp) | Yes | Pause TTS, send score, ESP32 chirps, resume TTS |
-| Permission request | Yes | Cancel TTS, send P,1, ESP32 nags |
-| Permission resolve | N/A | Send P,0, optionally restart TTS |
-| Serial score (no TTS playing) | No | Same as today — just a text line |
-
-## Serial protocol changes
-
-### Current protocol (text-only, 9600 baud)
-
-```
-U,0.20,0.70,0.00,0.60,-0.30\n    eval scores
-P,1\n                              permission enter
-P,0\n                              permission resolve
-S,90\n                             servo command
-G,2.5\n                            mic gain
-T\n / X\n / D\n                    test commands
-```
-
-### New protocol (text + binary audio)
-
-Keep all existing text commands unchanged. Add audio framing:
-
-```
-# Audio start — switches ESP32 to binary receive mode
-A,16000,16,1\n                     sample rate, bit depth, channels
-
-# Raw PCM frames (binary, length-prefixed)
-[2 bytes: frame length (little-endian uint16)]
-[N bytes: raw PCM samples]
-...repeat...
-
-# Audio stop — switches ESP32 back to text mode
-A,0\n
-
-# All existing text commands work identically
-C,0.72,0.85,0.40,0.61,-0.20\n
-P,1\n
-```
-
-**Frame size:** 512 samples × 2 bytes = 1024 bytes per frame at 16kHz = one frame every 32ms. This is a comfortable DMA-friendly chunk.
-
-**Baud rate:** Bump from 9600 to USB CDC native speed. The USB CDC interface doesn't have a real baud rate — the `termios` baud setting is ignored for USB CDC devices. The actual throughput is governed by USB Full Speed framing. But we should set a high nominal value (921600) for compatibility with serial monitors and to signal that the link is fast.
-
-**Mid-stream control messages:** During audio streaming, the widget can send a text line (ending in `\n`) between frames. The ESP32 parser checks each received chunk: if it starts with a printable ASCII character and contains `\n`, it's a text command. If it starts with the 2-byte length prefix (which will be a value like `0x00 0x04` — never a printable ASCII character for reasonable frame sizes), it's an audio frame.
-
-Actually simpler: use a **mode byte** prefix for every chunk during audio mode:
-
-```
-0x01 [len_hi] [len_lo] [PCM data...]    → audio frame
-0x02 [text line ending in \n]            → control message during audio
-```
-
-Outside of audio mode (before `A,...\n` or after `A,0\n`), everything is plain text like today.
-
-## Pin mapping: Teensy → XIAO ESP32-C3
-
-| Function | Teensy pin | ESP32-C3 pin | Notes |
-|----------|-----------|-------------|-------|
-| Servo PWM | 3 | D0 (GPIO2) | LEDC PWM, same as ESP32-S3 duck |
-| Button | 11 | D1 (GPIO3) | Internal pullup |
-| I2S BCLK | 21 | D2 (GPIO4) | |
-| I2S LRCLK (WS) | 20 | D3 (GPIO5) | |
-| I2S DIN (data out) | 7 | D4 (GPIO6) | |
-| Serial | USB | USB | CDC, no change |
-| Analog mic | A0 | — | Dropped (see below) |
-
-**Mic input:** The Teensy's analog mic (A0) fed USB Audio output so macOS could use it as a microphone. With the serial streaming approach, there's no USB Audio device for macOS to use. The mic function moves entirely to the Mac (built-in mic or external). The hot-unplug fallback code already handles this — `SpeechService` falls back to the default mic when no Teensy audio device is detected. For the C3, this is just the permanent state.
-
-If we ever want a duck-mounted mic, the C3 has an ADC — wire an analog mic and add a serial command to report levels. But the Mac mic works fine for voice commands.
-
-## Chirp synthesis on ESP32
-
-The Teensy uses its Audio library for chirp synthesis: `AudioSynthWaveform` → `AudioFilterStateVariable` → `AudioOutputI2S`. This is a fixed-function DSP pipeline with sample-level mixing.
-
-On ESP32-C3, we reimplement chirps in a simpler way:
-
-**Option A: Software synthesis into the I2S DMA buffer**
-
-Generate chirp samples directly in the I2S write callback. The ESP32 I2S driver uses DMA double-buffering — fill one buffer while the other plays. During TTS streaming, the ring buffer feeds the DMA. During chirps, a synthesis function writes directly to the DMA buffer instead.
-
-Mixing chirps with TTS: same idea as the Teensy mixer — add chirp samples to TTS samples in the DMA callback. The chirp generator (sawtooth + filter) runs at the I2S sample rate.
-
-**Option B: Pre-rendered chirp tables**
-
-Pre-compute a few chirp waveforms (ascending, descending, uh-oh) as raw PCM arrays in flash. Play them by copying into the I2S DMA buffer. Much simpler than real-time synthesis but less expressive — no per-eval frequency variation.
-
-**Recommendation: Option A.** The chirp reducer already computes start/end frequencies per eval. Real-time synthesis preserves the duck's personality. The bandpass filter is just a biquad — trivial to run on the C3's RISC-V core at 16kHz.
-
-## Widget changes
-
-### SerialTransport.swift
-
-- Device discovery: scan for `tty.usbmodem*` (C3 shows up as USB CDC, same pattern)
-  - May need to update `DuckConfig.serialDevicePrefix` if the C3 uses a different prefix (check with `ls /dev/tty.*` after plugging in)
-- Add `sendAudio(samples:sampleRate:)` method
-- Add audio streaming state management (start/stop/pause)
-
-### TTSEngine.swift
-
-Current: shells out to `/usr/bin/say -v Boing -a "Teensy MIDI_Audio"`. The `say` command routes audio directly to the Teensy's USB Audio device. Simple, reliable, supports all installed voices.
-
-New: We need raw PCM samples to stream over serial.
-
-**Winner: `AVSpeechSynthesizer.write(_:toBufferCallback:)`**
-
-Tested on macOS Tahoe. Results:
-
-| Approach | Latency to first audio | Streaming? | Boing voice? |
-|----------|----------------------|-----------|-------------|
-| `AVSpeechSynthesizer.write()` | ~200ms (first buffer) | Yes — 256-frame chunks arrive as rendered | Yes — `com.apple.speech.synthesis.voice.Boing` |
-| `say -o file.wav` | ~560ms (must render entire file first) | No — file must complete before reading | Yes |
-| `say -o /dev/stdout` | N/A | **Doesn't work** — `say` needs a seekable file (writes header, seeks back) | — |
-
-`AVSpeechSynthesizer.write()` benchmarks (tested):
-- **20x realtime** render speed (4.69s of audio rendered in 233ms)
-- **22050 Hz, mono, 16-bit** PCM buffers — ideal for serial streaming
-- **203ms** to first buffer — ESP32 ring buffer covers this easily
-- Boing voice confirmed available: identifier `com.apple.speech.synthesis.voice.Boing`
-- Requires a running RunLoop (our app has one — it's a SwiftUI app)
-
-Note: `write()` returns all buffers near-instantly (much faster than realtime). The widget paces serial transmission to match the ESP32's I2S playback rate, preventing buffer overrun.
-
-```swift
-let synth = AVSpeechSynthesizer()
-let utterance = AVSpeechUtterance(string: text)
-utterance.voice = AVSpeechSynthesisVoice(identifier: "com.apple.speech.synthesis.voice.Boing")
-
-synth.write(utterance) { buffer in
-    guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
-        // Done — end audio stream
-        serialTransport.sendAudioEnd()
-        return
+```c
+// ISR — runs at MIC_SAMPLE_RATE (16kHz)
+void IRAM_ATTR micTimerISR() {
+    rawWriteBuf[rawWritePos++] = (uint16_t)analogRead(MIC_PIN);
+    if (rawWritePos >= MIC_FRAME_SAMPLES) {
+        // Swap buffers
+        rawWriteBuf ↔ rawSendBuf;
+        rawWritePos = 0;
+        micFrameReady = true;
     }
-    // Stream 256-frame chunks to ESP32 over serial
-    serialTransport.sendAudioFrames(pcm)
 }
 ```
 
-This replaces the `/usr/bin/say` process entirely. No more shelling out, no file I/O, proper framework API. The voice sounds identical — both use the same synthesis engine under the hood.
+### INMP441 I2S mic option
 
-### SerialManager.swift
+An INMP441 I2S digital mic has been ordered. If it works on C3, it would share the I2S port with the speaker via time-division (mic when listening, speaker when talking) — but this needs investigation. The ADC path is the safe fallback.
 
-- Add `streamTTS(_ text: String)` method that coordinates TTSEngine + SerialTransport
-- Add interruption logic: eval arrives → pause/cancel stream → send score → resume/restart
-- Expose `isSpeaking` state for UI
+---
 
-### DuckConfig.swift
+## Serial Protocol (all boards)
 
-- `serialDevicePrefix`: may need updating for C3 device name
-- `teensyAudioDeviceName`: remove or rename to generic `duckAudioDeviceName`
-- Remove Teensy-specific audio device detection (no longer a USB Audio device)
+Same protocol on all three boards. Text mode by default, binary framing during audio streaming.
 
-### SpeechService.swift / AudioDeviceDiscovery
-
-- Remove Teensy audio device switching logic — Mac mic is always the mic
-- Remove hot-unplug fallback (or simplify: the "fallback" is now the only path for mic input)
-- STT always uses Mac's default mic
-
-## Firmware changes
-
-### New: `firmware/rubber_duck_c3/`
-
-Fork from `firmware/rubber_duck/`, adapted for ESP32-C3 + Arduino framework:
-
-| File | Changes from Teensy version |
-|------|---------------------------|
-| `Config.h` | ESP32-C3 pin defines, LEDC config, remove USB Audio config |
-| `rubber_duck_c3.ino` | ESP32 setup/loop, LEDC servo init, I2S init |
-| `SerialProtocol.ino` | Add binary audio frame parsing, mode switching |
-| `ServoControl.ino` | Replace Servo library with LEDC PWM (already proven on ESP32-S3 duck) |
-| `I2SAudio.ino` | Replace Teensy Audio library with ESP-IDF I2S driver + software synthesis |
-| `AudioBridge.ino` | **Delete** — no USB Audio bridge, replaced by serial streaming |
-| `AudioStream.ino` | **New** — ring buffer, DMA feeding, TTS+chirp mixing |
-| `Easing.ino` | No changes — pure math |
-| `LEDControl.ino` | Drop (no LEDs on this duck) or keep stub |
-
-### Key ESP32-C3 APIs
-
-```c
-// I2S output (ESP-IDF driver, Arduino-compatible)
-#include <driver/i2s.h>
-
-i2s_config_t i2s_config = {
-    .mode = I2S_MODE_MASTER | I2S_MODE_TX,
-    .sample_rate = 16000,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .dma_buf_count = 4,
-    .dma_buf_len = 512,
-};
-
-// Servo via LEDC (already working on ESP32-S3 duck)
-ledcAttach(SERVO_PIN, 50, 16);  // 50Hz, 16-bit resolution
-ledcWrite(SERVO_PIN, pulseToDuty(angleToPulse(degrees)));
-```
-
-### Ring buffer design
+### Text commands
 
 ```
-           write ptr (widget serial data arrives here)
-              ↓
-┌─────────────────────────────────────┐
-│ PCM samples │ PCM samples │ empty   │
-└─────────────────────────────────────┘
-              ↑
-           read ptr (I2S DMA reads from here)
-
-Size: 4096 samples (8KB) = 256ms at 16kHz
-Underrun: play silence (brief gap, recovers on next frame)
-Overrun: drop oldest (shouldn't happen — widget paces sends)
+U,0.20,0.70,0.00,0.60,-0.30\n    # User eval scores
+C,0.72,0.85,0.40,0.61,-0.20\n    # Claude eval scores
+P,1\n                              # Permission requested
+P,0\n                              # Permission resolved
+M,1\n                              # Start mic streaming (ESP32 only)
+M,0\n                              # Stop mic streaming
+A,16000,16,1\n                     # Enter audio mode (rate, bits, channels)
+S,90\n                             # Direct servo angle
+D\n                                # Demo preset
+T\n / X\n                          # Test evals (positive/negative)
+W\n / Q\n                          # Test chirps (whistle/permission)
+V\n                                # Servo sweep test
 ```
 
-When a chirp plays, the chirp synthesizer writes directly to a separate buffer that gets mixed (sample-level add) with the ring buffer output before going to I2S DMA.
+### Binary audio framing (during audio mode)
 
-## Migration steps
+After `A,<rate>,<bits>,<ch>\n`, all data uses binary framing:
 
-### Phase 1: Proof of concept
+```
+0x01 [len_hi] [len_lo] [PCM bytes...]     # Audio frame
+0x02 [len_hi] [len_lo] [text bytes...]     # Control message (e.g., eval during TTS)
+0x04 [len_hi] [len_lo] [PCM bytes...]      # Mic audio frame (ESP32 → widget)
+```
 
-1. Wire ESP32-C3 + MAX98357 + servo + button on breadboard
-2. Write minimal firmware: I2S output plays a test tone, servo sweeps
-3. Verify I2S pin mapping and audio quality
+End audio mode by sending `A,0` as a control frame (0x02), **not** raw text.
 
-### Phase 2: Serial audio streaming
+### Mic streaming
 
-4. Implement ring buffer + I2S DMA feeding on ESP32
-5. Add `A,...\n` audio mode to serial parser
-6. Test: send raw PCM from Mac via `screen` or Python script → hear it on speaker
-7. Implement chirp synthesis (sawtooth + biquad bandpass) mixed into I2S output
+Teensy: mic goes through USB Audio Class — Mac sees it as a USB microphone. No serial involvement.
 
-### Phase 3: Widget integration
+ESP32: `M,1` starts mic streaming. Firmware sends 0x04-tagged binary frames at 16kHz/16-bit/mono. Widget receives and feeds to STT. `M,0` stops.
 
-8. Add `AVSpeechSynthesizer` PCM capture to TTSEngine
-9. Add audio streaming to SerialTransport
-10. Add interruption logic to SerialManager
-11. Remove Teensy audio device detection from SpeechService
-12. Test full loop: Claude event → eval → duck chirps + talks
+### Baud rate
 
-### Phase 4: Cleanup
+- Teensy: 9600 (USB CDC, nominal — actual speed is USB Full Speed)
+- ESP32: 921600 (USB CDC, nominal — same deal, signals fast link to serial monitors)
 
-13. Update `DuckConfig.serialDevicePrefix` if needed
-14. Update CLAUDE.md, HANDOFF.md, phase-2-hardware-handoff.md
-15. Test permission flow (nag chirps interrupt TTS correctly)
-16. Test hot-plug/unplug (SerialTransport reconnect loop)
+---
 
-## Bill of materials
+## Widget Integration Status
 
-| Part | Price | Notes |
-|------|-------|-------|
-| Seeed XIAO ESP32-C3 | ~$5 | USB-C, tiny, WiFi/BLE (unused but free) |
-| MAX98357A I2S DAC | ~$4 | Same board as Teensy duck |
-| Small speaker | ~$2 | Same as Teensy duck |
-| Micro servo (SG90) | ~$3 | Same as Teensy duck |
-| Momentary button | ~$0.50 | Same |
-| **Total** | **~$15** | vs ~$30 for Teensy 4.0 alone |
+| Feature | Teensy | ESP32 |
+|---|---|---|
+| Serial device discovery | Working (`tty.usbmodem*`) | Working (same pattern) |
+| Score/permission commands | Working | Working |
+| TTS via USB Audio (`say -a`) | Working | N/A (no UAC) |
+| TTS via serial streaming | N/A | Working (tested with Python + afplay) |
+| TTS via `AVSpeechSynthesizer.write()` | N/A | Not yet integrated (API tested, 22050Hz) |
+| Mic via USB Audio | Working (Mac sees USB mic) | N/A |
+| Mic via serial streaming | N/A | Working (tested with Python) |
+| Widget STT from serial mic | N/A | Not yet implemented |
+| Denoise on serial mic | N/A | Not yet implemented |
+| Hot-unplug detection | Working | Not yet tested |
+| Chirps | Working | Working |
+| Servo + spring physics | Working | Working |
 
-## What we lose
+## TODO
 
-- **USB Audio device** — macOS can't route arbitrary audio to the duck. TTS is widget-controlled only. If you want to play music through the duck speaker, that won't work anymore. (It barely worked before — the duck speaker is tiny.)
-- **USB mic** — the duck can't act as a microphone for macOS. Voice input uses the Mac's mic exclusively. (This is already the fallback behavior.)
-- **Teensy Audio library** — no declarative audio graph. Chirps are hand-rolled DSP. More code but more control.
-- **Raw CPU power** — Teensy 4.0 is a 600MHz Cortex-M7. ESP32-C3 is a 160MHz RISC-V. More than enough for our workload (serial parsing, chirp synthesis, servo updates, I2S DMA) but no headroom for heavy DSP if we ever wanted it.
-
-## What we gain
-
-- **Half the cost**
-- **Simpler USB** — one CDC serial device, no composite descriptors, no Audio class complexity
-- **WiFi/BLE** — unused now but opens future possibilities (wireless duck, OTA firmware updates)
-- **Same form factor** as the LED duck (XIAO) — could share enclosure designs
-- **Consistent toolchain** — both ducks on ESP32/Arduino instead of mixed Teensy+ESP32
+- [ ] Widget: `AVSpeechSynthesizer.write()` → serial audio streaming integration
+- [ ] Widget: receive serial mic frames (0x04 tag) → denoise → feed STT
+- [ ] Widget: auto-detect Teensy (UAC audio) vs ESP32 (serial audio) and route accordingly
+- [ ] Test C3 hardware when it arrives (ADC mic, single I2S port)
+- [ ] Test INMP441 I2S mic on C3
+- [ ] Firmware noise gate (attempted, caused crash — revisit or keep denoise widget-side)
