@@ -94,12 +94,20 @@ struct RubberDuckWidgetApp: App {
             _ = speechService // retain
         }
 
-        // Teensy serial → log incoming messages
+        // Give SpeechService the serial transport for ESP32 audio
+        speechService.setSerialTransport(serialManager.serialTransport)
+
+        // Serial device change → let SpeechService switch audio paths
+        serialManager.onDeviceChange = { [weak speechService] in
+            speechService?.handleSerialDeviceChange()
+        }
+
+        // Serial → log incoming messages
         serialManager.onLineReceived = { line in
             DuckLog.log("[serial] \(line)")
         }
 
-        // Teensy mode button → toggle coordinator mode
+        // Mode button → toggle coordinator mode
         serialManager.onModeToggle = { [weak coordinator] in
             coordinator?.toggleMode()
         }

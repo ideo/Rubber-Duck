@@ -37,6 +37,10 @@ unsigned long permissionStartTime = 0;
 unsigned long lastPermissionNag = 0;
 unsigned long nextNagInterval = 0;
 
+// --- Deferred Chirp (play after TTS drain) ---
+bool       deferredChirp = false;
+EvalScores deferredChirpScores = {0, 0, 0, 0, 0, 'U', false};
+
 // --- Timing ---
 unsigned long lastServoUpdate = 0;
 unsigned long lastExpressionTime = 0;
@@ -102,6 +106,13 @@ void loop() {
     audioFeedI2S();     // Drain ring buffer to I2S DMA
     // Read serial again immediately after I2S write to minimize CDC buffer buildup
     readSerial();
+
+    // Play deferred chirp after TTS drain completes
+    if (deferredChirp && !isAudioStreaming()) {
+      ChirpTarget ct = chirpReducer(deferredChirpScores);
+      playChirp(ct);
+      deferredChirp = false;
+    }
   #endif
 
   // --- Mic capture: sample ADC + stream frames to widget ---
@@ -154,11 +165,16 @@ void loop() {
     }
     #endif
 
-    // Chirp on eval (skip if TTS is streaming — don't quack over speech)
+    // Chirp on eval — normally plays before TTS (widget delays audio mode entry).
+    // If somehow audio IS streaming (e.g. rapid-fire evals), defer the chirp.
     #if ENABLE_AUDIO
     if (!isAudioStreaming()) {
       ChirpTarget ct = chirpReducer(latestScores);
       playChirp(ct);
+      deferredChirp = false;
+    } else {
+      deferredChirp = true;
+      deferredChirpScores = latestScores;
     }
     #endif
 
