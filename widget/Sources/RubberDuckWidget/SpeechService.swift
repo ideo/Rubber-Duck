@@ -58,8 +58,12 @@ class SpeechService: ObservableObject {
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
     var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
-            tts.voice = ttsVoice
-            serialTTS?.voice = ttsVoice
+            // Wildcard sentinel is stored in UserDefaults but the TTS engine
+            // needs a real voice — use Superstar as the default speaking voice.
+            let engineVoice = (ttsVoice == DuckVoices.wildcardSayName)
+                ? DuckVoices.wildcardDefault.sayName : ttsVoice
+            tts.voice = engineVoice
+            serialTTS?.voice = engineVoice
             UserDefaults.standard.set(ttsVoice, forKey: "duck_tts_voice")
         }
     }
@@ -114,8 +118,10 @@ class SpeechService: ObservableObject {
         stt = STTEngine()
         tts = TTSEngine()
 
-        // Sync persisted voice to TTSEngine (didSet doesn't fire on init)
-        tts.voice = ttsVoice
+        // Sync persisted voice to TTSEngine (didSet doesn't fire on init).
+        // Wildcard sentinel needs a real voice on the engine — use Superstar.
+        tts.voice = (ttsVoice == DuckVoices.wildcardSayName)
+            ? DuckVoices.wildcardDefault.sayName : ttsVoice
 
         // Now that self is fully initialized, wire log + callbacks
         let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
