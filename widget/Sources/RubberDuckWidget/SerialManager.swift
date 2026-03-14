@@ -38,6 +38,13 @@ class SerialManager: ObservableObject {
             }
         }
 
+        // Sync published state when device hot-plugs/unplugs
+        t.onConnectionChange = { [weak self] in
+            Task { @MainActor in
+                self?.syncState()
+            }
+        }
+
         t.connect()
         syncState()
     }

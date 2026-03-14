@@ -149,6 +149,50 @@ class DuckServer: ObservableObject {
             return .json(responseData)
         }
 
+        #if DEBUG
+        // POST /demo — inject a canned eval result (bypasses evaluator).
+        // Used for recording demos with deterministic reactions.
+        // Body: { "source": "user|claude", "text_preview": "...", "scores": { ... } }
+        srv.post("/demo") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let scoresDict = json["scores"] as? [String: Any] else {
+                return .badRequest("need {source, text_preview, scores: {creativity,soundness,ambition,elegance,risk,reaction,summary}}")
+            }
+
+            let source = json["source"] as? String ?? "claude"
+            let textPreview = json["text_preview"] as? String ?? ""
+            let scores = EvalScores(
+                creativity: scoresDict["creativity"] as? Double ?? 0,
+                soundness: scoresDict["soundness"] as? Double ?? 0,
+                ambition: scoresDict["ambition"] as? Double ?? 0,
+                elegance: scoresDict["elegance"] as? Double ?? 0,
+                risk: scoresDict["risk"] as? Double ?? 0,
+                reaction: scoresDict["reaction"] as? String,
+                summary: scoresDict["summary"] as? String
+            )
+
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            let result = EvalResult(
+                type: "eval",
+                timestamp: timestamp,
+                source: source,
+                textPreview: textPreview,
+                sessionId: "demo",
+                scores: scores
+            )
+
+            await broadcaster.broadcast(result)
+            await MainActor.run { localTransport.deliver(result) }
+
+            DuckLog.log("[demo] \(scores.reaction ?? "...")  |  \(scores.summary ?? "")")
+
+            guard let responseData = try? JSONEncoder().encode(result) else {
+                return .badRequest("encode error")
+            }
+            return .json(responseData)
+        }
+        #endif
+
         // POST /evaluate (legacy — used by shell hook scripts and dashboard)
         srv.post("/evaluate") { request in
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {

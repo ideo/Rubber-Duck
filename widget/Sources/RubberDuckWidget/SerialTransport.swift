@@ -10,6 +10,7 @@ class SerialTransport: DeviceTransport {
     private(set) var isConnected: Bool = false
     private(set) var deviceName: String = ""
     var onLineReceived: ((String) -> Void)?
+    var onConnectionChange: (() -> Void)?
 
     private var fileDescriptor: Int32 = -1
     private var reconnectTask: Task<Void, Never>?
@@ -37,6 +38,7 @@ class SerialTransport: DeviceTransport {
         isConnected = false
         deviceName = ""
         print("[serial] Disconnected")
+        onConnectionChange?()
     }
 
     func sendScores(_ message: SerialScoreMessage) {
@@ -117,6 +119,7 @@ class SerialTransport: DeviceTransport {
         isConnected = true
         deviceName = path
         print("[serial] Connected to \(path)")
+        onConnectionChange?()
         startReading()
     }
 

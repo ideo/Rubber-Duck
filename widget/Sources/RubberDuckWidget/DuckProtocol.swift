@@ -163,6 +163,8 @@ protocol DeviceTransport: AnyObject {
     var isConnected: Bool { get }
     var deviceName: String { get }
     var onLineReceived: ((String) -> Void)? { get set }
+    /// Fired when the transport connects or disconnects (e.g. USB hot-plug).
+    var onConnectionChange: (() -> Void)? { get set }
 
     func connect()
     func disconnect()
