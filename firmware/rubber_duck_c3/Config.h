@@ -127,7 +127,7 @@
 // --- Chirp Synthesis ---
 #define CHIRP_BASE_FREQ      280     // Hz — center of sentiment range
 #define CHIRP_DURATION       250     // ms — single chirp
-#define CHIRP_AMPLITUDE      0.6f    // 0.0-1.0 volume for oscillator
+#define CHIRP_AMPLITUDE      0.5f    // 0.0-1.0 volume for oscillator
 #define CHIRP_SAMPLE_RATE    16000   // Hz — chirp synth runs at this rate
 #define WHISTLE_SERVO_KICK   15.0f   // Degrees of head kick during whistle
 

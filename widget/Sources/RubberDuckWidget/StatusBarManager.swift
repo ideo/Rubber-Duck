@@ -53,11 +53,19 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Listen mode — 3 radio items
+        let listenModeIcons: [ListenMode: String] = [
+            .off: "microphone.slash.fill",
+            .permissionsOnly: "microphone.badge.xmark",
+            .active: "microphone.fill",
+        ]
         for mode in ListenMode.allCases {
             let modeItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
             modeItem.target = self
             modeItem.tag = mode.rawValue
             modeItem.state = speechService.listenMode == mode ? .on : .off
+            if let iconName = listenModeIcons[mode] {
+                modeItem.image = NSImage(systemSymbolName: iconName, accessibilityDescription: mode.label)
+            }
             menu.addItem(modeItem)
         }
 
@@ -66,10 +74,12 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // Duck mode — 2 radio items
         let criticItem = item("Critic (Inner Monologue)", action: #selector(setModeCritic))
         criticItem.state = coordinator.mode == .critic ? .on : .off
+        criticItem.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Critic mode")
         menu.addItem(criticItem)
 
         let relayItem = item("Relay", action: #selector(setModeRelay))
         relayItem.state = coordinator.mode == .relay ? .on : .off
+        relayItem.image = NSImage(systemSymbolName: "phone.fill", accessibilityDescription: "Relay mode")
         menu.addItem(relayItem)
 
         menu.addItem(.separator())
@@ -88,9 +98,19 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Voice submenu
-        let voiceLabel = DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice
+        let isWildcard = speechService.isWildcardMode
+        let voiceLabel = isWildcard ? "Wildcard" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
         let voiceMenu = NSMenu()
+
+        // Wildcard — AI-picked voice per utterance
+        let wildcardItem = NSMenuItem(title: "Wildcard", action: #selector(selectWildcard), keyEquivalent: "")
+        wildcardItem.target = self
+        wildcardItem.image = NSImage(systemSymbolName: "shuffle", accessibilityDescription: "Shuffle voices")
+        wildcardItem.state = isWildcard ? .on : .off
+        voiceMenu.addItem(wildcardItem)
+        voiceMenu.addItem(.separator())
+
         addVoiceItems(to: voiceMenu, voices: DuckVoices.main)
         voiceMenu.addItem(.separator())
         addVoiceItems(to: voiceMenu, voices: DuckVoices.classic)
@@ -161,6 +181,13 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     @objc private func setProviderAnthropic() {
         guard DuckConfig.ensureAPIKey() else { return }
         DuckConfig.evalProvider = .anthropic
+    }
+
+    @objc private func selectWildcard() {
+        speechService.ttsVoice = DuckVoices.wildcardSayName
+        // Preview in Superstar (the default wildcard voice)
+        speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
+        speechService.speak("Wildcard mode.", skipChirpWait: true)
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {

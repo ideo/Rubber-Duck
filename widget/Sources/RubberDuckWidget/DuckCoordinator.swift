@@ -52,6 +52,12 @@ class DuckCoordinator: ObservableObject {
             textToSpeak = isUserEval ? "" : evalService.summary
         }
         if !textToSpeak.isEmpty {
+            // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
+            if speechService.isWildcardMode {
+                let voiceKey = evalService.scores?.voice
+                let picked = voiceKey.map { DuckVoices.wildcardVoice(for: $0) } ?? DuckVoices.wildcardDefault
+                speechService.setVoiceTransient(picked.sayName)
+            }
             speechService.speak(textToSpeak)
         }
     }

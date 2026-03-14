@@ -16,6 +16,7 @@ struct EvalScores: Codable, Equatable {
     let risk: Double
     let reaction: String?
     let summary: String?      // Factual summary (relay mode)
+    var voice: String?        // Wildcard voice key (AI-picked, Haiku only for now)
 }
 
 // MARK: - Enums

@@ -100,6 +100,7 @@ class DuckServer: ObservableObject {
             }
 
             let scores: EvalScores
+            let wildcardOn = DuckVoices.isWildcardPersisted
             do {
                 switch DuckConfig.evalProvider {
                 case .foundation:
@@ -109,7 +110,8 @@ class DuckServer: ObservableObject {
                 case .anthropic:
                     scores = try await claudeEvaluator.evaluate(text: text, source: source,
                                                                  userContext: userContext,
-                                                                 claudeContext: claudeContext)
+                                                                 claudeContext: claudeContext,
+                                                                 wildcardEnabled: wildcardOn)
                 }
             } catch {
                 DuckLog.log("[server] Eval error: \(error)")
