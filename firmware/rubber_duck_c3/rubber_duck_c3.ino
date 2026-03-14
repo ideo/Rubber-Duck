@@ -14,11 +14,13 @@
 //
 // Wiring:
 //   D0  → Servo signal
-//   D1  → Button (internal pullup)
+//   D1  → (free)
 //   D2  → MAX98357 BCLK
 //   D3  → MAX98357 LRC (WS)
 //   D4  → MAX98357 DIN
-//   3V3 → MAX98357 VIN + SD (enable)
+//   D5  → SPW2430 mic DC output
+//   D8  → Button (internal pullup)
+//   3V3 → MAX98357 VIN + SD (enable) + SPW2430 3V
 //   GND → MAX98357 GND + Servo GND
 //   5V  → Servo VCC (if available, otherwise 3V3)
 // ============================================================
@@ -34,6 +36,10 @@ bool          permissionPending = false;
 unsigned long permissionStartTime = 0;
 unsigned long lastPermissionNag = 0;
 unsigned long nextNagInterval = 0;
+
+// --- Deferred Chirp (play after TTS drain) ---
+bool       deferredChirp = false;
+EvalScores deferredChirpScores = {0, 0, 0, 0, 0, 'U', false};
 
 // --- Timing ---
 unsigned long lastServoUpdate = 0;
@@ -55,6 +61,11 @@ void setup() {
   Serial.println();
   Serial.println("=== RUBBER DUCK C3 ===");
 
+  // Mic must init before audio on S3 — PDM mic needs I2S_NUM_0,
+  // speaker moves to I2S_NUM_1. On C3, mic uses ADC (no I2S conflict).
+  #if ENABLE_MIC
+    setupMic();
+  #endif
   #if ENABLE_AUDIO
     setupAudio();
   #endif
@@ -95,6 +106,18 @@ void loop() {
     audioFeedI2S();     // Drain ring buffer to I2S DMA
     // Read serial again immediately after I2S write to minimize CDC buffer buildup
     readSerial();
+
+    // Play deferred chirp after TTS drain completes
+    if (deferredChirp && !isAudioStreaming()) {
+      ChirpTarget ct = chirpReducer(deferredChirpScores);
+      playChirp(ct);
+      deferredChirp = false;
+    }
+  #endif
+
+  // --- Mic capture: sample ADC + stream frames to widget ---
+  #if ENABLE_MIC
+    updateMic();
   #endif
 
   // --- Button handling ---
@@ -142,11 +165,16 @@ void loop() {
     }
     #endif
 
-    // Chirp on eval (skip if TTS is streaming — don't quack over speech)
+    // Chirp on eval — normally plays before TTS (widget delays audio mode entry).
+    // If somehow audio IS streaming (e.g. rapid-fire evals), defer the chirp.
     #if ENABLE_AUDIO
     if (!isAudioStreaming()) {
       ChirpTarget ct = chirpReducer(latestScores);
       playChirp(ct);
+      deferredChirp = false;
+    } else {
+      deferredChirp = true;
+      deferredChirpScores = latestScores;
     }
     #endif
 

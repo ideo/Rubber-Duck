@@ -20,6 +20,12 @@
 - [x] **Widget ↔ Teensy permission wiring** — P,1/P,0 serial commands for nag lifecycle
 - [x] **Critic/Relay voice modes** — toggle via Teensy button or widget menu
 
+## ⚠️ TBD: Test & Verify
+
+- [ ] **Hot-swap Teensy UAC board into ESP32 slot** — Widget currently auto-detects board type via identity handshake (DUCK,TEENSY40 vs DUCK,ESP32S3) and switches audio path accordingly. Need to verify: plugging in a Teensy after the widget has been running with ESP32 correctly switches from serial TTS to UAC audio path (say command + USB audio device). Test: unplug ESP32, plug in Teensy, confirm chirps play via I2S, TTS routes to `say -a`, mic switches to Teensy USB audio input.
+- [ ] **Hot-swap ESP32 into Teensy slot** — Reverse: widget running with Teensy, swap to ESP32. Verify serial TTS engine activates, chirp-complete handshake works, mic switches to serial PDM path.
+- [ ] **Rapid voice switching during active eval** — Changing voices mid-TTS can cause audio mode desync if a speak() call is in flight when the voice changes. The startup "freakout" may be related.
+
 ## 🔮 Next: Realtime API Migration
 
 Replace Google STT + macOS `say` with a unified Realtime API backend:

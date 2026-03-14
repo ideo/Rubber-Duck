@@ -91,9 +91,13 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let voiceLabel = DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
         let voiceMenu = NSMenu()
-        addVoiceSection(to: voiceMenu, title: "Novelty", voices: DuckVoices.novelty)
-        addVoiceSection(to: voiceMenu, title: "Siri", voices: DuckVoices.siri)
-        addVoiceSection(to: voiceMenu, title: "Classic", voices: DuckVoices.classic)
+        addVoiceItems(to: voiceMenu, voices: DuckVoices.main)
+        voiceMenu.addItem(.separator())
+        addVoiceItems(to: voiceMenu, voices: DuckVoices.classic)
+        voiceMenu.addItem(.separator())
+        addVoiceItems(to: voiceMenu, voices: DuckVoices.british)
+        voiceMenu.addItem(.separator())
+        addVoiceItems(to: voiceMenu, voices: DuckVoices.specialFX)
         voiceItem.submenu = voiceMenu
         menu.addItem(voiceItem)
 
@@ -115,16 +119,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - Voice Submenu
 
-    private func addVoiceSection(to menu: NSMenu, title: String, voices: [DuckVoice]) {
-        // Section header (disabled, bold-ish)
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .semibold)
-        ]
-        header.attributedTitle = NSAttributedString(string: title, attributes: attrs)
-        menu.addItem(header)
-
+    private func addVoiceItems(to menu: NSMenu, voices: [DuckVoice]) {
         for voice in voices {
             let voiceItem = NSMenuItem(title: voice.label, action: #selector(selectVoice(_:)), keyEquivalent: "")
             voiceItem.target = self
@@ -172,7 +167,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         guard let sayName = sender.representedObject as? String else { return }
         speechService.ttsVoice = sayName
         let label = DuckVoices.all.first { $0.sayName == sayName }?.label ?? sayName
-        speechService.speak("Hi, I'm \(label).")
+        speechService.speak("Hi, I'm \(label).", skipChirpWait: true)
     }
 
     @objc private func quitApp() {

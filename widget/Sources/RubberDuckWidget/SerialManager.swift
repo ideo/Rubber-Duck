@@ -11,6 +11,10 @@ class SerialManager: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var portName: String = ""
 
+    /// The concrete serial transport — exposed so SpeechService can use it
+    /// for binary audio I/O with ESP32 devices.
+    let serialTransport: SerialTransport
+
     private let transport: DeviceTransport
 
     /// Called when Teensy sends a line (e.g. "PONG" for ping).
@@ -19,12 +23,17 @@ class SerialManager: ObservableObject {
     /// Called when Teensy sends "MODE" (physical button press).
     var onModeToggle: (() -> Void)?
 
-    init(transport: DeviceTransport? = nil) {
+    /// Called when the serial device connects/disconnects (after identity handshake).
+    /// Use this to switch audio paths based on connected board type.
+    var onDeviceChange: (() -> Void)?
+
+    init(transport: SerialTransport? = nil) {
         let t = transport ?? {
             let s = SerialTransport()
             s.startReconnectLoop()
             return s
         }()
+        self.serialTransport = t
         self.transport = t
 
         // Forward line events from transport
@@ -42,6 +51,7 @@ class SerialManager: ObservableObject {
         t.onConnectionChange = { [weak self] in
             Task { @MainActor in
                 self?.syncState()
+                self?.onDeviceChange?()
             }
         }
 

@@ -27,6 +27,8 @@ static int  textBufPos = 0;
 
 // --- Audio Mode State ---
 static bool    audioMode = false;   // true = binary framing active
+static unsigned long audioModeLastRx = 0;  // Last time we received data in audio mode
+#define AUDIO_MODE_TIMEOUT_MS 5000         // Auto-exit audio mode after 5s of silence
 static uint8_t binHeader[BINARY_HEADER_SIZE];
 static int     binHeaderPos = 0;
 static uint8_t frameBuf[FRAME_MAX_BYTES];
@@ -41,6 +43,15 @@ static uint8_t  frameType = 0;
 void readSerial() {
   if (audioMode) {
     readSerialBinary();
+
+    // Auto-exit audio mode if no data received for 5s (widget crash/disconnect)
+    if ((millis() - audioModeLastRx) > AUDIO_MODE_TIMEOUT_MS) {
+      audioStreamEnd();
+      micSetMuted(false);
+      audioMode = false;
+      binHeaderPos = 0;
+      Serial.println("[serial] Audio mode timeout — auto-exit");
+    }
   } else {
     readSerialText();
   }
@@ -86,11 +97,27 @@ void parseTextMessage(char *msg) {
       if (*end == ',') { ptr = end + 1; ch = strtoul(ptr, &end, 10); }
 
       audioStreamBegin(sr, bits, ch);
+      micSetMuted(true);   // Mute mic during TTS (speaker→mic feedback prevention)
       audioMode = true;
+      audioModeLastRx = millis();
       binHeaderPos = 0;
       frameExpectedLen = 0;
       frameReceivedLen = 0;
       Serial.println("[serial] Entered audio mode");
+    }
+    return;
+  }
+
+  // --- Mic streaming control ---
+  // M,1 = start streaming mic audio to widget
+  // M,0 = stop streaming
+  if (source == 'M') {
+    if (msg[1] == ',' && msg[2] == '1') {
+      micStreaming = true;
+      Serial.println("[mic] Streaming ON");
+    } else if (msg[1] == ',' && msg[2] == '0') {
+      micStreaming = false;
+      Serial.println("[mic] Streaming OFF");
     }
     return;
   }
@@ -104,6 +131,18 @@ void parseTextMessage(char *msg) {
     } else {
       Serial.println("PONG");
     }
+    return;
+  }
+
+  // --- Identity ---
+  if (source == 'I') {
+    #if defined(CONFIG_IDF_TARGET_ESP32S3)
+      Serial.println("DUCK,ESP32S3,1.0");
+    #elif defined(CONFIG_IDF_TARGET_ESP32C3)
+      Serial.println("DUCK,ESP32C3,1.0");
+    #else
+      Serial.println("DUCK,ESP32,1.0");
+    #endif
     return;
   }
 
@@ -297,6 +336,7 @@ void readSerialBinary() {
     frameReceivedLen += got;
 
     if (frameReceivedLen >= frameExpectedLen) {
+      audioModeLastRx = millis();  // Any complete frame resets the timeout
       // Frame complete — dispatch
       if (frameType == FRAME_MODE_AUDIO) {
         audioStreamWrite(frameBuf, frameExpectedLen);
@@ -312,6 +352,7 @@ void readSerialBinary() {
           // Check for "A,0" end-of-stream sent as control frame
           if (frameBuf[0] == 'A' && frameBuf[1] == ',' && frameBuf[2] == '0') {
             audioStreamEnd();
+            micSetMuted(false);  // Unmute mic after TTS ends
             audioMode = false;
             Serial.println("[serial] Exited audio mode (A,0 control)");
           } else {

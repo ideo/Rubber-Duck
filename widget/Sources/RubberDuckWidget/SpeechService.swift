@@ -59,6 +59,7 @@ class SpeechService: ObservableObject {
     var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
             tts.voice = ttsVoice
+            serialTTS?.voice = ttsVoice
             UserDefaults.standard.set(ttsVoice, forKey: "duck_tts_voice")
         }
     }
@@ -68,15 +69,27 @@ class SpeechService: ObservableObject {
     var onWakeWord: (() -> Void)?
     var onPermissionResponse: ((Int) -> Void)?  // 0=allow once, 1+=suggestion index, -1=deny
 
-    // Components
+    /// Which audio device path is active.
+    enum AudioPath {
+        case local          // Mac system mic + speakers (default fallback)
+        case teensy         // Teensy UAC — STTEngine + TTSEngine via CoreAudio
+        case esp32Serial    // ESP32 — SerialMicEngine + SerialTTSEngine via binary frames
+    }
+
+    // Components — Teensy/local path (always available)
     private let stt: STTEngine
     private let tts: TTSEngine
     private var wakeWordProcessor = WakeWordProcessor()
     private var permissionGate = PermissionVoiceGate()
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
-    // Track whether we were using Teensy (so we know when it disappears or reappears)
-    private var usingTeensy = false
+    // Components — ESP32 serial path (created when transport is set)
+    private var serialMic: SerialMicEngine?
+    private var serialTTS: SerialTTSEngine?
+    private weak var serialTransport: SerialTransport?
+
+    // Track which path is active
+    private var audioPath: AudioPath = .local
 
     // Timers
     private var voiceInputTimer: Task<Void, Never>?
@@ -118,6 +131,73 @@ class SpeechService: ObservableObject {
             }
         }
         deviceListener.start()
+    }
+
+    // MARK: - Serial Transport (ESP32 audio path)
+
+    /// Set the serial transport for ESP32 binary audio I/O.
+    /// Creates SerialTTSEngine and SerialMicEngine instances.
+    func setSerialTransport(_ transport: SerialTransport) {
+        self.serialTransport = transport
+
+        let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
+
+        // Create serial TTS engine
+        let sTTS = SerialTTSEngine(transport: transport)
+        sTTS.voice = ttsVoice
+        sTTS.log = logFn
+        self.serialTTS = sTTS
+
+        // Create serial mic engine — wire transcripts to same pipeline
+        let sMic = SerialMicEngine(transport: transport)
+        sMic.log = logFn
+        sMic.onTranscript = { [weak self] transcript, isFinal in
+            Task { @MainActor in
+                self?.processTranscript(transcript, isFinal: isFinal)
+            }
+        }
+        // Share the serial TTS gate with serial mic so mic mutes during playback
+        sMic.setTTSGate(sTTS.gate)
+        self.serialMic = sMic
+
+        log("[speech] Serial audio engines created for ESP32")
+    }
+
+    /// Called when the serial device connects, disconnects, or identifies itself.
+    /// Switches audio path based on what's connected.
+    func handleSerialDeviceChange() {
+        guard let transport = serialTransport else { return }
+
+        if transport.isESP32 {
+            switchAudioPath(.esp32Serial)
+        } else if transport.isConnected {
+            // Serial device connected but not ESP32 (e.g. Teensy) — let CoreAudio handle it
+            // Teensy audio is detected via CoreAudio device change, not serial identity
+            log("[speech] Serial device connected: \(transport.connectedBoard ?? "unknown") — using CoreAudio path")
+        } else {
+            // Serial disconnected — if we were on ESP32, fall back
+            if audioPath == .esp32Serial {
+                switchAudioPath(.local)
+            }
+        }
+    }
+
+    /// Switch to a new audio path, restarting listening if needed.
+    private func switchAudioPath(_ newPath: AudioPath) {
+        guard newPath != audioPath else { return }
+        let wasListening = isListening
+
+        log("[speech] Switching audio path: \(audioPath) → \(newPath)")
+
+        // Stop the current path
+        stopListening()
+
+        audioPath = newPath
+
+        // Restart on the new path if we were listening
+        if wasListening {
+            startListening()
+        }
     }
 
     // MARK: - Public API
@@ -172,24 +252,51 @@ class SpeechService: ObservableObject {
             lastError = "Missing permissions"
             return
         }
-        stt.start()
-        isListening = stt.isListening
+
+        switch audioPath {
+        case .esp32Serial:
+            guard let mic = serialMic else {
+                log("[speech] Serial mic engine not available")
+                return
+            }
+            mic.start()
+            isListening = mic.isListening
+        case .teensy, .local:
+            stt.start()
+            isListening = stt.isListening
+        }
+
         if isListening {
-            log("[speech] Listening for \"\(wakeWord)\"...")
+            log("[speech] Listening via \(audioPath) for \"\(wakeWord)\"...")
         }
     }
 
     func stopListening() {
-        stt.stop()
+        switch audioPath {
+        case .esp32Serial:
+            serialMic?.stop()
+        case .teensy, .local:
+            stt.stop()
+        }
         isListening = false
     }
 
-    func speak(_ text: String) {
-        tts.speak(text)
+    func speak(_ text: String, skipChirpWait: Bool = false) {
+        switch audioPath {
+        case .esp32Serial:
+            serialTTS?.speak(text, skipChirpWait: skipChirpWait)
+        case .teensy, .local:
+            tts.speak(text)
+        }
     }
 
     func stopSpeaking() {
-        tts.stop()
+        switch audioPath {
+        case .esp32Serial:
+            serialTTS?.stop()
+        case .teensy, .local:
+            tts.stop()
+        }
     }
 
     func askPermission(toolName: String, summary: String = "", options: [String] = []) {
@@ -211,6 +318,13 @@ class SpeechService: ObservableObject {
     // MARK: - Mic Selection
 
     private func selectMicrophone() {
+        // ESP32 serial path doesn't use CoreAudio — skip mic selection
+        if audioPath == .esp32Serial {
+            selectedMicName = "ESP32 Serial Mic"
+            log("[speech] Using ESP32 serial mic — no CoreAudio mic needed")
+            return
+        }
+
         guard let mic = AudioDeviceDiscovery.selectMicrophone() else {
             log("[speech] No microphone found!")
             lastError = "No microphone found"
@@ -218,10 +332,10 @@ class SpeechService: ObservableObject {
         }
 
         selectedMicName = mic.name
-        usingTeensy = mic.isTeensy
         log("[speech] Selected \(mic.isTeensy ? "Teensy" : "default") mic: \(mic.name)")
 
         if mic.isTeensy {
+            audioPath = .teensy
             // Find Teensy in CoreAudio and configure both STT input and TTS output
             if let teensy = AudioDeviceDiscovery.findTeensy() {
                 stt.setTeensyDevice(teensy.deviceID)
@@ -229,6 +343,7 @@ class SpeechService: ObservableObject {
                 log("[tts] Will route TTS to Teensy via `say -a \"\(teensy.name)\"`")
             }
         } else {
+            audioPath = .local
             // Ensure STT/TTS use system defaults
             stt.clearTeensyDevice()
             tts.outputDeviceName = nil
@@ -251,10 +366,14 @@ class SpeechService: ObservableObject {
         }
     }
 
-    /// Called after debounce when audio devices change (USB plug/unplug).
+    /// Called after debounce when CoreAudio devices change (USB plug/unplug).
     /// Re-selects mic/TTS and restarts listening if the device changed.
+    /// Note: ESP32 doesn't appear in CoreAudio — its changes come via handleSerialDeviceChange().
     private func handleDeviceChange() {
-        let wasTeensy = usingTeensy
+        // Don't let CoreAudio changes override the ESP32 serial path
+        if audioPath == .esp32Serial { return }
+
+        let wasTeensy = audioPath == .teensy
         let teensyNow = AudioDeviceDiscovery.findTeensy() != nil
 
         if wasTeensy && !teensyNow {
@@ -380,18 +499,33 @@ class SpeechService: ObservableObject {
 
     private func restartAfterTTS() {
         Task {
-            while tts.isMuted {
-                try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            // Wait for whichever TTS engine is active to finish
+            switch audioPath {
+            case .esp32Serial:
+                while serialTTS?.isMuted == true {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                serialMic?.resetRestartAttempts()
+            case .teensy, .local:
+                while tts.isMuted {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                stt.resetRestartAttempts()
             }
-            self.stt.resetRestartAttempts()
             self.startListening()
         }
     }
 
     private func restartListening() {
         stopListening()
-        stt.restart()
-        isListening = stt.isListening
+        switch audioPath {
+        case .esp32Serial:
+            serialMic?.restart()
+            isListening = serialMic?.isListening ?? false
+        case .teensy, .local:
+            stt.restart()
+            isListening = stt.isListening
+        }
     }
 
     // MARK: - Logging

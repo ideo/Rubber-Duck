@@ -344,16 +344,19 @@ void updateChirp() {
     doubleChirp = false;
     audioChirpEnd();
     Serial.println("[chirp] Done");
+    Serial.println("K");  // Machine-readable chirp-complete signal for widget
     return;
   }
 
-  // How many samples should exist by now?
+  // Generate all samples needed to stay caught up with real-time.
+  // Loop in chunks — single 64-sample pass can't keep up if loop() > 4ms.
+  while (true) {
   uint32_t targetSamples = (uint32_t)((float)elapsed / 1000.0f * CHIRP_SAMPLE_RATE);
   uint32_t toGenerate = 0;
   if (targetSamples > chirpSamplesGenerated) {
     toGenerate = targetSamples - chirpSamplesGenerated;
   }
-  if (toGenerate == 0) return;
+  if (toGenerate == 0) break;
   if (toGenerate > CHIRP_CHUNK_SAMPLES) toGenerate = CHIRP_CHUNK_SAMPLES;
 
   // Generate samples
@@ -456,6 +459,8 @@ void updateChirp() {
 
   // Write to ring buffer (same as TTS audio path)
   audioStreamWrite((const uint8_t *)chirpScratch, toGenerate * 2);
+
+  } // end while(true) — loop until caught up with real-time
 }
 
 #else

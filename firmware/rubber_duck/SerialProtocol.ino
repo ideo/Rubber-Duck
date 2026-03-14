@@ -63,6 +63,12 @@ void parseMessage(char *msg) {
     return;
   }
 
+  // Identity
+  if (source == 'I') {
+    Serial.println("DUCK,TEENSY40,1.0");
+    return;
+  }
+
   if (source == 'T') {
     // Positive test eval
     latestScores = {0.5, 0.8, 0.3, 0.7, -0.5, 'U', true};
