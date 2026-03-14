@@ -15,6 +15,25 @@
 #define ENABLE_SERVO       true   // LEDC PWM servo
 #define ENABLE_BUTTON      true   // Mode/demo button
 #define ENABLE_AUDIO       true   // I2S speaker output + serial audio streaming
+#define ENABLE_MIC         true   // ADC mic capture + serial streaming to widget
+
+// --- Mic Config (SPW2430 analog MEMS mic) ---
+// DC output biased at ~VDD/2 (1.65V). ADC reads 0-3.3V.
+// S3: D5=GPIO6=A5. C3: move button to D5, use D1=GPIO3=ADC1_CH3.
+#define MIC_PIN            D5      // Analog input pin
+#define MIC_SAMPLE_RATE    16000   // Hz — matches STT expectations
+#define MIC_FRAME_SAMPLES  256     // Samples per serial frame (16ms at 16kHz)
+#define MIC_DC_OFFSET      2048    // 12-bit ADC midpoint (VDD/2)
+#define MIC_FRAME_TAG      0x04    // Serial frame type for mic audio
+
+// --- I2S Port Assignment ---
+// S3 has 2 I2S ports. PDM mic needs I2S_NUM_0, so speaker goes on I2S_NUM_1.
+// C3 has 1 I2S port. Speaker uses I2S_NUM_0, mic uses ADC timer (no I2S).
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  #define AUDIO_I2S_PORT   I2S_NUM_1
+#else
+  #define AUDIO_I2S_PORT   I2S_NUM_0
+#endif
 
 // --- I2S Pin Config ---
 // Board macros D2/D3/D4 resolve correctly on both C3 and S3.
@@ -70,7 +89,7 @@
 #define SERVO_UPDATE_MS    20      // Fixed-rate update interval
 
 // --- Button Config ---
-#define BUTTON_PIN         D1      // D1 on XIAO (internal pullup)
+#define BUTTON_PIN         D8      // D8 on XIAO S3 (GPIO7). D1 reserved for future use.
 #define LONG_PRESS_MS      2000    // Hold 2s for snap-to-center
 
 // --- Spring Physics (servo) ---
@@ -202,5 +221,11 @@ void playStartupChirp();
 void playPermissionChirp();
 void updateChirp();
 extern float chirpServoOffset;
+
+// Mic capture (MicCapture.ino)
+void setupMic();
+void updateMic();
+void micSetMuted(bool muted);  // Gate: mute during TTS playback
+extern bool micStreaming;       // true when widget has requested mic data
 
 #endif

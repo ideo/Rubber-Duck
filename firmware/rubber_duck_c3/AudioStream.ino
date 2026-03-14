@@ -1,28 +1,23 @@
 // ============================================================
-// Audio Stream (ESP32-C3 Duck)
+// Audio Stream (ESP32 Duck)
 // ============================================================
 // Ring buffer sits between serial input and I2S DMA output.
-// The widget streams TTS audio as binary PCM frames over serial.
-// This module buffers those frames and feeds I2S continuously.
+// Uses the new IDF I2S STD driver (driver/i2s_std.h) so it can
+// coexist with the PDM mic driver on a separate port.
 //
 // Flow:
 //   Widget serial → audioStreamWrite() → ring buffer
-//   audioFeedI2S() → reads ring buffer → i2s_write()
-//
-// Call audioFeedI2S() from loop(). It uses a SHORT timeout on
-// i2s_write so it doesn't block the serial reader for long.
+//   audioFeedI2S() → reads ring buffer → i2s_channel_write()
 
 #if ENABLE_AUDIO
 
-#include <driver/i2s.h>
+#include "driver/i2s_std.h"
+#include "driver/gpio.h"
 #include <math.h>
 
 // ============================================================
 // Ring Buffer
 // ============================================================
-// Lock-free single-producer single-consumer ring buffer.
-// Producer: readSerial() → audioStreamWrite()
-// Consumer: audioFeedI2S() in main loop
 
 static int16_t  ringBuf[RING_BUF_SAMPLES];
 static volatile uint32_t ringWritePos = 0;
@@ -72,50 +67,64 @@ static void ringClear() {
 static bool     streaming = false;
 static bool     prefilled = false;
 static bool     draining  = false;
-static bool     chirpPlaying = false;  // Chirp synth is writing to ring buffer
+static bool     chirpPlaying = false;
 static uint32_t totalSamplesReceived = 0;
 static uint32_t underrunCount = 0;
 
+// --- New IDF I2S channel handle ---
+static i2s_chan_handle_t txHandle = NULL;
+static uint32_t currentSampleRate = AUDIO_SAMPLE_RATE;
+
 // ============================================================
-// I2S Setup
+// I2S Setup (new IDF driver)
 // ============================================================
 
 void setupAudio() {
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = AUDIO_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = I2S_DMA_BUF_COUNT,
-    .dma_buf_len = I2S_DMA_BUF_LEN,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-  };
+  i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(AUDIO_I2S_PORT, I2S_ROLE_MASTER);
+  chanCfg.dma_desc_num = I2S_DMA_BUF_COUNT;
+  chanCfg.dma_frame_num = I2S_DMA_BUF_LEN;
+  chanCfg.auto_clear = true;  // Silence on underrun (replaces tx_desc_auto_clear)
 
-  i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_BCLK_PIN,
-    .ws_io_num = I2S_WS_PIN,
-    .data_out_num = I2S_DOUT_PIN,
-    .data_in_num = I2S_PIN_NO_CHANGE,
-  };
-
-  esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+  esp_err_t err = i2s_new_channel(&chanCfg, &txHandle, NULL);
   if (err != ESP_OK) {
-    Serial.print("[audio] I2S driver install FAILED: ");
-    Serial.println(err);
+    Serial.printf("[audio] I2S channel alloc failed: %d\n", err);
     return;
   }
 
-  err = i2s_set_pin(I2S_NUM_0, &pin_config);
+  i2s_std_config_t stdCfg = {
+    .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE),
+    .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+    .gpio_cfg = {
+      .mclk = I2S_GPIO_UNUSED,
+      .bclk = (gpio_num_t)I2S_BCLK_PIN,
+      .ws = (gpio_num_t)I2S_WS_PIN,
+      .dout = (gpio_num_t)I2S_DOUT_PIN,
+      .din = I2S_GPIO_UNUSED,
+      .invert_flags = {
+        .mclk_inv = false,
+        .bclk_inv = false,
+        .ws_inv = false,
+      },
+    },
+  };
+
+  err = i2s_channel_init_std_mode(txHandle, &stdCfg);
   if (err != ESP_OK) {
-    Serial.print("[audio] I2S set pin FAILED: ");
-    Serial.println(err);
+    Serial.printf("[audio] I2S STD init failed: %d\n", err);
+    i2s_del_channel(txHandle);
+    txHandle = NULL;
     return;
   }
 
-  i2s_zero_dma_buffer(I2S_NUM_0);
+  err = i2s_channel_enable(txHandle);
+  if (err != ESP_OK) {
+    Serial.printf("[audio] I2S enable failed: %d\n", err);
+    i2s_del_channel(txHandle);
+    txHandle = NULL;
+    return;
+  }
+
+  currentSampleRate = AUDIO_SAMPLE_RATE;
 
   Serial.print("[audio] I2S ready — BCLK=GPIO");
   Serial.print((int)I2S_BCLK_PIN);
@@ -123,6 +132,17 @@ void setupAudio() {
   Serial.print((int)I2S_WS_PIN);
   Serial.print(" DOUT=GPIO");
   Serial.println((int)I2S_DOUT_PIN);
+}
+
+// Helper: change sample rate on the fly
+static void audioSetSampleRate(uint32_t rate) {
+  if (!txHandle || rate == currentSampleRate) return;
+
+  i2s_channel_disable(txHandle);
+  i2s_std_clk_config_t clkCfg = I2S_STD_CLK_DEFAULT_CONFIG(rate);
+  i2s_channel_reconfig_std_clock(txHandle, &clkCfg);
+  i2s_channel_enable(txHandle);
+  currentSampleRate = rate;
 }
 
 // ============================================================
@@ -137,9 +157,7 @@ void audioStreamBegin(uint32_t sampleRate, uint8_t bits, uint8_t channels) {
   totalSamplesReceived = 0;
   underrunCount = 0;
 
-  if (sampleRate != AUDIO_SAMPLE_RATE) {
-    i2s_set_sample_rates(I2S_NUM_0, sampleRate);
-  }
+  audioSetSampleRate(sampleRate);
 
   Serial.print("[audio] Stream begin — ");
   Serial.print(sampleRate);
@@ -168,11 +186,9 @@ bool isAudioStreaming() {
 }
 
 void audioChirpBegin() {
-  // If TTS streaming, don't interrupt — chirp will mix in
   if (!streaming && !draining) {
     ringClear();
-    // Reset I2S sample rate to chirp rate (TTS may have changed it)
-    i2s_set_sample_rates(I2S_NUM_0, CHIRP_SAMPLE_RATE);
+    audioSetSampleRate(CHIRP_SAMPLE_RATE);
   }
   chirpPlaying = true;
 }
@@ -208,41 +224,30 @@ void audioStreamWrite(const uint8_t *data, size_t len) {
 // ============================================================
 // Ring Buffer → I2S DMA
 // ============================================================
-// Called from loop(). Pushes available samples to I2S.
-//
-// Key design: use a SHORT timeout (5ms) on i2s_write so we
-// don't block the serial reader. If DMA buffers are full,
-// we return and let loop() run readSerial() to get more data.
-// The I2S DMA auto-clear plays silence on underrun so we
-// don't need to manually write silence.
 
-// Scratch buffers
 static int16_t monoChunk[I2S_DMA_BUF_LEN];
 static int16_t stereoChunk[I2S_DMA_BUF_LEN * 2];
 
 void audioFeedI2S() {
+  if (!txHandle) return;
   if (!streaming && !draining && !chirpPlaying) return;
 
-  // Wait for prefill before starting playback (not for chirps — they play immediately)
   if (streaming && !prefilled && !chirpPlaying) return;
 
   uint32_t avail = ringAvailable();
 
-  // Draining: if buffer empty, we're done
   if (draining && !chirpPlaying && avail == 0) {
     draining = false;
-    i2s_zero_dma_buffer(I2S_NUM_0);
+    // auto_clear handles silence
     Serial.println("[audio] Drain complete");
     return;
   }
 
   if (avail == 0) {
-    // Underrun while streaming — I2S auto-clear handles silence
     underrunCount++;
     return;
   }
 
-  // Read whatever we have, up to DMA buffer size
   uint32_t toRead = min((uint32_t)I2S_DMA_BUF_LEN, avail);
   uint32_t got = ringRead(monoChunk, toRead);
 
@@ -252,18 +257,12 @@ void audioFeedI2S() {
     stereoChunk[i * 2 + 1] = monoChunk[i];
   }
 
-  // ZERO timeout — never block. If DMA buffers are full, drop this
-  // chunk and try again next loop(). Blocking here starves the serial
-  // reader, causing CDC buffer overflow and byte loss = desync.
-  // With 8 DMA buffers × 256 samples = 93ms runway at 22050Hz,
-  // we'll almost always have a free buffer.
-  size_t bytesWritten;
-  i2s_write(I2S_NUM_0, stereoChunk, got * 4, &bytesWritten, 0);
+  // ZERO timeout — never block
+  size_t bytesWritten = 0;
+  i2s_channel_write(txHandle, stereoChunk, got * 4, &bytesWritten, 0);
 
-  // If DMA rejected some data, put unwritten samples back
-  uint32_t samplesWritten = bytesWritten / 4;  // stereo bytes → mono samples
+  uint32_t samplesWritten = bytesWritten / 4;
   if (samplesWritten < got) {
-    // Rewind ring buffer read position for unwritten samples
     uint32_t unwritten = got - samplesWritten;
     ringReadPos = (ringReadPos + RING_BUF_SAMPLES - unwritten) % RING_BUF_SAMPLES;
   }

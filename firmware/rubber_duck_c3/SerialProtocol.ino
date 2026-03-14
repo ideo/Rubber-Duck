@@ -86,11 +86,26 @@ void parseTextMessage(char *msg) {
       if (*end == ',') { ptr = end + 1; ch = strtoul(ptr, &end, 10); }
 
       audioStreamBegin(sr, bits, ch);
+      micSetMuted(true);   // Mute mic during TTS (speaker→mic feedback prevention)
       audioMode = true;
       binHeaderPos = 0;
       frameExpectedLen = 0;
       frameReceivedLen = 0;
       Serial.println("[serial] Entered audio mode");
+    }
+    return;
+  }
+
+  // --- Mic streaming control ---
+  // M,1 = start streaming mic audio to widget
+  // M,0 = stop streaming
+  if (source == 'M') {
+    if (msg[1] == ',' && msg[2] == '1') {
+      micStreaming = true;
+      Serial.println("[mic] Streaming ON");
+    } else if (msg[1] == ',' && msg[2] == '0') {
+      micStreaming = false;
+      Serial.println("[mic] Streaming OFF");
     }
     return;
   }
@@ -312,6 +327,7 @@ void readSerialBinary() {
           // Check for "A,0" end-of-stream sent as control frame
           if (frameBuf[0] == 'A' && frameBuf[1] == ',' && frameBuf[2] == '0') {
             audioStreamEnd();
+            micSetMuted(false);  // Unmute mic after TTS ends
             audioMode = false;
             Serial.println("[serial] Exited audio mode (A,0 control)");
           } else {
