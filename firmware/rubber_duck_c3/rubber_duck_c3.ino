@@ -216,7 +216,8 @@ void enterPermission() {
 
 void exitPermission() {
   permissionPending = false;
-  resetAmbient();
+  chirpServoOffset = 0.0f;  // Clear any stuck whistle/chirp offset
+  resetAmbient();            // Settle back from nag positions
   Serial.println("[perm] === PERMISSION RESOLVED ===");
 }
 

@@ -88,6 +88,23 @@
 #define IDLE_HOP_MAX_MS    15000
 #define IDLE_HOP_KICK      0.6f
 
+// --- Idle Cluster (bird-like micro-adjustments — matches Teensy) ---
+#define IDLE_CLUSTER_DELTA     30.0f   // ±degrees max for follow-up micro-hops
+#define IDLE_CLUSTER_MIN_DELTA 10.0f   // Minimum degrees per micro-hop (below is invisible)
+#define IDLE_CLUSTER_GAP_MIN   500     // Min ms between cluster positions
+#define IDLE_CLUSTER_GAP_MAX   1500    // Max ms between cluster positions
+
+// --- Ambient Spring Physics (nag kicks — matches Teensy) ---
+#define AMBIENT_SPRING_K       0.03f   // Half stiffness of conscious spring
+#define AMBIENT_SPRING_DAMPING 0.88f   // More damped = dreamier motion
+
+// --- Ambient Lerp (idle hops — matches Teensy) ---
+#define AMBIENT_LERP_RATE      0.25f   // Fraction per frame
+
+// --- TTS Talking Head Animation ---
+#define TTS_RETARGET_MS        300     // ms between ambient retargets while speaking
+#define TTS_HOP_RANGE          8.0f    // ±degrees for talking head wobble
+
 // --- Chirp Synthesis ---
 #define CHIRP_BASE_FREQ      280     // Hz — center of sentiment range
 #define CHIRP_DURATION       250     // ms — single chirp
@@ -153,6 +170,8 @@ extern float servoOscillationAmp;
 extern float servoOscillationPhase;
 extern float ambientCurrentOffset;
 extern float ambientTargetOffset;
+extern float ambientVelocity;
+extern bool  ambientSpringActive;
 extern unsigned long lastEvalTime;
 extern int   demoStep;
 

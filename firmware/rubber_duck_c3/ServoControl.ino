@@ -32,10 +32,17 @@ unsigned long lastEvalTime = 0;
 
 // --- Idle Heartbeat ---
 unsigned long nextIdleHop = 0;
+int   idleClusterRemaining = 0;      // Micro-hops left in current cluster
+unsigned long nextClusterHop = 0;    // When to fire next micro-hop
 
-// --- Ambient Layer ---
+// --- Ambient (subconscious) Layer ---
 float ambientCurrentOffset = 0.0;
 float ambientTargetOffset  = 0.0;
+float ambientVelocity      = 0.0;
+bool  ambientSpringActive  = false;  // true = spring (nags), false = lerp (idle)
+
+// --- TTS Talking Animation ---
+unsigned long lastTTSRetarget = 0;
 
 // --- Calibration ---
 bool  calibrationMode = false;
@@ -96,6 +103,8 @@ void setServoTarget(ServoTarget &target) {
 // ============================================================
 void updateServo() {
   unsigned long now = millis();
+  bool chirpBusy = (chirpServoOffset != 0.0f);  // Chirp playing
+  bool ttsPlaying = isAudioStreaming();
 
   // Expression decay: return to center after hold period
   if ((now - lastEvalTime) > EXPRESSION_HOLD_MS && fabs(servoTargetAngle) > 0.5f) {
@@ -104,19 +113,65 @@ void updateServo() {
     servoVelocity += direction * EXPRESSION_RETURN_KICK;
   }
 
-  // Idle heartbeat
-  if (!permissionPending &&
-      (now - lastEvalTime) > EXPRESSION_HOLD_MS && now > nextIdleHop) {
-    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;
-    nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
+  // Cluster micro-hops: tight follow-up positions (bird-like "choosing what to look at")
+  if (idleClusterRemaining > 0 && now > nextClusterHop &&
+      !permissionPending && !chirpBusy && !ttsPlaying) {
+    float raw = ((float)random(-100, 101) / 100.0f) * IDLE_CLUSTER_DELTA;
+    float delta = (raw >= 0) ? max(raw, IDLE_CLUSTER_MIN_DELTA) : min(raw, -IDLE_CLUSTER_MIN_DELTA);
+    // Allow follow-ups to swing wider than initial hop range so the full delta is felt
+    ambientTargetOffset = constrain(ambientTargetOffset + delta, -(IDLE_HOP_RANGE + IDLE_CLUSTER_DELTA), IDLE_HOP_RANGE + IDLE_CLUSTER_DELTA);
+    ambientVelocity = 0;
+    ambientSpringActive = false;
+    idleClusterRemaining--;
+
+    Serial.print("[idle] follow-up delta=");
+    Serial.print(delta, 1);
+    Serial.print(" target=");
+    Serial.print(ambientTargetOffset, 1);
+    Serial.print(" remaining=");
+    Serial.println(idleClusterRemaining);
+    if (idleClusterRemaining > 0) {
+      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+    }
   }
 
-  // Spring physics
+  // Idle heartbeat: start a new hop cluster
+  if (idleClusterRemaining == 0 && !permissionPending && !chirpBusy && !ttsPlaying &&
+      (now - lastEvalTime) > EXPRESSION_HOLD_MS && now > nextIdleHop) {
+    // Pick cluster size: 50% single, 40% double, 10% triple
+    int roll = random(100);
+    int clusterSize = (roll < 50) ? 1 : (roll < 90) ? 2 : 3;
+
+    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;
+    ambientVelocity = 0;
+    ambientSpringActive = false;
+
+    idleClusterRemaining = clusterSize - 1;
+    if (idleClusterRemaining > 0) {
+      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+    }
+
+    nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
+
+    Serial.print("[idle] hop cluster=");
+    Serial.print(clusterSize);
+    Serial.print(" target=");
+    Serial.println(ambientTargetOffset, 1);
+  }
+
+  // TTS talking head animation: retarget ambient while speaking
+  if (ttsPlaying && (now - lastTTSRetarget) >= TTS_RETARGET_MS) {
+    lastTTSRetarget = now;
+    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * TTS_HOP_RANGE;
+    ambientSpringActive = false;
+  }
+
+  // Spring physics: pull toward target (conscious layer)
   float diff = servoTargetAngle - servoCurrentAngle;
   servoVelocity += diff * SPRING_K;
   servoVelocity *= SPRING_DAMPING;
 
-  // Risk oscillation
+  // Risk oscillation overlay
   if (servoOscillationAmp > 0.1f) {
     servoOscillationPhase += 0.3f;
     servoVelocity += sin(servoOscillationPhase) * servoOscillationAmp * 0.05f;
@@ -125,10 +180,17 @@ void updateServo() {
 
   servoCurrentAngle += servoVelocity;
 
-  // Ambient layer: simple lerp
-  ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * 0.15f;
+  // Ambient layer: spring (nag kicks) or simple ease (idle hops)
+  if (ambientSpringActive) {
+    float ambientDiff = ambientTargetOffset - ambientCurrentOffset;
+    ambientVelocity += ambientDiff * AMBIENT_SPRING_K;
+    ambientVelocity *= AMBIENT_SPRING_DAMPING;
+    ambientCurrentOffset += ambientVelocity;
+  } else {
+    ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * AMBIENT_LERP_RATE;
+  }
 
-  // Write to servo
+  // Write to servo — layers: conscious + ambient + chirp servo kick
   int pos = (int)(SERVO_CENTER + servoCurrentAngle + ambientCurrentOffset + chirpServoOffset);
   pos = constrain(pos, SERVO_MIN, SERVO_MAX);
   servoWriteAngle(pos);
@@ -216,8 +278,11 @@ void snapToCenter() {
   servoCurrentAngle = 0;
   servoTargetAngle = 0;
   servoVelocity = 0;
+  servoOscillationAmp = 0;
   ambientCurrentOffset = 0;
   ambientTargetOffset = 0;
+  ambientVelocity = 0;
+  ambientSpringActive = false;
   demoStep = 0;
 
   if (calibrationMode) {
@@ -232,6 +297,8 @@ void snapToCenter() {
 void resetAmbient() {
   ambientCurrentOffset = 0;
   ambientTargetOffset = 0;
+  ambientVelocity = 0;
+  ambientSpringActive = false;
 }
 
 void triggerDemoPreset() {
@@ -247,6 +314,13 @@ void triggerDemoPreset() {
 // Stubs when servo is disabled
 float servoCurrentAngle = 0;
 float servoTargetAngle = 0;
+float servoVelocity = 0;
+float servoOscillationAmp = 0;
+float servoOscillationPhase = 0;
+float ambientCurrentOffset = 0;
+float ambientTargetOffset = 0;
+float ambientVelocity = 0;
+bool  ambientSpringActive = false;
 bool  calibrationMode = false;
 int   demoStep = 0;
 unsigned long lastEvalTime = 0;

@@ -303,13 +303,14 @@ void playPermissionChirp() {
 
   startChirpInternal(root, false);  // sawtooth
 
-  // Servo nag kick — snap to random offset (matches Teensy)
+  // Servo nag kick — snap to random offset with spring overshoot (matches Teensy)
   float nagOffset = PERMISSION_NAG_MIN +
     ((float)random(0, 101) / 100.0f) * (PERMISSION_NAG_MAX - PERMISSION_NAG_MIN);
   if (random(2) == 0) nagOffset = -nagOffset;
   ambientTargetOffset = nagOffset;
+  ambientSpringActive = true;  // Nag kicks use spring for overshoot
   float nagDir = (nagOffset > ambientCurrentOffset) ? 1.0f : -1.0f;
-  servoVelocity += nagDir * PERMISSION_NAG_KICK;
+  ambientVelocity += nagDir * PERMISSION_NAG_KICK;
   servoOscillationAmp = 4.0f;
   servoOscillationPhase = 0.0f;
 
