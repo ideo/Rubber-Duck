@@ -12,16 +12,18 @@
 // Board: Seeed XIAO ESP32-C3 or XIAO ESP32-S3 Sense
 //        (select the correct board in Arduino IDE)
 //
-// Wiring:
+// Wiring (S3 with ICS-43434 I2S mic):
 //   D0  → Servo signal
-//   D1  → (free)
+//   D1  → ICS-43434 SD (data out)
 //   D2  → MAX98357 BCLK
 //   D3  → MAX98357 LRC (WS)
 //   D4  → MAX98357 DIN
-//   D5  → SPW2430 mic DC output
+//   D5  → (free — was analog mic)
 //   D8  → Button (internal pullup)
-//   3V3 → MAX98357 VIN + SD (enable) + SPW2430 3V
-//   GND → MAX98357 GND + Servo GND
+//   D9  → ICS-43434 SCK (bit clock)
+//   D10 → ICS-43434 WS (word select)
+//   3V3 → MAX98357 VIN + SD (enable) + ICS-43434 VDD
+//   GND → MAX98357 GND + Servo GND + ICS-43434 GND + L/R
 //   5V  → Servo VCC (if available, otherwise 3V3)
 // ============================================================
 
@@ -61,7 +63,7 @@ void setup() {
   Serial.println();
   Serial.println("=== RUBBER DUCK C3 ===");
 
-  // Mic must init before audio on S3 — PDM mic needs I2S_NUM_0,
+  // Mic must init before audio on S3 — I2S mic takes I2S_NUM_0,
   // speaker moves to I2S_NUM_1. On C3, mic uses ADC (no I2S conflict).
   #if ENABLE_MIC
     setupMic();

@@ -28,8 +28,8 @@ struct PermissionVoiceGate {
     var lastPrompt = ""
 
     // Word sets for matching
-    private let affirmatives: Set<String> = ["yes", "yeah", "yep", "sure", "allow", "approve", "okay", "proceed"]
-    private let negatives: Set<String> = ["no", "nope", "deny", "block", "stop", "cancel"]
+    private let affirmatives: Set<String> = ["yes", "yeah", "yep", "yup", "sure", "allow", "approve", "okay", "proceed", "go", "do", "accepted", "affirmative", "correct", "right", "fine", "granted"]
+    private let negatives: Set<String> = ["no", "nope", "deny", "block", "stop", "cancel", "reject", "refused", "negative", "nah", "pass", "skip"]
     private let repeatWords: Set<String> = ["repeat", "what", "again", "options", "huh"]
     private let ordinalWords = ["first", "second", "third", "fourth"]
     private let numberWords = ["one", "two", "three", "four"]

@@ -17,17 +17,37 @@
 #define ENABLE_AUDIO       true   // I2S speaker output + serial audio streaming
 #define ENABLE_MIC         true   // ADC mic capture + serial streaming to widget
 
-// --- Mic Config (SPW2430 analog MEMS mic) ---
-// DC output biased at ~VDD/2 (1.65V). ADC reads 0-3.3V.
-// S3: D5=GPIO6=A5. C3: move button to D5, use D1=GPIO3=ADC1_CH3.
-#define MIC_PIN            D5      // Analog input pin
+// --- Mic Type ---
+// MIC_TYPE selects the capture path:
+//   0 = ADC analog mic (C3 / SPW2430)
+//   1 = PDM onboard mic (S3 Sense — GPIO42 CLK, GPIO41 DATA)
+//   2 = I2S external mic (ICS-43434 or similar)
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  #define MIC_TYPE           2       // I2S external mic (ICS-43434)
+#else
+  #define MIC_TYPE           0       // ADC analog mic (C3)
+#endif
+
+// --- Mic Config (shared) ---
 #define MIC_SAMPLE_RATE    16000   // Hz — matches STT expectations
 #define MIC_FRAME_SAMPLES  256     // Samples per serial frame (16ms at 16kHz)
-#define MIC_DC_OFFSET      2048    // 12-bit ADC midpoint (VDD/2)
 #define MIC_FRAME_TAG      0x04    // Serial frame type for mic audio
 
+// --- ADC Mic Config (MIC_TYPE 0) ---
+// SPW2430 analog MEMS mic. DC output biased at ~VDD/2 (1.65V).
+// S3: D5=GPIO6=A5. C3: move button to D5, use D1=GPIO3=ADC1_CH3.
+#define MIC_PIN            D5      // Analog input pin
+#define MIC_DC_OFFSET      2048    // 12-bit ADC midpoint (VDD/2)
+
+// --- I2S Mic Config (MIC_TYPE 2) ---
+// Adafruit ICS-43434 I2S MEMS mic. 24-bit, wired to free XIAO pins.
+// L/R pin tied to GND = left channel.
+#define MIC_I2S_SCK        D9      // GPIO8 — bit clock
+#define MIC_I2S_WS         D10     // GPIO9 — word select
+#define MIC_I2S_SD         D1      // GPIO2 — serial data in
+
 // --- I2S Port Assignment ---
-// S3 has 2 I2S ports. PDM mic needs I2S_NUM_0, so speaker goes on I2S_NUM_1.
+// S3 has 2 I2S ports. I2S/PDM mic takes I2S_NUM_0, speaker goes on I2S_NUM_1.
 // C3 has 1 I2S port. Speaker uses I2S_NUM_0, mic uses ADC timer (no I2S).
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
   #define AUDIO_I2S_PORT   I2S_NUM_1

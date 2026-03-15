@@ -292,6 +292,7 @@ class SpeechService: ObservableObject {
         let prompt = "\(label). Allow?"
         permissionGate.startWaiting(optionCount: options.count, prompt: prompt)
         speak(prompt)
+        restartAfterTTS()  // Ensure STT is fresh after the prompt finishes
     }
 
     /// Clear the voice permission gate (permission resolved externally — CLI, timeout, etc.)
@@ -401,14 +402,18 @@ class SpeechService: ObservableObject {
             case .allow:
                 speak(["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!)
                 onPermissionResponse?(0)
+                restartAfterTTS()
             case .deny:
                 speak(["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!)
                 onPermissionResponse?(-1)
+                restartAfterTTS()
             case .selectOption(let index):
                 speak(["Got it, option \(index).", "Going with \(index).", "Option \(index) it is."].randomElement()!)
                 onPermissionResponse?(index)
+                restartAfterTTS()
             case .repeatPrompt:
                 speak(permissionGate.lastPrompt)
+                restartAfterTTS()
             case .noMatch:
                 break
             }
