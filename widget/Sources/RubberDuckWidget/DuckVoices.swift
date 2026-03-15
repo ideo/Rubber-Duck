@@ -13,12 +13,16 @@ struct DuckVoice {
 
 enum DuckVoices {
 
+    // MARK: - Named voices (used as direct references instead of string lookups)
+
+    static let superstar = DuckVoice(label: "Superstar", sayName: "Superstar", voiceId: "com.apple.speech.synthesis.voice.Princess")
+
     // Main — the duck's best voices, top of the menu
     static let main: [DuckVoice] = [
         DuckVoice(label: "Boing", sayName: "Boing", voiceId: "com.apple.speech.synthesis.voice.Boing"),
         DuckVoice(label: "Ralph", sayName: "Ralph", voiceId: "com.apple.speech.synthesis.voice.Ralph"),
         DuckVoice(label: "Kathy", sayName: "Kathy", voiceId: "com.apple.speech.synthesis.voice.Kathy"),
-        DuckVoice(label: "Superstar", sayName: "Superstar", voiceId: "com.apple.speech.synthesis.voice.Princess"),
+        superstar,
         DuckVoice(label: "Samantha", sayName: "Samantha", voiceId: "com.apple.voice.compact.en-US.Samantha"),
     ]
 
@@ -57,9 +61,21 @@ enum DuckVoices {
     /// All voices in menu order.
     static let all: [DuckVoice] = main + classic + specialFX + british
 
+    // MARK: - O(1) Lookups
+
+    /// Dictionary for O(1) lookup by sayName.
+    private static let sayNameMap: [String: DuckVoice] = {
+        Dictionary(all.map { ($0.sayName, $0) }, uniquingKeysWith: { first, _ in first })
+    }()
+
     /// Look up the AVSpeechSynthesisVoice identifier for a given sayName.
     static func voiceId(for sayName: String) -> String? {
-        all.first { $0.sayName == sayName }?.voiceId
+        sayNameMap[sayName]?.voiceId
+    }
+
+    /// Look up a DuckVoice by sayName.
+    static func voice(for sayName: String) -> DuckVoice? {
+        sayNameMap[sayName]
     }
 
     // MARK: - Wildcard Mode
@@ -73,36 +89,47 @@ enum DuckVoices {
     }
 
     /// Default voice when Wildcard can't pick (or AI returns unknown key).
-    static let wildcardDefault = main.first { $0.label == "Superstar" }!
+    static let wildcardDefault = superstar
 
-    /// Map AI voice keys → DuckVoice entries.
-    /// Keys match what we tell the AI in the eval prompt.
-    private static let wildcardKeyMap: [String: DuckVoice] = {
-        var map: [String: DuckVoice] = [:]
-        let pairs: [(String, String)] = [
-            ("superstar", "Superstar"),
-            ("ralph", "Ralph"),
-            ("bad_news", "Bad News"),
-            ("good_news", "Good News"),
-            ("cellos", "Cellos"),
-            ("organ", "Organ"),
-            ("whisper", "Whisper"),
-            ("trinoids", "Trinoids"),
-            ("zarvox", "Zarvox"),
-            ("jester", "Jester"),
-            ("bubbles", "Bubbles"),
+    /// Type-safe voice keys for AI wildcard selection.
+    /// Raw values match the keys in the eval prompt and JSON response.
+    enum WildcardKey: String, CaseIterable {
+        case superstar
+        case ralph
+        case badNews = "bad_news"
+        case goodNews = "good_news"
+        case cellos
+        case organ
+        case whisper
+        case trinoids
+        case zarvox
+        case jester
+        case bubbles
+    }
+
+    /// Map WildcardKey → DuckVoice.
+    private static let wildcardKeyMap: [WildcardKey: DuckVoice] = {
+        var map: [WildcardKey: DuckVoice] = [:]
+        let pairs: [(WildcardKey, String)] = [
+            (.superstar, "Superstar"), (.ralph, "Ralph"),
+            (.badNews, "Bad News"), (.goodNews, "Good News"),
+            (.cellos, "Cellos"), (.organ, "Organ"),
+            (.whisper, "Whisper"), (.trinoids, "Trinoids"),
+            (.zarvox, "Zarvox"), (.jester, "Jester"),
+            (.bubbles, "Bubbles"),
         ]
-        for (key, label) in pairs {
-            if let voice = all.first(where: { $0.label == label }) {
+        for (key, sayName) in pairs {
+            if let voice = sayNameMap[sayName] {
                 map[key] = voice
             }
         }
         return map
     }()
 
-    /// Resolve an AI-returned voice key to a DuckVoice. Falls back to Superstar.
+    /// Resolve an AI-returned voice key string to a DuckVoice. Falls back to Superstar.
     static func wildcardVoice(for key: String) -> DuckVoice {
-        wildcardKeyMap[key] ?? wildcardDefault
+        guard let wk = WildcardKey(rawValue: key) else { return wildcardDefault }
+        return wildcardKeyMap[wk] ?? wildcardDefault
     }
 
     /// Resolve a persisted sayName to a real engine voice name.

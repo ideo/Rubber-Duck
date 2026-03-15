@@ -51,21 +51,6 @@ const int calibrationAngles[] = { SERVO_CENTER, SERVO_MIN, SERVO_MAX, SERVO_CENT
 const char* calibrationLabels[] = { "CENTER", "MIN", "MAX", "CENTER" };
 #define CALIBRATION_STEPS 4
 
-// --- Demo Presets ---
-const EvalScores demoPresets[] = {
-  {  0.70,  0.95,  0.50,  0.90, -0.30, 'U', true },  // Impressed
-  {  0.95,  0.50,  0.90,  0.60,  0.20, 'U', true },  // Excited
-  {  0.10, -0.30,  0.20, -0.10,  0.50, 'U', true },  // Skeptical
-  {  0.30,  0.20,  0.60,  0.10,  0.90, 'U', true },  // Nervous
-  { -0.60, -0.95,  0.20, -0.80,  0.85, 'U', true },  // Disgusted
-  { -0.20,  0.10, -0.80,  0.00, -0.10, 'U', true },  // Bored
-};
-const char* demoLabels[] = {
-  "IMPRESSED", "EXCITED", "SKEPTICAL", "NERVOUS", "DISGUSTED", "BORED"
-};
-#define NUM_DEMO_PRESETS 6
-int demoStep = 0;
-
 // ============================================================
 // REDUCER: scores → servo target
 // ============================================================
@@ -301,14 +286,6 @@ void resetAmbient() {
   ambientSpringActive = false;
 }
 
-void triggerDemoPreset() {
-  latestScores = demoPresets[demoStep];
-  newEvalAvailable = true;
-  Serial.print("[demo] ");
-  Serial.println(demoLabels[demoStep]);
-  demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
-}
-
 #else
 
 // Stubs when servo is disabled
@@ -322,7 +299,6 @@ float ambientTargetOffset = 0;
 float ambientVelocity = 0;
 bool  ambientSpringActive = false;
 bool  calibrationMode = false;
-int   demoStep = 0;
 unsigned long lastEvalTime = 0;
 
 void setupServo() {}
@@ -337,18 +313,25 @@ void setServoAngleDirect(int angle) {}
 void snapToCenter() {}
 void resetAmbient() {}
 
+#endif // ENABLE_SERVO
+
+// ============================================================
+// Demo Presets (shared — used with or without servo)
+// ============================================================
+
 const EvalScores demoPresets[] = {
-  {  0.70,  0.95,  0.50,  0.90, -0.30, 'U', true },
-  {  0.95,  0.50,  0.90,  0.60,  0.20, 'U', true },
-  {  0.10, -0.30,  0.20, -0.10,  0.50, 'U', true },
-  {  0.30,  0.20,  0.60,  0.10,  0.90, 'U', true },
-  { -0.60, -0.95,  0.20, -0.80,  0.85, 'U', true },
-  { -0.20,  0.10, -0.80,  0.00, -0.10, 'U', true },
+  {  0.70,  0.95,  0.50,  0.90, -0.30, 'U', true },  // Impressed
+  {  0.95,  0.50,  0.90,  0.60,  0.20, 'U', true },  // Excited
+  {  0.10, -0.30,  0.20, -0.10,  0.50, 'U', true },  // Skeptical
+  {  0.30,  0.20,  0.60,  0.10,  0.90, 'U', true },  // Nervous
+  { -0.60, -0.95,  0.20, -0.80,  0.85, 'U', true },  // Disgusted
+  { -0.20,  0.10, -0.80,  0.00, -0.10, 'U', true },  // Bored
 };
 const char* demoLabels[] = {
   "IMPRESSED", "EXCITED", "SKEPTICAL", "NERVOUS", "DISGUSTED", "BORED"
 };
 #define NUM_DEMO_PRESETS 6
+int demoStep = 0;
 
 void triggerDemoPreset() {
   latestScores = demoPresets[demoStep];
@@ -357,5 +340,3 @@ void triggerDemoPreset() {
   Serial.println(demoLabels[demoStep]);
   demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
 }
-
-#endif // ENABLE_SERVO

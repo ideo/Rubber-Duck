@@ -77,7 +77,6 @@
 // Outside audio mode: plain text, newline-terminated (same as Teensy).
 #define FRAME_MODE_AUDIO   0x01
 #define FRAME_MODE_CONTROL 0x02
-#define FRAME_MODE_END     0x03    // End audio stream (no payload)
 #define FRAME_MAX_BYTES    1200    // Max single frame payload (keep under CDC buffer)
 
 // --- Servo Config (LEDC PWM) ---

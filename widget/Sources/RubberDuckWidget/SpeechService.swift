@@ -87,17 +87,20 @@ class SpeechService: ObservableObject {
         case esp32Serial    // ESP32 — SerialMicEngine + SerialTTSEngine via binary frames
     }
 
-    // Components — Teensy/local path (always available)
+    // Concrete engines (kept for device-specific operations like setTeensyDevice)
     private let stt: STTEngine
     private let tts: TTSEngine
-    private var wakeWordProcessor = WakeWordProcessor()
-    private var permissionGate = PermissionVoiceGate()
-    private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
-
-    // Components — ESP32 serial path (created when transport is set)
     private var serialMic: SerialMicEngine?
     private var serialTTS: SerialTTSEngine?
     private weak var serialTransport: SerialTransport?
+
+    // Active backend — protocol dispatch replaces per-method switch statements
+    private var activeSTT: any STTBackend
+    private var activeTTS: any TTSBackend
+
+    private var wakeWordProcessor = WakeWordProcessor()
+    private var permissionGate = PermissionVoiceGate()
+    private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
     // Track which path is active
     private var audioPath: AudioPath = .local
@@ -110,14 +113,11 @@ class SpeechService: ObservableObject {
     init() {
         stt = STTEngine()
         tts = TTSEngine()
+        activeSTT = stt
+        activeTTS = tts
 
         // Sync persisted voice to TTSEngine (didSet doesn't fire on init).
         tts.voice = DuckVoices.resolvedSayName(for: ttsVoice)
-
-        // Now that self is fully initialized, wire log + callbacks
-        let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
-        stt.log = logFn
-        tts.log = logFn
 
         // Wire STT transcripts to our processing pipeline
         stt.onTranscript = { [weak self] transcript, isFinal in
@@ -147,17 +147,13 @@ class SpeechService: ObservableObject {
     func setSerialTransport(_ transport: SerialTransport) {
         self.serialTransport = transport
 
-        let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
-
-        // Create serial TTS engine
+        // Create serial TTS engine — resolve wildcard sentinel to real voice name
         let sTTS = SerialTTSEngine(transport: transport)
-        sTTS.voice = ttsVoice
-        sTTS.log = logFn
+        sTTS.voice = DuckVoices.resolvedSayName(for: ttsVoice)
         self.serialTTS = sTTS
 
         // Create serial mic engine — wire transcripts to same pipeline
         let sMic = SerialMicEngine(transport: transport)
-        sMic.log = logFn
         sMic.onTranscript = { [weak self] transcript, isFinal in
             Task { @MainActor in
                 self?.processTranscript(transcript, isFinal: isFinal)
@@ -189,7 +185,7 @@ class SpeechService: ObservableObject {
         }
     }
 
-    /// Switch to a new audio path, restarting listening if needed.
+    /// Switch to a new audio path, swapping active backends and restarting listening.
     private func switchAudioPath(_ newPath: AudioPath) {
         guard newPath != audioPath else { return }
         let wasListening = isListening
@@ -200,6 +196,16 @@ class SpeechService: ObservableObject {
         stopListening()
 
         audioPath = newPath
+
+        // Swap active backends
+        switch newPath {
+        case .esp32Serial:
+            if let mic = serialMic { activeSTT = mic }
+            if let ttsEngine = serialTTS { activeTTS = ttsEngine }
+        case .teensy, .local:
+            activeSTT = stt
+            activeTTS = tts
+        }
 
         // Restart on the new path if we were listening
         if wasListening {
@@ -260,18 +266,8 @@ class SpeechService: ObservableObject {
             return
         }
 
-        switch audioPath {
-        case .esp32Serial:
-            guard let mic = serialMic else {
-                log("[speech] Serial mic engine not available")
-                return
-            }
-            mic.start()
-            isListening = mic.isListening
-        case .teensy, .local:
-            stt.start()
-            isListening = stt.isListening
-        }
+        activeSTT.start()
+        isListening = activeSTT.isListening
 
         if isListening {
             log("[speech] Listening via \(audioPath) for \"\(wakeWord)\"...")
@@ -279,31 +275,16 @@ class SpeechService: ObservableObject {
     }
 
     func stopListening() {
-        switch audioPath {
-        case .esp32Serial:
-            serialMic?.stop()
-        case .teensy, .local:
-            stt.stop()
-        }
+        activeSTT.stop()
         isListening = false
     }
 
     func speak(_ text: String, skipChirpWait: Bool = false) {
-        switch audioPath {
-        case .esp32Serial:
-            serialTTS?.speak(text, skipChirpWait: skipChirpWait)
-        case .teensy, .local:
-            tts.speak(text)
-        }
+        activeTTS.speak(text, skipChirpWait: skipChirpWait)
     }
 
     func stopSpeaking() {
-        switch audioPath {
-        case .esp32Serial:
-            serialTTS?.stop()
-        case .teensy, .local:
-            tts.stop()
-        }
+        activeTTS.stop()
     }
 
     func askPermission(toolName: String, summary: String = "", options: [String] = []) {
@@ -455,7 +436,7 @@ class SpeechService: ObservableObject {
                     self.speak(["Hmm?", "Yeah?", "What's up?", "I'm here."].randomElement()!)
                     self.wakeWordProcessor.reset()
                     self.lastHeard = ""
-                    self.stt.resetRestartAttempts()
+                    self.activeSTT.resetRestartAttempts()
                     self.restartListening()
                 }
             }
@@ -506,33 +487,19 @@ class SpeechService: ObservableObject {
 
     private func restartAfterTTS() {
         Task {
-            // Wait for whichever TTS engine is active to finish
-            switch audioPath {
-            case .esp32Serial:
-                while serialTTS?.isMuted == true {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-                serialMic?.resetRestartAttempts()
-            case .teensy, .local:
-                while tts.isMuted {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-                stt.resetRestartAttempts()
+            // Wait for the active TTS engine to finish
+            while activeTTS.isMuted {
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }
+            activeSTT.resetRestartAttempts()
             self.startListening()
         }
     }
 
     private func restartListening() {
         stopListening()
-        switch audioPath {
-        case .esp32Serial:
-            serialMic?.restart()
-            isListening = serialMic?.isListening ?? false
-        case .teensy, .local:
-            stt.restart()
-            isListening = stt.isListening
-        }
+        activeSTT.restart()
+        isListening = activeSTT.isListening
     }
 
     // MARK: - Logging

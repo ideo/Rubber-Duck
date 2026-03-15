@@ -35,6 +35,7 @@ class SerialTransport: DeviceTransport {
     private var fileDescriptor: Int32 = -1
     private var reconnectTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
+    private var devWatchSource: DispatchSourceFileSystemObject?
 
     // 921600 nominal — USB CDC ignores baud but this signals fast link to serial monitors.
     // Teensy CDC also ignores baud, so this is safe for both boards.
@@ -43,6 +44,7 @@ class SerialTransport: DeviceTransport {
     deinit {
         reconnectTask?.cancel()
         readTask?.cancel()
+        devWatchSource?.cancel()
         if fileDescriptor >= 0 {
             close(fileDescriptor)
         }
@@ -103,14 +105,39 @@ class SerialTransport: DeviceTransport {
         writeBytes(frame)
     }
 
-    /// Start auto-reconnection polling.
+    /// Start auto-reconnection using /dev directory watch.
+    /// When a USB device is plugged in, /dev changes and we attempt connection.
+    /// Falls back to 5s polling if the directory watch can't be created.
     func startReconnectLoop() {
+        // Initial connection attempt
+        if !isConnected { connect() }
+
+        // Watch /dev for changes (device plug/unplug)
+        let devFD = open("/dev", O_EVTONLY)
+        if devFD >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: devFD,
+                eventMask: .write,
+                queue: .global(qos: .utility)
+            )
+            source.setEventHandler { [weak self] in
+                guard let self = self, !self.isConnected else { return }
+                // Small delay to let the kernel finish creating the device node
+                Thread.sleep(forTimeInterval: 0.3)
+                self.connect()
+            }
+            source.setCancelHandler { close(devFD) }
+            source.resume()
+            devWatchSource = source
+        }
+
+        // Fallback polling at a relaxed interval (covers edge cases)
         reconnectTask = Task {
             while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5s
                 if !self.isConnected {
                     self.connect()
                 }
-                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
             }
         }
     }

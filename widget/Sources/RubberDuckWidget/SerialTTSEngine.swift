@@ -19,7 +19,7 @@ class SerialTTSEngine {
     private var streamingTask: Task<Void, Never>?
     private var isStopping = false
 
-    var log: ((String) -> Void)?
+    private func log(_ msg: String) { DuckLog.log(msg) }
 
     init(transport: SerialTransport) {
         self.transport = transport
@@ -29,7 +29,7 @@ class SerialTTSEngine {
     /// Set `skipChirpWait` to true when no chirp was triggered (e.g. voice preview).
     func speak(_ text: String, skipChirpWait: Bool = false) {
         guard !text.isEmpty, let transport = transport else { return }
-        log?("[serial-tts] \(text)")
+        log("[serial-tts] \(text)")
 
         stop()
 
@@ -52,7 +52,6 @@ class SerialTTSEngine {
         // Audio mode entry happens in the streaming task after a delay.
 
         let g = gate
-        let logFn = log
         let transportRef = transport
 
         let engine = self
@@ -62,7 +61,7 @@ class SerialTTSEngine {
             // The firmware sends "K\n" when the chirp completes.
             // Timeout after 3s in case no chirp was triggered or signal is missed.
             if shouldWaitForChirp {
-                await SerialTTSEngine.waitForChirpDone(transport: transportRef, log: logFn)
+                await SerialTTSEngine.waitForChirpDone(transport: transportRef)
             }
             guard !Task.isCancelled else {
                 await MainActor.run { engine.sendEndOfStream() }
@@ -132,7 +131,7 @@ class SerialTTSEngine {
                 }
             }
 
-            logFn?("[serial-tts] Streamed \(totalSamplesSent) samples")
+            DuckLog.log("[serial-tts] Streamed \(totalSamplesSent) samples")
 
             // End audio mode
             await MainActor.run { engine.sendEndOfStream() }
@@ -160,7 +159,7 @@ class SerialTTSEngine {
 
     /// Wait for the firmware's chirp-complete signal ("K\n") before entering audio mode.
     /// Returns when the signal arrives, or after 3s timeout.
-    private nonisolated static func waitForChirpDone(transport: SerialTransport, log: ((String) -> Void)?) async {
+    private nonisolated static func waitForChirpDone(transport: SerialTransport) async {
         let previousCallback = transport.onChirpDone
 
         // Use an actor-isolated flag to safely coordinate the callback and timeout.
@@ -197,9 +196,9 @@ class SerialTTSEngine {
         transport.onChirpDone = previousCallback
 
         if gotSignal {
-            log?("[serial-tts] Chirp done, entering audio mode")
+            DuckLog.log("[serial-tts] Chirp done, entering audio mode")
         } else {
-            log?("[serial-tts] Chirp wait timed out (3s), proceeding")
+            DuckLog.log("[serial-tts] Chirp wait timed out (3s), proceeding")
         }
     }
 

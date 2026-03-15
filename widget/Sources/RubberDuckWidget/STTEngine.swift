@@ -27,14 +27,16 @@ class STTEngine: ObservableObject {
     private var teensyDeviceID: AudioDeviceID?
 
     // Restart logic
-    private var restartAttempts = 0
-    private let maxRestartAttempts = 5
-    private var recognitionWatchdog: Task<Void, Never>?
+    private lazy var restartController: RecognitionRestartController = {
+        let rc = RecognitionRestartController(label: "stt")
+        rc.onRestart = { [weak self] in self?.start() }
+        return rc
+    }()
 
     // Mic mute gate — owned by TTSEngine, shared here
     private var ttsGate: TTSGate?
 
-    var log: ((String) -> Void)?
+    private func log(_ msg: String) { DuckLog.log(msg) }
 
     /// Set the TTSGate so the audio tap can mute during TTS playback.
     func setTTSGate(_ gate: TTSGate) {
@@ -55,7 +57,7 @@ class STTEngine: ObservableObject {
 
     func start() {
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            log?("[stt] Speech recognizer unavailable")
+            log("[stt] Speech recognizer unavailable")
             lastError = "Speech recognizer unavailable"
             return
         }
@@ -72,7 +74,7 @@ class STTEngine: ObservableObject {
 
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let request = recognitionRequest else {
-            log?("[stt] Failed to create recognition request")
+            log("[stt] Failed to create recognition request")
             return
         }
 
@@ -81,10 +83,10 @@ class STTEngine: ObservableObject {
         let inputNode = audioEngine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
-        log?("[stt] Audio format: \(recordingFormat.sampleRate)Hz, \(recordingFormat.channelCount)ch")
+        log("[stt] Audio format: \(recordingFormat.sampleRate)Hz, \(recordingFormat.channelCount)ch")
 
         guard recordingFormat.sampleRate > 0 else {
-            log?("[stt] Invalid audio format (0 sample rate). Check mic connection.")
+            log("[stt] Invalid audio format (0 sample rate). Check mic connection.")
             lastError = "Invalid audio format"
             return
         }
@@ -102,15 +104,15 @@ class STTEngine: ObservableObject {
                 guard let self = self, self.isListening else { return }
 
                 // Pet the watchdog — recognition is still alive
-                self.resetWatchdog()
+                self.restartController.resetWatchdog(isListening: self.isListening)
 
                 if let result = result {
                     let transcript = result.bestTranscription.formattedString
                     self.onTranscript?(transcript, result.isFinal)
 
                     if result.isFinal {
-                        self.log?("[stt] Final, restarting...")
-                        self.restartAttempts = 0
+                        self.log("[stt] Final, restarting...")
+                        self.restartController.resetAttempts()
                         self.restart()
                     }
                 }
@@ -119,7 +121,7 @@ class STTEngine: ObservableObject {
                     let msg = error.localizedDescription
                     // Don't log cancellation errors — they're expected after sendVoiceCommand
                     if !msg.contains("canceled") {
-                        self.log?("[stt] Recognition error: \(msg)")
+                        self.log("[stt] Recognition error: \(msg)")
                     }
                     self.lastError = msg
                     self.restart()
@@ -131,18 +133,17 @@ class STTEngine: ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
             isListening = true
-            restartAttempts = 0
-            log?("[stt] Listening...")
+            restartController.resetAttempts()
+            log("[stt] Listening...")
         } catch {
-            log?("[stt] Audio engine failed: \(error.localizedDescription)")
+            log("[stt] Audio engine failed: \(error.localizedDescription)")
             lastError = error.localizedDescription
             isListening = false
         }
     }
 
     func stop() {
-        recognitionWatchdog?.cancel()
-        recognitionWatchdog = nil
+        restartController.cancelWatchdog()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -156,46 +157,12 @@ class STTEngine: ObservableObject {
 
     func restart() {
         stop()
-
-        restartAttempts += 1
-        if restartAttempts > maxRestartAttempts {
-            log?("[stt] Too many restart attempts (\(restartAttempts)). Giving up.")
-            lastError = "Recognition keeps failing. Try Start Listening from context menu."
-            return
-        }
-
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-        let delay = UInt64(pow(2.0, Double(restartAttempts - 1))) * 1_000_000_000
-        log?("[stt] Restarting in \(restartAttempts)s (attempt \(restartAttempts)/\(maxRestartAttempts))...")
-
-        Task {
-            try? await Task.sleep(nanoseconds: delay)
-            if !self.isListening {
-                self.start()
-            }
-        }
+        restartController.scheduleRestart(isListening: isListening)
     }
 
     /// Reset restart attempts (e.g. after a successful voice command).
     func resetRestartAttempts() {
-        restartAttempts = 0
-    }
-
-    // MARK: - Watchdog
-
-    /// If recognition goes silent for 10s, restart it.
-    /// SFSpeechRecognizer sometimes stops producing partials after a short
-    /// utterance (e.g. just "Ducky") without giving a final or error.
-    private func resetWatchdog() {
-        recognitionWatchdog?.cancel()
-        recognitionWatchdog = Task {
-            try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
-            if !Task.isCancelled && self.isListening {
-                self.log?("[stt] Watchdog: recognition silent for 10s, restarting...")
-                self.restartAttempts = 0
-                self.restart()
-            }
-        }
+        restartController.resetAttempts()
     }
 
     // MARK: - Teensy Device Setup
@@ -221,7 +188,7 @@ class STTEngine: ObservableObject {
 
         // If stale device ID, re-discover Teensy
         if status != noErr {
-            log?("[stt] Cached Teensy device \(deviceID) stale (OSStatus \(status)), re-discovering...")
+            log("[stt] Cached Teensy device \(deviceID) stale (OSStatus \(status)), re-discovering...")
             if let teensy = AudioDeviceDiscovery.findTeensy() {
                 deviceID = teensy.deviceID
                 teensyDeviceID = deviceID
@@ -235,18 +202,18 @@ class STTEngine: ObservableObject {
                     UInt32(MemoryLayout<AudioDeviceID>.size)
                 )
             } else {
-                log?("[stt] Teensy not found — falling back to default mic")
+                log("[stt] Teensy not found — falling back to default mic")
                 teensyDeviceID = nil
                 return
             }
         }
 
         guard status == noErr else {
-            log?("[stt] Failed to set Teensy device: OSStatus \(status)")
+            log("[stt] Failed to set Teensy device: OSStatus \(status)")
             teensyDeviceID = nil  // Clear so next attempt uses default mic
             return
         }
-        log?("[stt] Set input device to Teensy (ID \(deviceID))")
+        log("[stt] Set input device to Teensy (ID \(deviceID))")
 
         // 2. Read the device's native format from the hardware (input) side
         var deviceFormat = AudioStreamBasicDescription()
@@ -260,10 +227,10 @@ class STTEngine: ObservableObject {
             &formatSize
         )
         guard status == noErr else {
-            log?("[stt] Could not read device format: OSStatus \(status)")
+            log("[stt] Could not read device format: OSStatus \(status)")
             return
         }
-        log?("[stt] Teensy hardware: \(deviceFormat.mSampleRate)Hz, \(deviceFormat.mChannelsPerFrame)ch, \(deviceFormat.mBitsPerChannel)bit")
+        log("[stt] Teensy hardware: \(deviceFormat.mSampleRate)Hz, \(deviceFormat.mChannelsPerFrame)ch, \(deviceFormat.mBitsPerChannel)bit")
 
         // 3. Set the output (software) side to Float32 at the device's sample rate.
         //    This eliminates the 48kHz vs 44100Hz mismatch that causes -10868.
@@ -287,9 +254,9 @@ class STTEngine: ObservableObject {
             UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         )
         if status == noErr {
-            log?("[stt] Set software format to \(outputFormat.mSampleRate)Hz Float32 \(outputFormat.mChannelsPerFrame)ch")
+            log("[stt] Set software format to \(outputFormat.mSampleRate)Hz Float32 \(outputFormat.mChannelsPerFrame)ch")
         } else {
-            log?("[stt] Could not set output format: OSStatus \(status)")
+            log("[stt] Could not set output format: OSStatus \(status)")
         }
     }
 }

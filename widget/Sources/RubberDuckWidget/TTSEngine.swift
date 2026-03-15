@@ -25,13 +25,13 @@ class TTSEngine {
     var outputDeviceName: String?
 
     private var ttsProcess: Process?
-    var log: ((String) -> Void)?
+    private func log(_ msg: String) { DuckLog.log(msg) }
 
     /// Speak text through the configured output device.
     /// Mutes the TTSGate while speaking to prevent mic feedback.
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
-        log?("[tts] \(text)")
+        log("[tts] \(text)")
 
         // Stop any current speech to prevent pileup
         stop()
@@ -57,7 +57,6 @@ class TTSEngine {
         ttsProcess = task
 
         let g = gate
-        let logFn = log
         let voiceName = voice              // capture for Sendable closure
         let deviceName = outputDeviceName  // capture for retry
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -69,13 +68,13 @@ class TTSEngine {
                 // already taken over — exit silently without retrying or
                 // touching the gate/device state.
                 if task.terminationReason == .uncaughtSignal {
-                    logFn?("[tts] say was cancelled (superseded)")
+                    DuckLog.log("[tts] say was cancelled (superseded)")
                     return
                 }
 
                 // If say -a failed (device gone, not killed), retry on system default
                 if task.terminationStatus != 0, deviceName != nil {
-                    logFn?("[tts] say -a failed (exit \(task.terminationStatus)) — retrying on system audio")
+                    DuckLog.log("[tts] say -a failed (exit \(task.terminationStatus)) — retrying on system audio")
                     Task { @MainActor in
                         self?.outputDeviceName = nil
                     }
@@ -88,7 +87,7 @@ class TTSEngine {
                     retry.waitUntilExit()
                 }
             } catch {
-                logFn?("[tts] say failed: \(error)")
+                DuckLog.log("[tts] say failed: \(error)")
             }
             // Unmute after say exits + brief delay for USB audio buffer drain
             Thread.sleep(forTimeInterval: 0.3)

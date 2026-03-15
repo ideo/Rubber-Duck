@@ -19,20 +19,30 @@ class SerialMicEngine: ObservableObject {
     private weak var transport: SerialTransport?
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    // Nonisolated reference to the active request for the binary frame callback.
+    private nonisolated(unsafe) var _activeRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
 
     // Restart logic
-    private var restartAttempts = 0
-    private let maxRestartAttempts = 5
-    private var recognitionWatchdog: Task<Void, Never>?
+    private lazy var restartController: RecognitionRestartController = {
+        let rc = RecognitionRestartController(label: "serial-mic")
+        rc.onRestart = { [weak self] in self?.start() }
+        return rc
+    }()
 
-    // Mic mute gate — owned by SerialTTSEngine, shared here
+    // Mic mute gate — owned by SerialTTSEngine, shared here.
+    // Also stored nonisolated for the binary frame callback.
     private var ttsGate: TTSGate?
+    private nonisolated(unsafe) var _gate: TTSGate?
+
+    // Nonisolated flag for the binary frame callback (avoids MainActor hop per frame).
+    // Written on start/stop from MainActor; read from the serial read thread.
+    private nonisolated(unsafe) var _feedingAudio = false
 
     // Audio format for the 16kHz Int16 mono PCM from ESP32
     private let audioFormat: AVAudioFormat
 
-    var log: ((String) -> Void)?
+    private func log(_ msg: String) { DuckLog.log(msg) }
 
     init(transport: SerialTransport) {
         self.transport = transport
@@ -47,13 +57,14 @@ class SerialMicEngine: ObservableObject {
     /// Set the TTSGate so mic frames are dropped during TTS playback.
     func setTTSGate(_ gate: TTSGate) {
         self.ttsGate = gate
+        self._gate = gate
     }
 
     // MARK: - Listening
 
     func start() {
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            log?("[serial-mic] Speech recognizer unavailable")
+            log("[serial-mic] Speech recognizer unavailable")
             lastError = "Speech recognizer unavailable"
             return
         }
@@ -61,8 +72,9 @@ class SerialMicEngine: ObservableObject {
         stop()
 
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        _activeRequest = recognitionRequest
         guard let request = recognitionRequest else {
-            log?("[serial-mic] Failed to create recognition request")
+            log("[serial-mic] Failed to create recognition request")
             return
         }
         request.shouldReportPartialResults = true
@@ -70,15 +82,15 @@ class SerialMicEngine: ObservableObject {
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 guard let self = self, self.isListening else { return }
-                self.resetWatchdog()
+                self.restartController.resetWatchdog(isListening: self.isListening)
 
                 if let result = result {
                     let transcript = result.bestTranscription.formattedString
                     self.onTranscript?(transcript, result.isFinal)
 
                     if result.isFinal {
-                        self.log?("[serial-mic] Final, restarting...")
-                        self.restartAttempts = 0
+                        self.log("[serial-mic] Final, restarting...")
+                        self.restartController.resetAttempts()
                         self.restart()
                     }
                 }
@@ -86,7 +98,7 @@ class SerialMicEngine: ObservableObject {
                 if let error = error {
                     let msg = error.localizedDescription
                     if !msg.contains("canceled") {
-                        self.log?("[serial-mic] Recognition error: \(msg)")
+                        self.log("[serial-mic] Recognition error: \(msg)")
                     }
                     self.lastError = msg
                     self.restart()
@@ -97,21 +109,20 @@ class SerialMicEngine: ObservableObject {
         // Tell ESP32 to start streaming mic frames
         transport?.sendCommand("M,1")
 
-        // Register for binary frames from transport
+        // Register for binary frames from transport — called on the serial read thread.
+        // Uses nonisolated handleBinaryFrame to avoid 31 MainActor hops/sec.
         transport?.onBinaryFrame = { [weak self] tag, data in
-            Task { @MainActor in
-                self?.handleBinaryFrame(tag: tag, data: data)
-            }
+            self?.handleBinaryFrame(tag: tag, data: data)
         }
 
         isListening = true
-        restartAttempts = 0
-        log?("[serial-mic] Listening via ESP32 mic...")
+        _feedingAudio = true
+        restartController.resetAttempts()
+        log("[serial-mic] Listening via ESP32 mic...")
     }
 
     func stop() {
-        recognitionWatchdog?.cancel()
-        recognitionWatchdog = nil
+        restartController.cancelWatchdog()
 
         // Stop ESP32 mic streaming
         transport?.sendCommand("M,0")
@@ -119,6 +130,8 @@ class SerialMicEngine: ObservableObject {
         // Don't clear onBinaryFrame — other code might need it.
         // The gate check in handleBinaryFrame prevents feeding during TTS.
 
+        _feedingAudio = false
+        _activeRequest = nil
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionRequest = nil
@@ -128,38 +141,25 @@ class SerialMicEngine: ObservableObject {
 
     func restart() {
         stop()
-
-        restartAttempts += 1
-        if restartAttempts > maxRestartAttempts {
-            log?("[serial-mic] Too many restart attempts (\(restartAttempts)). Giving up.")
-            lastError = "Recognition keeps failing."
-            return
-        }
-
-        let delay = UInt64(pow(2.0, Double(restartAttempts - 1))) * 1_000_000_000
-        log?("[serial-mic] Restarting in \(restartAttempts)s...")
-
-        Task {
-            try? await Task.sleep(nanoseconds: delay)
-            if !self.isListening {
-                self.start()
-            }
-        }
+        restartController.scheduleRestart(isListening: isListening)
     }
 
     func resetRestartAttempts() {
-        restartAttempts = 0
+        restartController.resetAttempts()
     }
 
     // MARK: - Binary Frame Handling
 
-    /// Called when a binary frame arrives from the serial transport.
-    private func handleBinaryFrame(tag: UInt8, data: Data) {
+    /// Called on the serial read thread when a binary frame arrives.
+    /// Nonisolated to avoid ~31 MainActor hops/sec. Uses `_feedingAudio` flag
+    /// (set on start/stop) and `ttsGate.muted` (thread-safe by design) for checks.
+    /// `recognitionRequest?.append()` is documented as thread-safe.
+    private nonisolated func handleBinaryFrame(tag: UInt8, data: Data) {
         guard tag == 0x04 else { return } // Only handle mic frames
-        guard isListening else { return }
+        guard _feedingAudio else { return }
 
         // Drop frames while TTS is playing (prevent feedback)
-        if let gate = ttsGate, gate.muted { return }
+        if let gate = _gate, gate.muted { return }
 
         // Convert raw Int16 PCM bytes to AVAudioPCMBuffer
         let sampleCount = data.count / 2
@@ -177,20 +177,7 @@ class SerialMicEngine: ObservableObject {
             dstPtr.update(from: srcPtr, count: sampleCount)
         }
 
-        recognitionRequest?.append(pcmBuffer)
+        _activeRequest?.append(pcmBuffer)
     }
 
-    // MARK: - Watchdog
-
-    private func resetWatchdog() {
-        recognitionWatchdog?.cancel()
-        recognitionWatchdog = Task {
-            try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
-            if !Task.isCancelled && self.isListening {
-                self.log?("[serial-mic] Watchdog: recognition silent for 10s, restarting...")
-                self.restartAttempts = 0
-                self.restart()
-            }
-        }
-    }
 }

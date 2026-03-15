@@ -276,5 +276,7 @@ void audioStreamEnd() {}
 void audioStreamWrite(const uint8_t *d, size_t l) {}
 void audioFeedI2S() {}
 bool isAudioStreaming() { return false; }
+void audioChirpBegin() {}
+void audioChirpEnd() {}
 
 #endif // ENABLE_AUDIO
