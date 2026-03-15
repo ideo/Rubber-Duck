@@ -44,26 +44,26 @@ claude plugin install duck-duck-duck
 
 ```
                      You (speaking)
-                          | voice (electret mic → Teensy USB → Mac)
+                          | voice
                           v
-               .--- Widget (SwiftUI) ---------.
-               |  * Apple Speech STT          |
-               |  * TTS via say -a            |--------> Teensy speaker
-               |  * SerialManager             |  (USB Audio out → I2S DAC)
-               |  * Embedded HTTP+WS Server   |
-               |    (MiniServer :3333)         |
-               '---+-------+-------+----------'
-                   |       |       |
-          voice/   |   WebSocket   |   serial (9600 baud)
-       permission  |       |       |
-                   v       v       v
-Claude Code    Dashboard/    Teensy 4.0
-  (tmux)       Viewer        servo + I2S audio + USB mic
-  |-- hooks -----> |               |
-  |  UserPrompt    |               | I2S (BCLK=21, LRCLK=20, DIN=7)
-  |  Stop          |               v
-  |  Permission    |           MAX98357 DAC → Speaker
-  '<-- tmux -------'           (chirps + TTS mixed)
+               .--- Widget (SwiftUI) --------------------.
+               |  * Apple Speech STT                     |
+               |  * TTS (say / AVSpeechSynthesizer)      |
+               |  * Wildcard voice casting (AI picks)    |
+               |  * SerialManager + AudioBackend         |
+               |  * Embedded HTTP+WS Server (:3333)      |
+               '---+-------+-------+----------+----------'
+                   |       |       |          |
+          voice/   |   WebSocket   | serial   | serial + binary audio
+       permission  |       |       | (Teensy) | (ESP32)
+                   v       v       v          v
+Claude Code    Dashboard/   Teensy 4.0    ESP32-C3/S3
+  (tmux)       Viewer       servo+I2S     servo+I2S+mic
+  |-- hooks -----> |        USB Audio     serial PCM stream
+  |  UserPrompt    |            |              |
+  |  Stop          |            v              v
+  |  Permission    |        MAX98357       MAX98357
+  '<-- tmux -------'        Speaker        Speaker
     (voice input)
 ```
 
@@ -71,12 +71,13 @@ Claude Code    Dashboard/    Teensy 4.0
 
 1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the widget's embedded server on `:3333`
 2. **LocalEvaluator** (default) scores text on-device via Apple Foundation Models, or **ClaudeEvaluator** scores via Claude Haiku API — both return scores + reaction + summary
-3. **Widget** receives scores in-process via `LocalEvalTransport`, animates the duck face, speaks reactions via TTS, sends scores to Teensy via serial
+3. **Widget** receives scores in-process via `LocalEvalTransport`, animates the duck face, speaks reactions via TTS, sends scores to hardware via serial
 4. **WebSocketBroadcaster** fans out results to any connected dashboard/viewer clients
-5. **Teensy** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
+5. **Hardware** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
 6. **Voice input**: say "ducky [command]" — widget transcribes, TmuxBridge injects into Claude Code via `tmux send-keys`
 7. **Voice permissions**: when Claude needs approval, the duck summarizes the action and asks ("Run git. Allow?"). Say "yes", "no", "first", "second", etc.
-8. **TTS output**: duck voice ("Boing") routes through Teensy USB Audio to the physical speaker via `say -a`, mixed with chirps through the I2S DAC
+8. **TTS output**: routes to hardware via two paths — Teensy USB Audio (`say -a`) or ESP32 serial PCM stream (AVSpeechSynthesizer → 16kHz resampling → binary frames)
+9. **Wildcard voice mode**: AI picks the best voice per reaction from 11 voices (Superstar, Bad News, Cellos, Whisper, etc.) — the eval response includes a voice key alongside scores
 
 ## Hardware
 
@@ -131,12 +132,23 @@ The Teensy handles bidirectional audio over a single USB connection:
 
 ### Serial Protocol
 
+**Text mode** (newline-terminated, all boards):
 ```
+I                              (identity request → "DUCK,ESP32S3,1.0" or "DUCK,TEENSY40,1.0")
 U,0.20,0.70,0.00,0.60,-0.30   (user eval: creativity,soundness,ambition,elegance,risk)
 C,-0.80,0.90,0.30,-0.50,0.80  (claude eval)
 P,1                            (permission pending — duck awaits voice response)
 P,0                            (permission resolved — back to normal)
+A,16000,16,1                   (enter binary audio mode — ESP32 only)
+M,1 / M,0                     (start/stop mic streaming — ESP32 only)
 T / X / P                      (test positive / negative / ping)
+```
+
+**Binary audio mode** (ESP32 only, between `A,<rate>,<bits>,<ch>` and `A,0`):
+```
+0x01 [len_hi] [len_lo] [PCM bytes...]   audio frame
+0x02 [len_hi] [len_lo] [text bytes...]   control message (evals during TTS)
+0x04 [len_hi] [len_lo] [PCM bytes...]   mic frame (ESP32 → widget)
 ```
 
 ## Voice Interface
@@ -188,12 +200,15 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - **LocalEvalTransport** — in-process delivery of eval results (no WebSocket round-trip for the widget itself)
 
 **Speech:**
-- **SpeechService** — orchestrates STT, TTS, wake word detection, and permission voice gate
-- **STTEngine** — Apple Speech framework recognition with Teensy mic input
-- **TTSEngine** — `say -a` TTS routed to Teensy speaker (Boing voice)
+- **SpeechService** — orchestrates STT, TTS, wake word detection, and permission voice gate; protocol-based dispatch (STTBackend/TTSBackend) switches between local and serial audio paths
+- **STTEngine** — Apple Speech framework recognition with Teensy mic input (CoreAudio)
+- **SerialMicEngine** — ESP32 mic via serial binary frames → SFSpeechRecognizer (nonisolated frame handling)
+- **TTSEngine** — `say -a` TTS routed to Teensy speaker (local path)
+- **SerialTTSEngine** — AVSpeechSynthesizer → 16kHz PCM → serial binary stream to ESP32 speaker
+- **RecognitionRestartController** — shared exponential-backoff restart + silence watchdog for both STT engines
 - **WakeWordProcessor** — "ducky" detection and command extraction
 - **PermissionVoiceGate** — yes/no/ordinal word matching for permission responses
-- **AudioDeviceDiscovery** — CoreAudio enumeration, Teensy detection
+- **AudioDeviceDiscovery** — CoreAudio enumeration, Teensy detection, hot-plug handling
 
 **UI:**
 - **DuckView** — liquid-glass duck with animated face, exclamation-mark eyes during permissions, context menu
@@ -202,7 +217,8 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - **DuckCoordinator** — orchestrates side effects (serial, TTS, expression updates) in response to eval events
 
 **Hardware bridge:**
-- **SerialManager** — USB serial to Teensy for eval scores
+- **SerialManager** — USB serial with identity handshake (supports Teensy and ESP32 boards)
+- **SerialTransport** — event-driven /dev watch (DispatchSource) + binary framing for audio mode
 - **EvalService** — transport-agnostic eval result handler (supports both local and WebSocket transports)
 
 **App icon:**
@@ -235,8 +251,11 @@ Claude Code plugin — installed via `claude plugin install duck-duck-duck`. Hoo
 ### Scripts (`scripts/`)
 - `duck-session` — tmux launcher for Claude Code (widget must be running)
 
-### Firmware (`firmware/rubber_duck/`)
-Teensy 4.0 Arduino firmware — multi-file sketch:
+### Firmware
+
+Three firmware variants for different boards, all sharing the same serial protocol:
+
+**`firmware/rubber_duck/`** — Teensy 4.0 (USB Audio path)
 
 | File | Role |
 |------|------|
@@ -245,9 +264,21 @@ Teensy 4.0 Arduino firmware — multi-file sketch:
 | `ServoControl.ino` | MG90S servo with spring physics |
 | `I2SAudio.ino` | Chirp synthesis + TTS mixer → MAX98357 I2S DAC |
 | `AudioBridge.ino` | Bidirectional USB Audio (mic out + TTS in) |
-| `LEDControl.ino` | NeoPixel LED bar (currently disabled) |
 | `SerialProtocol.ino` | Score parsing, test commands, ping |
-| `Easing.ino` | Quintic easing for servo smoothness |
+
+**`firmware/rubber_duck_c3/`** — ESP32-C3/S3 (serial audio streaming path)
+
+| File | Role |
+|------|------|
+| `rubber_duck_c3.ino` | Main setup/loop, permission state machine |
+| `Config.h` | Pin assignments, I2S/ring buffer/mic config, data structures |
+| `ServoControl.ino` | LEDC PWM servo with spring physics + idle clusters |
+| `AudioStream.ino` | Ring buffer between serial input and I2S DMA output |
+| `ChirpSynth.ino` | Software synth: sawtooth → Chamberlin SVF bandpass → I2S |
+| `MicCapture.ino` | ADC mic (C3) or PDM mic (S3 Sense) → serial binary frames |
+| `SerialProtocol.ino` | Text + binary audio framing parser |
+
+**`firmware/rubber_duck_esp32/`** — XIAO ESP32 (LED bar variant)
 
 ### 3D Viewer (`widget/Sources/RubberDuckWidget/Resources/viewer.html`)
 Three.js scene with both duck prototypes side by side:
@@ -279,11 +310,13 @@ The widget starts an embedded HTTP+WebSocket server on `:3333`. Use the 🦆 men
 
 **Full session:** `./scripts/duck-session` starts a tmux session with Claude Code.
 
-### Teensy hardware (optional)
+### Hardware (optional)
 
-Flash `firmware/rubber_duck/rubber_duck.ino` via Arduino IDE:
-- Board: Teensy 4.0, USB Type: Serial + MIDI + Audio
-- See [Hardware](#hardware) section for wiring
+**Teensy 4.0** — Flash `firmware/rubber_duck/` via Arduino IDE. Board: Teensy 4.0, USB Type: Serial + MIDI + Audio.
+
+**ESP32-C3/S3** — Flash `firmware/rubber_duck_c3/` via Arduino IDE. Board: XIAO ESP32-C3 or XIAO ESP32-S3 Sense. Streams TTS audio over serial (no USB Audio Class needed).
+
+See [Hardware](#hardware) section for wiring.
 
 ## Reducer Pattern
 

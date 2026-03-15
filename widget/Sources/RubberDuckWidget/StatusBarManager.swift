@@ -43,7 +43,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Start Claude Session — always available
+        // --- Session launcher ---
         menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
         if duckServer.pluginConnected {
             menu.addItem(item("Update Claude Plugin", action: #selector(installPlugin)))
@@ -52,58 +52,64 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        // Listen mode — 3 radio items
-        let listenModeIcons: [ListenMode: String] = [
-            .off: "microphone.slash.fill",
-            .permissionsOnly: "microphone.badge.xmark",
-            .active: "microphone.fill",
-        ]
-        for mode in ListenMode.allCases {
-            let modeItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
-            modeItem.target = self
-            modeItem.tag = mode.rawValue
-            modeItem.state = speechService.listenMode == mode ? .on : .off
-            if let iconName = listenModeIcons[mode] {
-                modeItem.image = NSImage(systemSymbolName: iconName, accessibilityDescription: mode.label)
-            }
-            menu.addItem(modeItem)
-        }
+        // --- Mode submenu ---
+        let modeLabel = coordinator.mode == .critic ? "Critic" : "Relay"
+        let modeItem = NSMenuItem(title: "Mode: \(modeLabel)", action: nil, keyEquivalent: "")
+        let modeMenu = NSMenu()
 
-        menu.addItem(.separator())
-
-        // Duck mode — 2 radio items
-        let criticItem = item("Critic (Inner Monologue)", action: #selector(setModeCritic))
+        let criticItem = NSMenuItem(title: "Critic (Inner Monologue)", action: #selector(setModeCritic), keyEquivalent: "")
+        criticItem.target = self
         criticItem.state = coordinator.mode == .critic ? .on : .off
         criticItem.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Critic mode")
-        menu.addItem(criticItem)
+        modeMenu.addItem(criticItem)
 
-        let relayItem = item("Relay", action: #selector(setModeRelay))
+        let relayItem = NSMenuItem(title: "Relay", action: #selector(setModeRelay), keyEquivalent: "")
+        relayItem.target = self
         relayItem.state = coordinator.mode == .relay ? .on : .off
         relayItem.image = NSImage(systemSymbolName: "phone.fill", accessibilityDescription: "Relay mode")
-        menu.addItem(relayItem)
+        modeMenu.addItem(relayItem)
 
-        menu.addItem(.separator())
+        modeItem.submenu = modeMenu
+        menu.addItem(modeItem)
 
-        // Eval provider — radio items
+        // --- Intelligence submenu ---
+        let providerLabel = DuckConfig.evalProvider == .foundation ? "Foundation" : "Haiku"
+        let intelligenceItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
+        let intelligenceMenu = NSMenu()
+
         if duckServer.foundationModelsAvailable {
-            let foundationItem = item("Foundation (On-Device)", action: #selector(setProviderFoundation))
+            let foundationItem = NSMenuItem(title: "Foundation", action: #selector(setProviderFoundation), keyEquivalent: "")
+            foundationItem.target = self
             foundationItem.state = DuckConfig.evalProvider == .foundation ? .on : .off
-            menu.addItem(foundationItem)
+            foundationItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Apple")
+            foundationItem.subtitle = "Free on-device LLM"
+            intelligenceMenu.addItem(foundationItem)
         }
 
-        let anthropicItem = item("Anthropic API", action: #selector(setProviderAnthropic))
+        let anthropicItem = NSMenuItem(title: "Haiku", action: #selector(setProviderAnthropic), keyEquivalent: "")
+        anthropicItem.target = self
         anthropicItem.state = DuckConfig.evalProvider == .anthropic ? .on : .off
-        menu.addItem(anthropicItem)
+        anthropicItem.image = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Anthropic")
+        anthropicItem.subtitle = "Requires Claude API key"
+        intelligenceMenu.addItem(anthropicItem)
 
-        menu.addItem(.separator())
+        if !DuckConfig.anthropicAPIKey.isEmpty {
+            intelligenceMenu.addItem(.separator())
+            let removeKeyItem = NSMenuItem(title: "Delete API Key(s)", action: #selector(removeAPIKey), keyEquivalent: "")
+            removeKeyItem.target = self
+            removeKeyItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Remove")
+            intelligenceMenu.addItem(removeKeyItem)
+        }
 
-        // Voice submenu
+        intelligenceItem.submenu = intelligenceMenu
+        menu.addItem(intelligenceItem)
+
+        // --- Voice submenu ---
         let isWildcard = speechService.isWildcardMode
         let voiceLabel = isWildcard ? "Wildcard" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
         let voiceMenu = NSMenu()
 
-        // Wildcard — AI-picked voice per utterance
         let wildcardItem = NSMenuItem(title: "Wildcard", action: #selector(selectWildcard), keyEquivalent: "")
         wildcardItem.target = self
         wildcardItem.image = NSImage(systemSymbolName: "shuffle", accessibilityDescription: "Shuffle voices")
@@ -121,17 +127,55 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         voiceItem.submenu = voiceMenu
         menu.addItem(voiceItem)
 
+        // --- Mic submenu ---
+        let micLabel = speechService.listenMode.label
+        let micItem = NSMenuItem(title: "Mic: \(micLabel)", action: nil, keyEquivalent: "")
+        let micMenu = NSMenu()
+
+        let listenModeIcons: [ListenMode: String] = [
+            .off: "microphone.slash.fill",
+            .permissionsOnly: "microphone.badge.xmark",
+            .active: "microphone.fill",
+        ]
+        for mode in ListenMode.allCases {
+            let listenItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
+            listenItem.target = self
+            listenItem.tag = mode.rawValue
+            listenItem.state = speechService.listenMode == mode ? .on : .off
+            if let iconName = listenModeIcons[mode] {
+                listenItem.image = NSImage(systemSymbolName: iconName, accessibilityDescription: mode.label)
+            }
+            if mode == .active {
+                listenItem.subtitle = "Use wake word \"Ducky\""
+            }
+            micMenu.addItem(listenItem)
+        }
+
+        // Mic device info at bottom of submenu
+        let micName = speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName
+        micMenu.addItem(.separator())
+        let micDeviceItem = NSMenuItem(title: micName, action: nil, keyEquivalent: "")
+        micDeviceItem.isEnabled = false
+        micMenu.addItem(micDeviceItem)
+
+        micItem.submenu = micMenu
+        menu.addItem(micItem)
+
         menu.addItem(.separator())
 
-        // Status labels (disabled)
-        let micName = speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName
-        menu.addItem(disabledItem("Mic: \(micName)"))
+        // --- Status ---
+        let deviceLabel: String
+        if serialManager.isConnected {
+            let board = serialManager.serialTransport.connectedBoard ?? "Unknown"
+            deviceLabel = "\(board) · \(serialManager.portName)"
+        } else {
+            deviceLabel = "No hardware connected"
+        }
+        menu.addItem(disabledItem(deviceLabel))
 
-        let teensyLabel = serialManager.isConnected ? "Teensy: \(serialManager.portName)" : "Teensy: Disconnected"
-        menu.addItem(disabledItem(teensyLabel))
-
-        let serverLabel = duckServer.isRunning ? "Server: Running" : "Server: Stopped"
-        menu.addItem(disabledItem(serverLabel))
+        if duckServer.pluginConnected {
+            menu.addItem(disabledItem("Plugin connected"))
+        }
 
         menu.addItem(.separator())
         menu.addItem(item("Quit Duck", action: #selector(quitApp)))
@@ -181,6 +225,11 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     @objc private func setProviderAnthropic() {
         guard DuckConfig.ensureAPIKey() else { return }
         DuckConfig.evalProvider = .anthropic
+    }
+
+    @objc private func removeAPIKey() {
+        DuckConfig.removeAPIKey()
+        DuckConfig.evalProvider = .foundation
     }
 
     @objc private func selectWildcard() {

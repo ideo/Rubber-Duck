@@ -95,6 +95,14 @@ enum DuckConfig {
         }
     }
 
+    /// Remove the saved API key and clear the in-memory value.
+    static func removeAPIKey() {
+        let keyFile = storageDir.appendingPathComponent("api_key")
+        try? FileManager.default.removeItem(at: keyFile)
+        anthropicAPIKey = ""
+        print("[config] API key removed")
+    }
+
     /// Ensure an API key is available. Prompts the user if needed.
     /// Returns true if a key is ready, false if the user cancelled.
     @MainActor
