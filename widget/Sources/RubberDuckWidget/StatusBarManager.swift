@@ -5,6 +5,7 @@
 // Menu rebuilds on every open via NSMenuDelegate so state is always fresh.
 
 import AppKit
+import ServiceManagement
 
 @MainActor
 final class StatusBarManager: NSObject, NSMenuDelegate {
@@ -57,16 +58,18 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let modeItem = NSMenuItem(title: "Mode: \(modeLabel)", action: nil, keyEquivalent: "")
         let modeMenu = NSMenu()
 
-        let criticItem = NSMenuItem(title: "Critic (Inner Monologue)", action: #selector(setModeCritic), keyEquivalent: "")
+        let criticItem = NSMenuItem(title: "Critic", action: #selector(setModeCritic), keyEquivalent: "")
         criticItem.target = self
         criticItem.state = coordinator.mode == .critic ? .on : .off
         criticItem.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Critic mode")
+        criticItem.subtitle = "Inner monologue and alerts"
         modeMenu.addItem(criticItem)
 
         let relayItem = NSMenuItem(title: "Relay", action: #selector(setModeRelay), keyEquivalent: "")
         relayItem.target = self
         relayItem.state = coordinator.mode == .relay ? .on : .off
         relayItem.image = NSImage(systemSymbolName: "phone.fill", accessibilityDescription: "Relay mode")
+        relayItem.subtitle = "Walkie talkie with Claude"
         modeMenu.addItem(relayItem)
 
         modeItem.submenu = modeMenu
@@ -97,7 +100,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             intelligenceMenu.addItem(.separator())
             let removeKeyItem = NSMenuItem(title: "Delete API Key(s)", action: #selector(removeAPIKey), keyEquivalent: "")
             removeKeyItem.target = self
-            removeKeyItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Remove")
+            removeKeyItem.image = NSImage(systemSymbolName: "trash.fill", accessibilityDescription: "Remove")
             intelligenceMenu.addItem(removeKeyItem)
         }
 
@@ -161,6 +164,12 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         micItem.submenu = micMenu
         menu.addItem(micItem)
 
+        // --- Launch at Login (settings group with other prefs above) ---
+        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+
         menu.addItem(.separator())
 
         // --- Status ---
@@ -178,7 +187,18 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(item("Quit Duck", action: #selector(quitApp)))
+
+        // --- Turn On/Off ---
+        if AppDelegate.isDuckActive {
+            menu.addItem(item("Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck)))
+        } else {
+            menu.addItem(item("Turn On Duck-Duck-Duck", action: #selector(turnOnDuck)))
+        }
+
+        let quitItem = NSMenuItem(title: "Quit Duck-Duck-Duck", action: #selector(quitApp), keyEquivalent: "")
+        quitItem.target = self
+        quitItem.image = NSImage(systemSymbolName: "xmark.square.fill", accessibilityDescription: "Quit")
+        menu.addItem(quitItem)
     }
 
     // MARK: - Voice Submenu
@@ -244,6 +264,29 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         speechService.ttsVoice = sayName
         let label = DuckVoices.all.first { $0.sayName == sayName }?.label ?? sayName
         speechService.speak("Hi, I'm \(label).", skipChirpWait: true)
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+                print("[app] Unregistered Launch at Login")
+            } else {
+                try service.register()
+                print("[app] Registered Launch at Login")
+            }
+        } catch {
+            print("[app] Launch at Login toggle failed: \(error)")
+        }
+    }
+
+    @objc private func turnOnDuck() {
+        AppDelegate.turnOn()
+    }
+
+    @objc private func turnOffDuck() {
+        AppDelegate.turnOff()
     }
 
     @objc private func quitApp() {

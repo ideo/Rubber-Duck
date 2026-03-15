@@ -61,6 +61,25 @@ These features work in the notarized GitHub release but not in App Store sandbox
 - ~~TTSEngine `/usr/bin/say`~~ — confirmed working in sandbox (no fix needed)
 - ~~Bundle.module crash~~ — fixed: resource bundle copied to Contents/Resources/, Resources.bundle helper
 
+## Auto-launch & Dormant Mode
+
+The app starts dormant (menu bar icon only, no window, no dock icon). The full duck companion activates when the user clicks "Turn On Duck-Duck-Duck" in the menu or plugs in a duck USB device (serial auto-detect).
+
+### Launch at Login (SMAppService — App Store safe)
+
+Menu bar toggle: `🦆 → Launch at Login`. Uses `SMAppService.mainApp` to register/unregister the app as a Login Item. Works in sandbox. Combined with USB auto-detect, the duck is effectively always available: Mac boots → app starts dormant → plug in duck → companion activates.
+
+**TBD:**
+- Should we prompt users to enable this on first launch?
+- Login Items appear in System Settings → General → Login Items — users can manage it there too.
+
+### USB auto-launch via LaunchAgent (removed)
+
+Previously explored IOKit matching via a launchd LaunchAgent plist to launch the app on USB plug-in. Removed because:
+- ESP32-C3's built-in USB JTAG/serial has ROM-level descriptors that ignore `USB_PRODUCT`, so the device can't be named "Duck Duck Duck"
+- Matching on Espressif VID would trigger on any ESP32 dev board
+- Login Item + serial auto-detect achieves the same UX without the naming problem
+
 ## Shell scripts in plugin require bash
 
 The plugin's hook scripts use `#!/bin/bash`. If a user's system doesn't have bash at `/bin/bash` (unlikely on macOS but possible on exotic setups), hooks fail silently.

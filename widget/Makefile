@@ -76,3 +76,4 @@ notarize: sign
 release: notarize
 	@echo "Ready to release $(DIST_ZIP)"
 	@echo "Run: gh release create vX.Y $(DIST_ZIP) --title 'Duck Duck Duck vX.Y' --notes 'Release notes'"
+

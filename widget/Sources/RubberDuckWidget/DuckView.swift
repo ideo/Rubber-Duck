@@ -197,7 +197,7 @@ struct DuckView: View {
 
         Divider()
 
-        Button("Quit Duck") {
+        Button("Quit Duck-Duck-Duck") {
             duckServer.stop()
             NSApp.terminate(nil)
         }
