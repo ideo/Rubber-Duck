@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DUCK_HOOKS_DIR/hooks/on-session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DUCK_HOOKS_DIR/hooks/on-before-model.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DUCK_HOOKS_DIR/hooks/on-after-agent.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DUCK_HOOKS_DIR/hooks/on-before-tool.sh",
+            "timeout": 35
+          }
+        ]
+      }
+    ]
+  }
+}

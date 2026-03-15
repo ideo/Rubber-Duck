@@ -45,6 +45,14 @@ struct LocalEvalResult {
     var summary: String
 }
 
+/// Lightweight voice picker — second pass after scoring.
+/// Given the eval results, pick the best voice. Keeps the 3B model focused on one task at a time.
+@Generable
+struct LocalVoicePick {
+    @Guide(description: "Almost always superstar. superstar: default for positive, neutral, boring, mundane (USE 80% OF THE TIME). ralph: ONLY dead serious batman moments like security warnings or critical errors. bad_news: ONLY genuine failures or breaking changes. good_news: ONLY truly great elegant code. cellos: ONLY big surprising changes. organ: ONLY massive ambitious scope. whisper: ONLY secrets or private thoughts. trinoids: ONLY robotic machine behavior. zarvox: ONLY cold calculating computer behavior. jester: ONLY genuinely hilarious moments. bubbles: ONLY overwhelmed drowning in work.")
+    var voice: String
+}
+
 // MARK: - Local Evaluator Actor
 
 actor LocalEvaluator {
@@ -78,7 +86,7 @@ actor LocalEvaluator {
         return false
     }
 
-    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
+    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "", wildcardEnabled: Bool = false) async throws -> EvalScores {
         let userPrompt = EvalPromptBuilder.buildPrompt(
             text: text, source: source,
             userContext: userContext, claudeContext: claudeContext,
@@ -87,17 +95,18 @@ actor LocalEvaluator {
 
         let session = LanguageModelSession(instructions: Instructions(Self.systemPrompt))
         let options = GenerationOptions(temperature: 0.7)
+
+        // Pass 1: Score the text (same path whether wildcard is on or off)
         let result = try await session.respond(
             to: userPrompt,
             generating: LocalEvalResult.self,
             options: options
         )
-
         let r = result.content
 
         // Map V3 names (rigor/craft/novelty) → production names (soundness/elegance/creativity)
         // Map Int -100...100 → Double -1.0...1.0
-        return EvalScores(
+        var scores = EvalScores(
             creativity: Double(r.novelty) / 100.0,
             soundness: Double(r.rigor) / 100.0,
             ambition: Double(r.ambition) / 100.0,
@@ -106,6 +115,26 @@ actor LocalEvaluator {
             reaction: r.reaction,
             summary: r.summary
         )
+
+        // Pass 2: Pick a voice (only when wildcard is on).
+        // Separate call so the 3B model focuses on one task at a time.
+        if wildcardEnabled {
+            let voicePrompt = """
+                The duck just reacted: "\(r.reaction)"
+                Scores: rigor=\(r.rigor), craft=\(r.craft), novelty=\(r.novelty), ambition=\(r.ambition), risk=\(r.risk).
+                Pick the voice that best delivers this reaction.
+                """
+            let voiceSession = LanguageModelSession(instructions: Instructions(
+                "You pick a voice for a rubber duck. Default to superstar for almost everything. Only pick a different voice when the scores are extreme (above 70 or below -70) and clearly match that voice."))
+            let voiceResult = try await voiceSession.respond(
+                to: voicePrompt,
+                generating: LocalVoicePick.self,
+                options: options
+            )
+            scores.voice = voiceResult.content.voice
+        }
+
+        return scores
     }
 }
 
@@ -116,7 +145,7 @@ actor LocalEvaluator {
 actor LocalEvaluator {
     static var isAvailable: Bool { false }
 
-    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "") async throws -> EvalScores {
+    func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "", wildcardEnabled: Bool = false) async throws -> EvalScores {
         EvalScores(
             creativity: 0, soundness: 0, ambition: 0,
             elegance: 0, risk: 0,

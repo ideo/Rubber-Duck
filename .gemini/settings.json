@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./gemini/hooks/on-before-model.sh",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./gemini/hooks/on-after-agent.sh",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

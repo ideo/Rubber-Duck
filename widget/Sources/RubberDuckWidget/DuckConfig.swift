@@ -39,6 +39,7 @@ enum DuckConfig {
     enum EvalProvider: String {
         case foundation  // On-device Foundation Models (free, Apple Silicon only)
         case anthropic   // Anthropic API (requires API key)
+        case gemini      // Google Gemini API (requires API key)
     }
 
     /// Current eval provider. Defaults to `.foundation` (free, no API key needed).
@@ -95,38 +96,108 @@ enum DuckConfig {
         }
     }
 
-    /// Remove the saved API key and clear the in-memory value.
+    /// Remove the saved Anthropic API key and clear the in-memory value.
     static func removeAPIKey() {
         let keyFile = storageDir.appendingPathComponent("api_key")
         try? FileManager.default.removeItem(at: keyFile)
         anthropicAPIKey = ""
-        print("[config] API key removed")
+        print("[config] Anthropic API key removed")
     }
 
-    /// Ensure an API key is available. Prompts the user if needed.
+    /// Ensure an Anthropic API key is available. Prompts the user if needed.
     /// Returns true if a key is ready, false if the user cancelled.
     @MainActor
     static func ensureAPIKey() -> Bool {
         if !anthropicAPIKey.isEmpty { return true }
-        if let key = promptForAPIKey() {
+        if let key = promptForAPIKey(
+            title: "Anthropic API Key",
+            message: "Enter your Anthropic API key to use Claude for evaluation.\n\nGet one at console.anthropic.com → API Keys.",
+            placeholder: "sk-ant-..."
+        ) {
             saveAPIKey(key)
             return true
         }
         return false
     }
 
-    /// Show a blocking dialog to ask the user for their API key. Returns the key or nil if cancelled.
+    // MARK: - Gemini API
+
+    /// Gemini API key for Google evaluations.
+    /// Lookup order: GEMINI_API_KEY env var → Application Support key file → prompt user
+    static var geminiAPIKey: String = {
+        if let key = resolveGeminiAPIKey() { return key }
+        print("[config] WARNING: No GEMINI_API_KEY found. Will prompt on launch.")
+        return ""
+    }()
+
+    /// Try all automatic sources for the Gemini API key (sandbox-safe only).
+    private static func resolveGeminiAPIKey() -> String? {
+        // 1. Environment variable (highest priority)
+        if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"], !envKey.isEmpty {
+            return envKey
+        }
+
+        // 2. Application Support key file (sandbox-safe)
+        let keyFile = storageDir.appendingPathComponent("gemini_api_key")
+        if let fileKey = try? String(contentsOf: keyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !fileKey.isEmpty {
+            return fileKey
+        }
+
+        return nil
+    }
+
+    /// Save a Gemini API key to Application Support and update the in-memory value.
+    static func saveGeminiAPIKey(_ key: String) {
+        let keyFile = storageDir.appendingPathComponent("gemini_api_key")
+
+        do {
+            try key.write(to: keyFile, atomically: true, encoding: .utf8)
+            geminiAPIKey = key
+            print("[config] Gemini API key saved to \(keyFile.path)")
+        } catch {
+            print("[config] Failed to save Gemini API key: \(error)")
+        }
+    }
+
+    /// Remove the saved Gemini API key and clear the in-memory value.
+    static func removeGeminiAPIKey() {
+        let keyFile = storageDir.appendingPathComponent("gemini_api_key")
+        try? FileManager.default.removeItem(at: keyFile)
+        geminiAPIKey = ""
+        print("[config] Gemini API key removed")
+    }
+
+    /// Ensure a Gemini API key is available. Prompts the user if needed.
+    /// Returns true if a key is ready, false if the user cancelled.
     @MainActor
-    private static func promptForAPIKey() -> String? {
+    static func ensureGeminiAPIKey() -> Bool {
+        if !geminiAPIKey.isEmpty { return true }
+        if let key = promptForAPIKey(
+            title: "Gemini API Key",
+            message: "Enter your Google Gemini API key for evaluation.\n\nGet one at aistudio.google.com → API Keys.",
+            placeholder: "AIza..."
+        ) {
+            saveGeminiAPIKey(key)
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Shared API Key Prompt
+
+    /// Show a blocking dialog to ask the user for an API key. Returns the key or nil if cancelled.
+    @MainActor
+    private static func promptForAPIKey(title: String, message: String, placeholder: String) -> String? {
         let alert = NSAlert()
-        alert.messageText = "Anthropic API Key"
-        alert.informativeText = "Enter your Anthropic API key to use Claude for evaluation.\n\nGet one at console.anthropic.com → API Keys."
+        alert.messageText = title
+        alert.informativeText = message
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        textField.placeholderString = "sk-ant-..."
+        textField.placeholderString = placeholder
         textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         alert.accessoryView = textField
 

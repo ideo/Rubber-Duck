@@ -110,6 +110,89 @@ If the product name changes again, update all of these:
 | Plugin README | `plugin/README.md` |
 | Plugin PLAN | `plugin/PLAN.md` (historical, bulk replace) |
 
+## Future R&D: Other AI CLI Tools
+
+### Cursor (hooks system — mostly compatible)
+
+Cursor 1.7+ (October 2025) has lifecycle hooks via `.cursor/hooks.json`. Cursor 2.5 (February 2026) added a plugin marketplace that bundles hooks, MCP servers, skills, subagents, and rules into installable packages.
+
+**Hook mapping:**
+
+| Duck Duck Duck | Claude Code | Cursor |
+|---|---|---|
+| `on-user-prompt.sh` | `UserPromptSubmit` | `beforeSubmitPrompt` ✅ (full prompt on stdin) |
+| `on-claude-stop.sh` | `Stop` | `stop` ⚠️ (fires, but response text not confirmed in payload) |
+| `on-permission-request.sh` | `PermissionRequest` | `beforeShellExecution` / `beforeMCPExecution` 🔶 (per-tool gate, not single event) |
+
+**Gaps & risks:**
+- **Response text missing from `stop` hook** — can score user prompts but may not be able to score AI responses without workaround (proxy, scraping)
+- **Permission model is per-tool, not per-action** — no single "the agent wants permission" event. Would need to rethink the duck's voice approval flow into per-tool gates
+- **Hook stability issues** — multiple forum reports of regressions in hook response fields (userMessage, agentMessage broken in v2.0.x). Fragile foundation to build on
+- **Marketplace distribution** — `cursor.com/marketplace` could host our plugin, but packaging format differs from Claude plugins
+
+**Verdict:** Doable for critic mode (prompt scoring only). Response scoring and voice permissions need workarounds or Cursor-side fixes. Wait for their hooks to stabilize.
+
+**References:**
+- Hooks docs: `cursor.com/docs/hooks`
+- Marketplace: `cursor.com/docs/plugins/building`
+- Regression tracker: `forum.cursor.com/t/regression-hook-response-fields-user-message-agent-message-still-ignored-in-windows-v2-0-77/142589`
+
+### Codex CLI (notify mechanism — limited)
+
+OpenAI's Codex CLI (`github.com/openai/codex`, Rust, 65K+ stars) has two hook mechanisms: a simple `notify` config and a feature-flagged hooks system.
+
+**Hook mapping:**
+
+| Duck Duck Duck | Claude Code | Codex CLI |
+|---|---|---|
+| `on-user-prompt.sh` | `UserPromptSubmit` | ❌ No per-prompt hook (SessionStart fires once) |
+| `on-claude-stop.sh` | `Stop` | `notify` ✅ (carries `input_messages` + `last_assistant_message` as JSON argv) |
+| `on-permission-request.sh` | `PermissionRequest` | ❌ No equivalent (has internal guardian subagent, no external hook) |
+
+**Integration path:**
+```toml
+# ~/.codex/config.toml
+notify = ["/path/to/duck-notify.sh"]
+```
+One line config. Script receives JSON with both prompt and response after each agent turn.
+
+**Gaps & risks:**
+- **No per-prompt hook** — can only score after the full turn completes, not when user submits. Loses real-time "incoming!" reaction
+- **No permission hook** — Codex has its own approval system (`approval_policy`, guardian subagent) but no way for external tools to intercept. Voice permissions impossible
+- **Feature flag gating** — hooks system requires `codex_hooks = true` in config, may not be enabled by default
+- **No plugin marketplace** — no distribution story, manual config only
+- **Fire-and-forget** — `notify` sends JSON as argv (not stdin), stdin/stdout/stderr all go to `/dev/null`. No way to block or respond
+
+**Verdict:** Lowest priority. `notify` is trivially easy to wire up for after-the-fact scoring, but no real-time prompt reactions and no voice permissions. Worth a quick "works with Codex" badge but not a first-class integration.
+
+**References:**
+- GitHub: `github.com/openai/codex`
+- Config docs: search for `notify` in repo README
+
+## Gemini CLI integration — what's done, what's left
+
+### Working now
+- **Gemini evaluator** — `GeminiEvaluator.swift`, calls Gemini 2.5 Flash API with `thinkingBudget: 0` for fast structured JSON scoring
+- **Intelligence picker** — Gemini appears in the menu bar alongside Foundation and Haiku, with API key prompt/storage/deletion
+- **BeforeModel hook** — scores user prompts before they reach the LLM (equivalent to Claude's `UserPromptSubmit`)
+- **AfterAgent hook** — scores Gemini's responses after each turn (equivalent to Claude's `Stop`)
+- **Project-level config** — `.gemini/settings.json` in repo root, hooks auto-discovered when `gemini` is run from repo root
+
+### Not yet implemented
+- **Voice permission gating** — Gemini's `BeforeTool` fires for ALL tools (not just ones needing permission), and fires AFTER the permission dialog. No way to intercept permissions via hooks. Open issue: google-gemini/gemini-cli#18266
+- **Tmux permission relay** — Could use `Notification` hook (fires on `ToolPermission`) to hear about permission requests, then TmuxBridge to type y/n into Gemini's terminal. GitHub-release only (TmuxBridge blocked in sandbox). Not built yet.
+- **SessionStart greeting** — Gemini hooks don't support `additionalContext` injection like Claude's `SessionStart`. Could use `BeforeAgent` with `systemMessage` in the response JSON to inject duck personality context.
+- **Gemini API key from env** — Currently reads from file only (`~/Library/Application Support/DuckDuckDuck/gemini_api_key`). Could also check `GEMINI_API_KEY` env var for CI/automation use.
+- **Hook auto-setup** — User must run `gemini` from repo root for `.gemini/settings.json` to be found. No plugin marketplace equivalent for Gemini CLI yet.
+- **Foundation Models wildcard voice tuning** — Two-pass voice picking works (score first, pick voice second) but the 3B model's voice selection needs refinement in the Playground. Current `@Guide` description and system instruction get it mostly right (superstar default, extreme-only switches) but could be tighter. Iterate in `widget/Playground/` with real eval outputs to calibrate when non-superstar voices trigger.
+
+### Known limitations
+- Gemini CLI hooks only fire when run from a directory containing `.gemini/settings.json` (or a parent with one)
+- `gemini-2.0-flash` is deprecated for new API keys — must use `gemini-2.5-flash` or newer
+- Gemini 2.5 Flash is a thinking model — `thinkingBudget: 0` disables thinking for fast eval; without it, thinking tokens eat the output budget and responses get truncated
+
+---
+
 After updating, also:
 1. `cd widget && swift build` — verify it compiles
 2. Remove old marketplace: `claude plugin marketplace remove <old-name>-marketplace`
