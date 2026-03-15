@@ -105,6 +105,12 @@ enum DuckVoices {
         wildcardKeyMap[key] ?? wildcardDefault
     }
 
+    /// Resolve a persisted sayName to a real engine voice name.
+    /// Translates the wildcard sentinel to Superstar; passes everything else through.
+    static func resolvedSayName(for sayName: String) -> String {
+        sayName == wildcardSayName ? wildcardDefault.sayName : sayName
+    }
+
     /// Voice descriptions for the AI prompt (Haiku eval).
     static let wildcardPromptDescription = """
         Pick the voice that best delivers your reaction. Use superstar about half the time — use the others whenever the moment has a clear vibe.

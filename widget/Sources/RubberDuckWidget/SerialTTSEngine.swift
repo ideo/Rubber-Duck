@@ -70,7 +70,7 @@ class SerialTTSEngine {
             }
 
             // NOW enter audio mode on ESP32
-            transportRef.inAudioMode = true
+            transportRef.enterAudioMode()
             transportRef.sendCommand("A,16000,16,1")
 
             // Stream PCM as it arrives — no waiting for full render.
@@ -163,13 +163,24 @@ class SerialTTSEngine {
     private nonisolated static func waitForChirpDone(transport: SerialTransport, log: ((String) -> Void)?) async {
         let previousCallback = transport.onChirpDone
 
-        let gotSignal = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            var resumed = false
+        // Use an actor-isolated flag to safely coordinate the callback and timeout.
+        final class OnceFlag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _resumed = false
+            func tryResume() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                if _resumed { return false }
+                _resumed = true
+                return true
+            }
+        }
+        let once = OnceFlag()
 
+        let gotSignal = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             transport.onChirpDone = {
                 previousCallback?()
-                if !resumed {
-                    resumed = true
+                if once.tryResume() {
                     continuation.resume(returning: true)
                 }
             }
@@ -177,8 +188,7 @@ class SerialTTSEngine {
             // Timeout after 3s
             Task {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
-                if !resumed {
-                    resumed = true
+                if once.tryResume() {
                     continuation.resume(returning: false)
                 }
             }
@@ -202,7 +212,7 @@ class SerialTTSEngine {
         // Send A,0 as a control frame (0x02) — firmware is in binary audio mode
         let payload = Array("A,0\n".utf8)
         transport.writeFrame(tag: 0x02, payload: payload)
-        transport.inAudioMode = false
+        transport.exitAudioMode()
     }
 
     /// Resample an AVAudioPCMBuffer to 16kHz 16-bit mono Int16 samples.

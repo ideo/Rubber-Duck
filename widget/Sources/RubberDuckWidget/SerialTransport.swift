@@ -24,7 +24,13 @@ class SerialTransport: DeviceTransport {
 
     /// When true, writeString() wraps text in binary control frames (0x02)
     /// so the firmware can parse them during audio mode.
-    var inAudioMode: Bool = false
+    private(set) var inAudioMode: Bool = false
+
+    /// Enter audio mode — text commands will be wrapped in binary control frames.
+    func enterAudioMode() { inAudioMode = true }
+
+    /// Exit audio mode — text commands sent as plain strings again.
+    func exitAudioMode() { inAudioMode = false }
 
     private var fileDescriptor: Int32 = -1
     private var reconnectTask: Task<Void, Never>?

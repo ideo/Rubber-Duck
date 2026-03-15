@@ -58,10 +58,7 @@ class SpeechService: ObservableObject {
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
     var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
-            // Wildcard sentinel is stored in UserDefaults but the TTS engine
-            // needs a real voice — use Superstar as the default speaking voice.
-            let engineVoice = (ttsVoice == DuckVoices.wildcardSayName)
-                ? DuckVoices.wildcardDefault.sayName : ttsVoice
+            let engineVoice = DuckVoices.resolvedSayName(for: ttsVoice)
             tts.voice = engineVoice
             serialTTS?.voice = engineVoice
             UserDefaults.standard.set(ttsVoice, forKey: "duck_tts_voice")
@@ -109,19 +106,13 @@ class SpeechService: ObservableObject {
     private var voiceInputTimer: Task<Void, Never>?
     private var deviceCheckTask: Task<Void, Never>?
 
-    // Log file — in Application Support (sandbox-safe)
-    private let logURL: URL = {
-        return DuckConfig.storageDir.appendingPathComponent("speech.log")
-    }()
 
     init() {
         stt = STTEngine()
         tts = TTSEngine()
 
         // Sync persisted voice to TTSEngine (didSet doesn't fire on init).
-        // Wildcard sentinel needs a real voice on the engine — use Superstar.
-        tts.voice = (ttsVoice == DuckVoices.wildcardSayName)
-            ? DuckVoices.wildcardDefault.sayName : ttsVoice
+        tts.voice = DuckVoices.resolvedSayName(for: ttsVoice)
 
         // Now that self is fully initialized, wire log + callbacks
         let logFn: (String) -> Void = { [weak self] msg in self?.log(msg) }
@@ -547,19 +538,6 @@ class SpeechService: ObservableObject {
     // MARK: - Logging
 
     private func log(_ msg: String) {
-        let ts = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(ts)] \(msg)\n"
-        print(line, terminator: "")
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logURL.path) {
-                if let handle = try? FileHandle(forWritingTo: logURL) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: logURL)
-            }
-        }
+        DuckLog.log(msg)
     }
 }

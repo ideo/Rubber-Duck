@@ -37,7 +37,7 @@ actor ClaudeEvaluator {
         let requestBody: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 384,
-            "system": Self.buildSystemPrompt(wildcardEnabled: wildcardEnabled),
+            "system": Self.systemPrompt(wildcardEnabled: wildcardEnabled),
             "messages": [
                 ["role": "user", "content": userPrompt]
             ]
@@ -117,6 +117,15 @@ actor ClaudeEvaluator {
     }
 
     // MARK: - Prompts
+
+    /// Cached prompts — only two possible values, built once.
+    private static let promptWithoutWildcard = buildSystemPrompt(wildcardEnabled: false)
+    private static let promptWithWildcard = buildSystemPrompt(wildcardEnabled: true)
+
+    /// Returns the cached system prompt for the given wildcard state.
+    static func systemPrompt(wildcardEnabled: Bool) -> String {
+        wildcardEnabled ? promptWithWildcard : promptWithoutWildcard
+    }
 
     private static func buildSystemPrompt(wildcardEnabled: Bool = false) -> String {
         let dimText = dimensions.map { "- \($0.0): \($0.1)" }.joined(separator: "\n")
