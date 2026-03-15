@@ -140,16 +140,16 @@ enum DuckVoices {
 
     /// Voice descriptions for the AI prompt (Haiku eval).
     static let wildcardPromptDescription = """
-        Pick the voice that best delivers your reaction. Use superstar about half the time — use the others whenever the moment has a clear vibe.
-        - superstar: upbeat sparkly pop star. for positive, energetic, or neutral reactions.
-        - ralph: deeper serious voice. ONLY for truly dull moments — pure boilerplate, config files, nothing remotely interesting.
+        Pick the voice that best delivers your reaction. Use superstar as the default — it covers anything positive, neutral, or boring. Only use other voices when the moment clearly calls for it.
+        - superstar: the default voice. upbeat sparkly pop star. use for positive, energetic, neutral, AND boring/mundane reactions. this is home base.
+        - ralph: deep gravitas voice. think batman. ONLY for moments demanding dead seriousness — security warnings, critical errors, stern corrections. never for boring content.
         - bad_news: somber ominous organ. ONLY for genuinely bad news — failures, breaking changes, deleted data.
         - good_news: bright cheerful singing. for when the code is really good — elegant solution, impressive fix, high scores across the board.
         - cellos: deep dramatic strings. for big surprising changes — major refactors, unexpected approaches, "wait they did WHAT?"
         - organ: grand church-like. for ambitious scope — massive PRs, bold architecture decisions, swinging for the fences.
         - whisper: quiet secretive. for secrets, very internal thoughts, confiding something private. the inner voice.
-        - trinoids: alien robotic. for inhuman things — bizarre code, incomprehensible logic.
-        - zarvox: electronic sci-fi. for inhuman things — alien approaches, machine-like precision.
+        - trinoids: alien robotic. for when the duck is acting like a machine — processing data, reciting lists, robotic behavior.
+        - zarvox: electronic sci-fi. for when the duck is acting like a computer — calculating, analyzing, cold machine-like precision.
         - jester: silly court jester. ONLY when something is genuinely funny or absurd. must be hilarious.
         - bubbles: bubbly underwater. ONLY for overwhelm — "I'm drowning here", too much at once.
         """
