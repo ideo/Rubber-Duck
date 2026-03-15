@@ -184,6 +184,7 @@ One line config. Script receives JSON with both prompt and response after each a
 - **SessionStart greeting** — Gemini hooks don't support `additionalContext` injection like Claude's `SessionStart`. Could use `BeforeAgent` with `systemMessage` in the response JSON to inject duck personality context.
 - **Gemini API key from env** — Currently reads from file only (`~/Library/Application Support/DuckDuckDuck/gemini_api_key`). Could also check `GEMINI_API_KEY` env var for CI/automation use.
 - **Hook auto-setup** — User must run `gemini` from repo root for `.gemini/settings.json` to be found. No plugin marketplace equivalent for Gemini CLI yet.
+- **Foundation Models wildcard voice tuning** — Two-pass voice picking works (score first, pick voice second) but the 3B model's voice selection needs refinement in the Playground. Current `@Guide` description and system instruction get it mostly right (superstar default, extreme-only switches) but could be tighter. Iterate in `widget/Playground/` with real eval outputs to calibrate when non-superstar voices trigger.
 
 ### Known limitations
 - Gemini CLI hooks only fire when run from a directory containing `.gemini/settings.json` (or a parent with one)

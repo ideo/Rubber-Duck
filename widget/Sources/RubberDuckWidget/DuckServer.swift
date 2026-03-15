@@ -109,7 +109,8 @@ class DuckServer: ObservableObject {
                 case .foundation:
                     scores = try await localEvaluator.evaluate(text: text, source: source,
                                                                 userContext: userContext,
-                                                                claudeContext: claudeContext)
+                                                                claudeContext: claudeContext,
+                                                                wildcardEnabled: wildcardOn)
                 case .anthropic:
                     scores = try await claudeEvaluator.evaluate(text: text, source: source,
                                                                  userContext: userContext,
