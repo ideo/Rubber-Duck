@@ -6,3 +6,4 @@ widget/Playground/.build/
 widget/Playground/.swiftpm/
 .release/
 duck-eval-test.txt
+*.wav
