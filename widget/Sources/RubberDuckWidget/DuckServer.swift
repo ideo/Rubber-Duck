@@ -24,6 +24,7 @@ class DuckServer: ObservableObject {
     var onSessionConnect: (() -> Void)?
 
     let claudeEvaluator: ClaudeEvaluator
+    let geminiEvaluator: GeminiEvaluator
     let localEvaluator: LocalEvaluator
     let permissionGate: PermissionGate
     let broadcaster: WebSocketBroadcaster
@@ -39,6 +40,7 @@ class DuckServer: ObservableObject {
     init(port: Int = DuckConfig.servicePort) {
         self.port = port
         self.claudeEvaluator = ClaudeEvaluator()
+        self.geminiEvaluator = GeminiEvaluator()
         self.localEvaluator = LocalEvaluator()
         self.foundationModelsAvailable = LocalEvaluator.isAvailable
         self.permissionGate = PermissionGate()
@@ -64,6 +66,7 @@ class DuckServer: ObservableObject {
 
         // Capture service references for route handler closures
         let claudeEvaluator = self.claudeEvaluator
+        let geminiEvaluator = self.geminiEvaluator
         let localEvaluator = self.localEvaluator
         let permissionGate = self.permissionGate
         let broadcaster = self.broadcaster
@@ -112,6 +115,11 @@ class DuckServer: ObservableObject {
                                                                  userContext: userContext,
                                                                  claudeContext: claudeContext,
                                                                  wildcardEnabled: wildcardOn)
+                case .gemini:
+                    scores = try await geminiEvaluator.evaluate(text: text, source: source,
+                                                                userContext: userContext,
+                                                                claudeContext: claudeContext,
+                                                                wildcardEnabled: wildcardOn)
                 }
             } catch {
                 DuckLog.log("[server] Eval error: \(error)")
@@ -412,7 +420,7 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
             return "Run \(base)"
         case "ls", "find", "tree": return "List files"
         case "cat", "head", "tail", "less": return "Read a file"
-        case "cd":      return "Change directory"
+        case "cd":      return "Run a command"
         case "cp", "mv": return "Move files"
         case "chmod", "chown": return "Change file permissions"
         case "docker":  return "Run docker"

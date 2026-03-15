@@ -76,7 +76,13 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(modeItem)
 
         // --- Intelligence submenu ---
-        let providerLabel = DuckConfig.evalProvider == .foundation ? "Foundation" : "Haiku"
+        let providerLabel: String = {
+            switch DuckConfig.evalProvider {
+            case .foundation: return "Foundation"
+            case .anthropic: return "Haiku"
+            case .gemini: return "Gemini"
+            }
+        }()
         let intelligenceItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
         let intelligenceMenu = NSMenu()
 
@@ -96,7 +102,15 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         anthropicItem.subtitle = "Requires Claude API key"
         intelligenceMenu.addItem(anthropicItem)
 
-        if !DuckConfig.anthropicAPIKey.isEmpty {
+        let geminiItem = NSMenuItem(title: "Gemini", action: #selector(setProviderGemini), keyEquivalent: "")
+        geminiItem.target = self
+        geminiItem.state = DuckConfig.evalProvider == .gemini ? .on : .off
+        geminiItem.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Google")
+        geminiItem.subtitle = "Requires Gemini API key"
+        intelligenceMenu.addItem(geminiItem)
+
+        let hasAnyKey = !DuckConfig.anthropicAPIKey.isEmpty || !DuckConfig.geminiAPIKey.isEmpty
+        if hasAnyKey {
             intelligenceMenu.addItem(.separator())
             let removeKeyItem = NSMenuItem(title: "Delete API Key(s)", action: #selector(removeAPIKey), keyEquivalent: "")
             removeKeyItem.target = self
@@ -247,8 +261,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         DuckConfig.evalProvider = .anthropic
     }
 
+    @objc private func setProviderGemini() {
+        guard DuckConfig.ensureGeminiAPIKey() else { return }
+        DuckConfig.evalProvider = .gemini
+    }
+
     @objc private func removeAPIKey() {
         DuckConfig.removeAPIKey()
+        DuckConfig.removeGeminiAPIKey()
         DuckConfig.evalProvider = .foundation
     }
 
