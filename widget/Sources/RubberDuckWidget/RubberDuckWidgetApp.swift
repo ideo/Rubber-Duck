@@ -5,9 +5,8 @@
 // Embeds its own HTTP+WebSocket eval server (no Python needed).
 // Owns speech I/O (STT + TTS) and serial to Teensy.
 //
-// Starts dormant (menu bar icon only). The full duck widget
-// activates when the user clicks "Show Duck" in the menu or
-// when a duck USB device is detected via serial.
+// Always visible as a floating plain window. Uses SwiftUI's
+// .windowStyle(.plain) for chromeless liquid glass support.
 //
 // Build: cd widget && make run
 
@@ -67,7 +66,8 @@ struct RubberDuckWidgetApp: App {
                 .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
                 .background(WindowDragArea())
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.plain)
+        .windowLevel(.floating)
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
         .commands {
@@ -182,45 +182,52 @@ struct RubberDuckWidgetApp: App {
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Whether the duck companion is currently active (window + services).
+    /// Whether the duck companion is currently active (speech + reactions).
+    /// When false, the duck shows a sleeping/off state but the window stays visible.
     static var isDuckActive = false
 
-    /// The duck widget window. Tracked explicitly so turnOn/turnOff
-    /// don't accidentally touch menu bar or popup windows.
+    /// The duck widget window. Tracked so turnOn/turnOff don't touch other windows.
     static weak var duckWindow: NSWindow?
 
     /// Service references for turn on/off. Set during wireServices().
-    /// Strong refs — these live for the entire app lifetime (owned by @StateObject).
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Configure on next run loop tick (SwiftUI needs to finish layout first).
-        // Hide via alphaValue — NOT orderOut. orderOut removes the window from the
-        // compositor, causing Liquid Glass to cache an inactive/desaturated appearance
-        // permanently. alphaValue=0 keeps it in the compositor so the glass tint
-        // initializes properly and stays vibrant across on/off cycles.
+        // Disable state restoration — it recreates windows without our properties
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame main")
+        UserDefaults.standard.removeObject(forKey: "NSWindowAutosaveFrames")
+
+        // Ensure app is a regular dock app (not background agent)
+        NSApp.setActivationPolicy(.regular)
+
+        // .plain gives chromeless window. Just add drag + spaces + transparency.
         DispatchQueue.main.async {
-            if let window = NSApp.windows.first {
-                AppDelegate.duckWindow = window
-                AppDelegate.configureDuckWindow(window)
-                // Prevent macOS from caching window chrome between launches.
-                // Without this, state restoration re-adds the title bar.
+            for window in NSApp.windows {
+                window.backgroundColor = .clear
+                window.isOpaque = false
+                window.isMovable = true
+                window.isMovableByWindowBackground = true
+                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                window.hasShadow = true
                 window.isRestorable = false
-                window.alphaValue = 0
+                window.invalidateShadow()
             }
+            NSApp.activate()
         }
-        NSApp.setActivationPolicy(.accessory)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false // Stay alive as menu bar agent
     }
 
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        false // Prevent state restoration from recreating stale windows
+    }
+
     // MARK: - Window Management
 
     /// Configure a window as the borderless floating duck widget.
-    /// Called ONCE at launch — never re-called on turnOn/turnOff.
     static func configureDuckWindow(_ window: NSWindow) {
         window.styleMask = [.borderless]
         window.isMovable = true
@@ -237,43 +244,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView?.layer?.masksToBounds = true
     }
 
-    /// Turn on the duck companion: show window, enable speech.
-    /// Server stays running across on/off cycles so hooks always work.
+    /// Turn on the duck companion: enable speech and reactions.
     @MainActor
     static func turnOn() {
         guard !isDuckActive else { return }
         isDuckActive = true
-
         speechService?.applyListenMode()
-
-        // Show app in dock while duck is active
-        NSApp.setActivationPolicy(.regular)
-
-        if let window = duckWindow {
-            window.styleMask = [.borderless]
-            window.alphaValue = 1
-            window.makeKeyAndOrderFront(nil)
-        }
-
-        NSApp.activate()
         DuckLog.log("[app] Duck Duck Duck turned on")
     }
 
-    /// Turn off the duck companion: hide window, stop speech.
-    /// Server keeps running so Claude hooks stay connected.
+    /// Turn off the duck companion: stop speech, duck stays visible but dormant.
     @MainActor
     static func turnOff() {
         guard isDuckActive else { return }
         isDuckActive = false
-
         speechService?.stopListening()
         speechService?.stopSpeaking()
-
-        // Hide via alpha — NOT orderOut. Keeps glass compositor alive.
-        duckWindow?.alphaValue = 0
-
-        // Return to accessory (menu bar only, no dock icon)
-        NSApp.setActivationPolicy(.accessory)
         DuckLog.log("[app] Duck Duck Duck turned off")
     }
 }
