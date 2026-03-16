@@ -213,10 +213,11 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - **AudioDeviceDiscovery** — CoreAudio enumeration, Teensy detection, hot-plug handling
 
 **UI:**
-- **DuckView** — liquid-glass duck with animated face, exclamation-mark eyes during permissions, context menu
+- **DuckView** — liquid-glass duck with animated face, exclamation-mark eyes during permissions, darting eye thinking animation, context menu
 - **ExpressionEngine** — reducer mapping eval dimensions to visual state (eye shape, beak, glow, hue shift)
 - **DuckTheme** — colors, sizes, spring physics constants
-- **DuckCoordinator** — orchestrates side effects (serial, TTS, expression updates) in response to eval events
+- **DuckCoordinator** — orchestrates side effects (serial, TTS, expression updates, melody) in response to eval events
+- **MelodyEngine** — pitch-shifts a vocal sample ("Mmmm") through the Jeopardy "Think!" melody via AVAudioEngine + AVAudioUnitTimePitch; ~10% chance easter egg while Claude is thinking
 
 **Hardware bridge:**
 - **SerialManager** — USB serial with identity handshake (supports Teensy and ESP32 boards)
@@ -344,5 +345,8 @@ The universal evaluation stays rich (5 dimensions). Each output target has its o
 | creativity | angle weight | frequency range | hue shift + eye widening |
 | ambition | speed | — | scale |
 | risk | oscillation/wiggle | buzzy sawtooth | rotation angle |
+| thinking | — | — | eye darting (6-pos grid) + Jeopardy hum (10%) |
 
 **Permission state**: Eyes become `!` exclamation marks, subtle warm glow. Teensy receives `P,1` (pending) and `P,0` (resolved).
+
+**Thinking state**: While Claude is working, the duck's eyes dart randomly between 6 positions (3 top, 3 bottom) with varied timing. ~10% of the time, the duck hums the Jeopardy "Think!" melody — pitch-shifted vocal sample played note-by-note through AVAudioEngine.

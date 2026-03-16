@@ -11,10 +11,16 @@ class DuckCoordinator: ObservableObject {
     @Published var expression = DuckExpression()
     @Published var showReaction = false
     @Published var mode: DuckMode = .critic
+    @Published var isThinking = false
 
     private let evalService: EvalService
     private let speechService: SpeechService
     private let serialManager: SerialManager
+    private let melodyEngine = MelodyEngine()
+    private var thinkingTimeout: DispatchWorkItem?
+
+    // Max thinking duration before auto-clearing (session crash safety net)
+    private let thinkingTimeoutSeconds: Double = 120
 
     init(evalService: EvalService, speechService: SpeechService, serialManager: SerialManager) {
         self.evalService = evalService
@@ -26,6 +32,40 @@ class DuckCoordinator: ObservableObject {
 
     /// Called when eval scores change. Drives expression, serial, TTS.
     func handleNewEval() {
+        // Thinking state: user eval means Claude is about to work;
+        // Claude eval means Claude is done.
+        let isUserEval = evalService.source == "user"
+        isThinking = isUserEval
+
+        // Cancel any pending timeout, reset for new thinking cycle
+        thinkingTimeout?.cancel()
+        thinkingTimeout = nil
+
+        // Stop any melody that was playing (Claude responded)
+        melodyEngine.stop()
+
+        // Safety net: auto-clear thinking if Claude eval never arrives (session crash, etc.)
+        if isUserEval {
+            let timeout = DispatchWorkItem { [weak self] in
+                self?.isThinking = false
+                self?.melodyEngine.stop()
+            }
+            thinkingTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + thinkingTimeoutSeconds, execute: timeout)
+        }
+
+        // ~10% chance: hum Jeopardy while Claude is thinking
+        if isUserEval {
+            if Int.random(in: 1...10) == 1 {
+                if let teensy = AudioDeviceDiscovery.findTeensy() {
+                    melodyEngine.outputDeviceID = teensy.deviceID
+                } else {
+                    melodyEngine.outputDeviceID = nil
+                }
+                melodyEngine.start()
+            }
+        }
+
         updateExpression()
         flashReaction()
 
@@ -43,7 +83,6 @@ class DuckCoordinator: ObservableObject {
 
         // Speak based on current mode
         // Relay mode: only speak Claude's output, not the user's (you know what you said)
-        let isUserEval = evalService.source == "user"
         let textToSpeak: String
         switch mode {
         case .critic:
