@@ -12,6 +12,8 @@ struct DuckView: View {
     @EnvironmentObject var serialManager: SerialManager
 
     @State private var isBlinking = false
+    @State private var thinkingEyeX: CGFloat = 0
+    @State private var thinkingEyeY: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -60,6 +62,14 @@ struct DuckView: View {
                 coordinator.handlePermissionResolved()
             }
         }
+        .onChange(of: coordinator.isThinking) {
+            if coordinator.isThinking {
+                startThinkingAnimation()
+            } else {
+                thinkingEyeX = 0
+                thinkingEyeY = 0
+            }
+        }
     }
 
     // MARK: - Duck Body
@@ -73,8 +83,16 @@ struct DuckView: View {
                     duckEye
                     duckEye
                 }
-                .offset(y: -2 + coordinator.expression.eyeOffsetY)
+                .offset(
+                    x: coordinator.isThinking && !evalService.permissionPending
+                        ? thinkingEyeX : 0,
+                    y: -2 + coordinator.expression.eyeOffsetY
+                        + (coordinator.isThinking && !evalService.permissionPending
+                           ? thinkingEyeY : 0)
+                )
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: evalService.permissionPending)
+                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeX)
+                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeY)
 
                 // Beak — large, below eyes
                 duckBeak
@@ -269,6 +287,23 @@ struct DuckView: View {
                 isBlinking = false
                 scheduleBlink()
             }
+        }
+    }
+
+    // 6-position grid: 3 top row, 3 bottom row. Bottom-center is home.
+    private static let eyePositions: [(x: CGFloat, y: CGFloat)] = [
+        (-4, -3), (0, -3), (4, -3),   // top row
+        (-4,  0), (0,  0), (4,  0),   // bottom row (center = home)
+    ]
+
+    private func startThinkingAnimation() {
+        guard coordinator.isThinking else { return }
+        let pos = Self.eyePositions.randomElement()!
+        thinkingEyeX = pos.x
+        thinkingEyeY = pos.y
+        let delay = Double.random(in: 0.3...0.8)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            startThinkingAnimation()
         }
     }
 }
