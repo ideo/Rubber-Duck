@@ -32,13 +32,8 @@ class DuckCoordinator: ObservableObject {
 
     /// Called when eval scores change. Drives expression, serial, TTS.
     func handleNewEval() {
-        // Duck is off — still forward scores to hardware but skip everything else
-        guard AppDelegate.isDuckActive else {
-            if let scores = evalService.scores {
-                serialManager.sendScores(scores, source: evalService.source)
-            }
-            return
-        }
+        // Duck is off — skip everything
+        guard AppDelegate.isDuckActive else { return }
 
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
