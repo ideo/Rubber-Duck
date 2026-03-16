@@ -173,21 +173,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Whether the duck companion is currently active (window + services).
     static var isDuckActive = false
 
+    /// The duck widget window. Tracked explicitly so turnOn/turnOff
+    /// don't accidentally touch menu bar or popup windows.
+    static weak var duckWindow: NSWindow?
+
     /// Service references for turn on/off. Set during wireServices().
     /// Strong refs — these live for the entire app lifetime (owned by @StateObject).
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        // Set accessory policy BEFORE any windows appear — prevents flicker
-        NSApp.setActivationPolicy(.accessory)
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide the window that SwiftUI auto-creates — we'll show it on demand
-        for window in NSApp.windows {
-            window.orderOut(nil)
+        // Configure on next run loop tick (SwiftUI needs to finish layout first).
+        // Hide via alphaValue — NOT orderOut. orderOut removes the window from the
+        // compositor, causing Liquid Glass to cache an inactive/desaturated appearance
+        // permanently. alphaValue=0 keeps it in the compositor so the glass tint
+        // initializes properly and stays vibrant across on/off cycles.
+        DispatchQueue.main.async {
+            // The duck window is the first (usually only) SwiftUI-created window
+            if let window = NSApp.windows.first {
+                AppDelegate.duckWindow = window
+                AppDelegate.configureDuckWindow(window)
+                window.alphaValue = 0
+            }
         }
+        NSApp.setActivationPolicy(.accessory)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -197,6 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window Management
 
     /// Configure a window as the borderless floating duck widget.
+    /// Called ONCE at launch — never re-called on turnOn/turnOff.
     static func configureDuckWindow(_ window: NSWindow) {
         window.styleMask = [.borderless]
         window.isMovable = true
@@ -225,8 +235,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Show app in dock while duck is active
         NSApp.setActivationPolicy(.regular)
 
-        for window in NSApp.windows where window.contentView != nil {
-            configureDuckWindow(window)
+        if let window = duckWindow {
+            window.styleMask = [.borderless]
+            window.alphaValue = 1
             window.makeKeyAndOrderFront(nil)
         }
 
@@ -244,9 +255,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         speechService?.stopListening()
         speechService?.stopSpeaking()
 
-        for window in NSApp.windows {
-            window.orderOut(nil)
-        }
+        // Hide via alpha — NOT orderOut. Keeps glass compositor alive.
+        duckWindow?.alphaValue = 0
 
         // Return to accessory (menu bar only, no dock icon)
         NSApp.setActivationPolicy(.accessory)

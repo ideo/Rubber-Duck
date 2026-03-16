@@ -1,5 +1,6 @@
-// Tmux Bridge — Inject voice commands into Claude Code CLI via tmux send-keys.
+// Tmux Bridge — Inject voice commands into a CLI tool via tmux send-keys.
 //
+// Used for Claude Code relay mode (voice → tmux → Claude).
 // Uses Process to shell out to tmux. Only active in unsandboxed (dev) builds.
 
 import Foundation
@@ -15,7 +16,7 @@ struct TmuxBridge {
         self.pane = pane
     }
 
-    /// Send text to Claude Code via tmux send-keys.
+    /// Send text to a CLI tool via tmux send-keys.
     func sendToClaudeCode(_ text: String) {
         let target = "\(session):\(pane)"
 

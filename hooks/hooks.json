@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-before-model.sh",
+            "command": "${extensionPath}/gemini/hooks/on-before-model.sh",
+            "name": "Duck Duck Duck: Score prompt",
             "timeout": 10000
           }
         ]
@@ -16,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-after-agent.sh",
+            "command": "${extensionPath}/gemini/hooks/on-after-agent.sh",
+            "name": "Duck Duck Duck: Score response",
             "timeout": 10000
           }
         ]
@@ -27,7 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-notification.sh",
+            "command": "${extensionPath}/gemini/hooks/on-notification.sh",
+            "name": "Duck Duck Duck: Permission alert",
             "timeout": 5000
           }
         ]

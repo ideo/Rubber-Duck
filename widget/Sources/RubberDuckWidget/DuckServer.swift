@@ -284,6 +284,41 @@ class DuckServer: ObservableObject {
             return .json(responseData)
         }
 
+        // POST /permission-gemini — notification-only alert
+        // Gemini's Notification hook is observe-only (can't relay decisions back),
+        // so we just speak an alert and let the user handle it in the terminal.
+        srv.post("/permission-gemini") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+
+            let toolName = json["tool_name"] as? String ?? ""
+            DuckLog.log("[permission-gemini] Alert: \(toolName)")
+
+            // Speak a brief heads-up — user handles approval in the terminal
+            let alert = "Hey! Gemini needs your permission."
+            await MainActor.run {
+                localTransport.deliverPermission(PermissionEvent(
+                    type: "permission",
+                    status: "pending",
+                    toolName: toolName,
+                    toolInput: nil,
+                    optionLabels: nil,
+                    actionSummary: alert
+                ))
+            }
+            await broadcaster.broadcast(PermissionEvent(
+                type: "permission",
+                status: "pending",
+                toolName: toolName,
+                toolInput: nil,
+                optionLabels: nil,
+                actionSummary: alert
+            ))
+
+            return .json("{\"status\":\"received\"}".data(using: .utf8)!)
+        }
+
         // GET /health
         srv.get("/health") { _ in
             await markPluginConnected()
