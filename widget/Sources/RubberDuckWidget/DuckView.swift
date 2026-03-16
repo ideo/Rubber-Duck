@@ -116,7 +116,7 @@ struct DuckView: View {
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         // Liquid Glass — real refraction + lensing, tinted duck yellow
         .glassEffect(
-            .clear.interactive(true).tint(DuckTheme.bodyColor),
+            .clear.tint(DuckTheme.bodyColor),
             in: RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
         )
     }

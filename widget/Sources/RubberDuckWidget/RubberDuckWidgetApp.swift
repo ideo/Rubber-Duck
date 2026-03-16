@@ -11,6 +11,7 @@
 // Build: cd widget && make run
 
 import SwiftUI
+import ObjectiveC
 
 @main
 struct RubberDuckWidgetApp: App {
@@ -211,6 +212,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
                 window.hasShadow = true
                 window.isRestorable = false
+                // Keep glass tint saturated even when app isn't frontmost
+                AlwaysActiveWindowHelper.apply(to: window)
                 window.invalidateShadow()
             }
             NSApp.activate()
@@ -261,6 +264,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         speechService?.stopListening()
         speechService?.stopSpeaking()
         DuckLog.log("[app] Duck Duck Duck turned off")
+    }
+}
+
+// MARK: - Always-Active Window (Glass Tint Fix)
+
+/// Dynamically subclasses the SwiftUI window's actual runtime class so that
+/// `isKeyWindow` always returns `true`. This keeps the liquid glass compositor
+/// rendering in its saturated/tinted state even when the app isn't frontmost.
+/// By subclassing the real class (not plain NSWindow), all private SwiftUI
+/// methods like `setMenuBarHeight:` are preserved.
+enum AlwaysActiveWindowHelper {
+    private static var appliedClasses: Set<String> = []
+
+    static func apply(to window: NSWindow) {
+        let originalClass: AnyClass = type(of: window)
+        let className = NSStringFromClass(originalClass)
+
+        // Only create the subclass once per original class
+        let subclassName = "AlwaysActive_" + className
+        if let existingClass = NSClassFromString(subclassName) {
+            object_setClass(window, existingClass)
+            return
+        }
+
+        // Create dynamic subclass of the window's actual runtime class
+        guard let subclass = objc_allocateClassPair(originalClass, subclassName, 0) else {
+            return
+        }
+
+        // Override isKeyWindow getter to always return true
+        let selector = #selector(getter: NSWindow.isKeyWindow)
+        guard let method = class_getInstanceMethod(originalClass, selector) else {
+            return
+        }
+        let types = method_getTypeEncoding(method)
+        let block: @convention(block) (AnyObject) -> Bool = { _ in true }
+        let imp = imp_implementationWithBlock(block)
+        class_addMethod(subclass, selector, imp, types)
+
+        objc_registerClassPair(subclass)
+        object_setClass(window, subclass)
     }
 }
 
