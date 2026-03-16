@@ -350,3 +350,5 @@ The universal evaluation stays rich (5 dimensions). Each output target has its o
 **Permission state**: Eyes become `!` exclamation marks, subtle warm glow. Teensy receives `P,1` (pending) and `P,0` (resolved).
 
 **Thinking state**: While Claude is working, the duck's eyes dart randomly between 6 positions (3 top, 3 bottom) with varied timing. ~10% of the time, the duck hums the Jeopardy "Think!" melody — pitch-shifted vocal sample played note-by-note through AVAudioEngine.
+
+**Off state**: Turn Off from the 🦆 menu silences everything — no evals, no speech, no serial commands, no reactions. An X appears over the beak. Hardware receives nothing. Turn On resumes normal operation.

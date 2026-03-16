@@ -6,6 +6,11 @@
 - 120s timeout safety net auto-clears if session crashes
 - Triggered by user eval → cleared by Claude eval
 
+## ~~Duck off = truly off~~ ✓ DONE
+- Turn Off from menu silences everything: no evals, no speech, no serial, no reactions
+- X indicator over beak mouth when off
+- Hardware (Teensy/ESP32) gets nothing when off — fully silent
+
 ## UAC audio — S3 launch readiness
 - S3 boards are the likely launch hardware — UAC audio path needs to be rock solid
 - Test USB Audio Class mic input from S3 (not just Teensy) — verify sample rate, format, latency
