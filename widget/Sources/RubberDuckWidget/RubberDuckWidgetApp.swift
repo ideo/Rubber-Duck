@@ -184,7 +184,7 @@ struct RubberDuckWidgetApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     /// Whether the duck companion is currently active (speech + reactions).
     /// When false, the duck shows a sleeping/off state but the window stays visible.
-    static var isDuckActive = false
+    static var isDuckActive = true
 
     /// The duck widget window. Tracked so turnOn/turnOff don't touch other windows.
     static weak var duckWindow: NSWindow?
@@ -263,6 +263,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isDuckActive = false
         speechService?.stopListening()
         speechService?.stopSpeaking()
+        coordinator?.clearThinking()
         DuckLog.log("[app] Duck Duck Duck turned off")
     }
 }

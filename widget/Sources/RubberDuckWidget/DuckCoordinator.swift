@@ -117,6 +117,14 @@ class DuckCoordinator: ObservableObject {
         speechService.speak(label)
     }
 
+    /// Clean up thinking state (called on turn-off).
+    func clearThinking() {
+        isThinking = false
+        thinkingTimeout?.cancel()
+        thinkingTimeout = nil
+        melodyEngine.stop()
+    }
+
     /// Called when a new permission request arrives.
     func handlePermissionChange() {
         guard AppDelegate.isDuckActive else { return }
