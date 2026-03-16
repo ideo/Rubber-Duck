@@ -1,15 +1,20 @@
 # TBD — Open Items
 
-## Working-state animation / "thinking" indicator
-- When Claude is actively working (not idle), the duck should show it — head bob, whistle, eye animation, something
-- Need to explore available plugin hooks to detect when Claude is mid-response vs idle
-- Could use `SubAgentStart`/`SubAgentStop` or similar hooks if they exist
-- The idle bird head makes sense when nothing is happening, but feels wrong during long tool runs
+## ~~Working-state animation / "thinking" indicator~~ ✓ DONE
+- Eyes dart randomly between 6 positions (3×2 grid) while Claude is thinking
+- ~10% chance: hums Jeopardy "Think!" melody (pitch-shifted "Mmmm" sample via AVAudioEngine)
+- 120s timeout safety net auto-clears if session crashes
+- Triggered by user eval → cleared by Claude eval
 
-## UAC hot-swap test
-- Need to test swapping in a Teensy (USB Audio Class device) while an ESP32 serial device is connected
-- Verify the widget correctly detects the UAC device and switches audio paths
-- Verify switching back to ESP32 when Teensy is unplugged
+## UAC audio — S3 launch readiness
+- S3 boards are the likely launch hardware — UAC audio path needs to be rock solid
+- Test USB Audio Class mic input from S3 (not just Teensy) — verify sample rate, format, latency
+- Test TTS output via `say -a` to S3 UAC device — verify routing, volume, no clipping
+- Test hot-plug behavior: S3 plugged in mid-session → widget detects and switches audio paths
+- Test hot-unplug: S3 removed mid-session → falls back to local Mac mic + speakers cleanly
+- Test swap: S3 connected while ESP32 serial device is also connected → correct device wins
+- Verify `AudioDeviceDiscovery.findTeensy()` naming works for S3 (device name may differ)
+- Test MelodyEngine routing to S3 UAC device (outputDeviceID)
 
 ## Wildcard voice — tuning
 - Two-pass Foundation Models implementation works (LocalEvaluator: score → LocalVoicePick)

@@ -32,6 +32,9 @@ class DuckCoordinator: ObservableObject {
 
     /// Called when eval scores change. Drives expression, serial, TTS.
     func handleNewEval() {
+        // Duck is off — skip everything
+        guard AppDelegate.isDuckActive else { return }
+
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
         let isUserEval = evalService.source == "user"
@@ -116,6 +119,7 @@ class DuckCoordinator: ObservableObject {
 
     /// Called when a new permission request arrives.
     func handlePermissionChange() {
+        guard AppDelegate.isDuckActive else { return }
         updateExpression()
         if evalService.permissionPending {
             serialManager.sendCommand("P,1")
