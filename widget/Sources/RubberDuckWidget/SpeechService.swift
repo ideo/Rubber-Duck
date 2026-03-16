@@ -23,7 +23,7 @@ enum ListenMode: Int, CaseIterable {
         switch self {
         case .off: return "Off"
         case .permissionsOnly: return "Permissions Only"
-        case .active: return "Always On"
+        case .active: return "Wake Word"
         }
     }
 

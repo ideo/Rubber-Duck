@@ -186,21 +186,76 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        Button("Start Claude Session") { CLISession.launch() }
-        Button("Start Gemini Session") { CLISession.launchPlain("gemini") }
+        Button {
+            CLISession.launch()
+        } label: {
+            Label("Launch Claude Code", systemImage: "terminal.fill")
+        }
 
-        Divider()
-
-        // Cycle listen mode: Off → Permissions Only → Active
-        Button("Mic: \(speechService.listenMode.label)") {
-            speechService.listenMode = speechService.listenMode.next
+        Menu {
+            Button {
+                CLISession.launchPlain("gemini")
+            } label: {
+                Label("Launch Gemini CLI", systemImage: "terminal.fill")
+            }
+        } label: {
+            Label("Experimental", systemImage: "flask")
         }
 
         Divider()
 
-        Button("Quit Duck-Duck-Duck") {
+        // Mode selector — icon reflects current mode
+        Menu {
+            Button {
+                coordinator.setMode(.critic)
+            } label: {
+                Label("Critic Mode", systemImage: "eyeglasses")
+            }
+            Button {
+                coordinator.setMode(.relay)
+            } label: {
+                Label("Relay Mode", systemImage: "phone.fill")
+            }
+        } label: {
+            Label(
+                coordinator.mode == .critic ? "Critic Mode" : "Relay Mode",
+                systemImage: coordinator.mode == .critic ? "eyeglasses" : "phone.fill"
+            )
+        }
+
+        // Voice
+        Menu {
+            Button {
+                speechService.listenMode = .off
+            } label: {
+                Label("Off", systemImage: "microphone.slash.fill")
+            }
+            Button {
+                speechService.listenMode = .permissionsOnly
+            } label: {
+                Label("Permissions Only", systemImage: "microphone.badge.xmark")
+            }
+            Button {
+                speechService.listenMode = .active
+            } label: {
+                Label("Wake Word (\"Ducky\")", systemImage: "microphone.fill")
+            }
+        } label: {
+            Label(
+                "Voice: \(speechService.listenMode.label)",
+                systemImage: speechService.listenMode == .off ? "microphone.slash.fill"
+                    : speechService.listenMode == .permissionsOnly ? "microphone.badge.xmark"
+                    : "microphone.fill"
+            )
+        }
+
+        Divider()
+
+        Button {
             duckServer.stop()
             NSApp.terminate(nil)
+        } label: {
+            Label("Quit Duck-Duck-Duck", systemImage: "xmark.square.fill")
         }
     }
 

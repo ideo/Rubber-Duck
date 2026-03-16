@@ -76,8 +76,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Mode submenu ---
-        let modeLabel = coordinator.mode == .critic ? "Critic" : "Relay"
-        let modeItem = NSMenuItem(title: "Mode: \(modeLabel)", action: nil, keyEquivalent: "")
+        let modeLabel = coordinator.mode == .critic ? "Critic Mode" : "Relay Mode"
+        let modeIcon = coordinator.mode == .critic ? "eyeglasses" : "phone.fill"
+        let modeItem = NSMenuItem(title: modeLabel, action: nil, keyEquivalent: "")
+        modeItem.image = NSImage(systemSymbolName: modeIcon, accessibilityDescription: modeLabel)
         let modeMenu = NSMenu()
 
         let criticItem = NSMenuItem(title: "Critic", action: #selector(setModeCritic), keyEquivalent: "")
@@ -106,6 +108,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             }
         }()
         let intelligenceItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
+        intelligenceItem.image = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: "Intelligence")
         let intelligenceMenu = NSMenu()
 
         if duckServer.foundationModelsAvailable {
@@ -147,6 +150,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let isWildcard = speechService.isWildcardMode
         let voiceLabel = isWildcard ? "Wildcard" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
+        voiceItem.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice")
         let voiceMenu = NSMenu()
 
         let wildcardItem = NSMenuItem(title: "Wildcard", action: #selector(selectWildcard), keyEquivalent: "")
@@ -168,7 +172,15 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         // --- Mic submenu ---
         let micLabel = speechService.listenMode.label
+        let micIcon: String = {
+            switch speechService.listenMode {
+            case .off: return "microphone.slash.fill"
+            case .permissionsOnly: return "microphone.badge.xmark"
+            case .active: return "microphone.fill"
+            }
+        }()
         let micItem = NSMenuItem(title: "Mic: \(micLabel)", action: nil, keyEquivalent: "")
+        micItem.image = NSImage(systemSymbolName: micIcon, accessibilityDescription: micLabel)
         let micMenu = NSMenu()
 
         let listenModeIcons: [ListenMode: String] = [
@@ -200,11 +212,28 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         micItem.submenu = micMenu
         menu.addItem(micItem)
 
-        // --- Launch at Login (settings group with other prefs above) ---
-        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(loginItem)
+        // --- Startup selector ---
+        let isLoginEnabled = SMAppService.mainApp.status == .enabled
+        let startupLabel = isLoginEnabled ? "Launch at Login" : "Manual"
+        let startupIcon = isLoginEnabled ? "play.fill" : "hand.point.up.fill"
+        let startupItem = NSMenuItem(title: startupLabel, action: nil, keyEquivalent: "")
+        startupItem.image = NSImage(systemSymbolName: startupIcon, accessibilityDescription: startupLabel)
+        let startupMenu = NSMenu()
+
+        let loginOption = NSMenuItem(title: "Launch at Login", action: #selector(setLaunchAtLogin), keyEquivalent: "")
+        loginOption.target = self
+        loginOption.state = isLoginEnabled ? .on : .off
+        loginOption.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Auto")
+        startupMenu.addItem(loginOption)
+
+        let manualOption = NSMenuItem(title: "Manual", action: #selector(setManualLaunch), keyEquivalent: "")
+        manualOption.target = self
+        manualOption.state = isLoginEnabled ? .off : .on
+        manualOption.image = NSImage(systemSymbolName: "hand.point.up.fill", accessibilityDescription: "Manual")
+        startupMenu.addItem(manualOption)
+
+        startupItem.submenu = startupMenu
+        menu.addItem(startupItem)
 
         menu.addItem(.separator())
 
@@ -225,19 +254,20 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Setup ---
-        if duckServer.pluginConnected {
-            menu.addItem(item("Update Claude Plugin", action: #selector(installPlugin)))
-        } else {
-            menu.addItem(item("Install Claude Plugin", action: #selector(installPlugin)))
-        }
+        let pluginTitle = duckServer.pluginConnected ? "Update Claude Plugin" : "Install Claude Plugin"
+        let pluginItem = NSMenuItem(title: pluginTitle, action: #selector(installPlugin), keyEquivalent: "")
+        pluginItem.target = self
+        pluginItem.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Plugin")
+        menu.addItem(pluginItem)
 
         // --- Experimental ---
         let experimentalItem = NSMenuItem(title: "Experimental", action: nil, keyEquivalent: "")
+        experimentalItem.image = NSImage(systemSymbolName: "flask", accessibilityDescription: "Experimental")
         let experimentalMenu = NSMenu()
 
         let geminiInstall = NSMenuItem(title: "Install Gemini Extension", action: #selector(installGeminiExtension), keyEquivalent: "")
         geminiInstall.target = self
-        geminiInstall.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Gemini")
+        geminiInstall.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Extension")
         geminiInstall.subtitle = "Experimental — eval scoring and alerts only"
         experimentalMenu.addItem(geminiInstall)
 
@@ -354,18 +384,21 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         speechService.speak("Hi, I'm \(label).", skipChirpWait: true)
     }
 
-    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
-        let service = SMAppService.mainApp
+    @objc private func setLaunchAtLogin() {
         do {
-            if service.status == .enabled {
-                try service.unregister()
-                print("[app] Unregistered Launch at Login")
-            } else {
-                try service.register()
-                print("[app] Registered Launch at Login")
-            }
+            try SMAppService.mainApp.register()
+            print("[app] Registered Launch at Login")
         } catch {
-            print("[app] Launch at Login toggle failed: \(error)")
+            print("[app] Launch at Login register failed: \(error)")
+        }
+    }
+
+    @objc private func setManualLaunch() {
+        do {
+            try SMAppService.mainApp.unregister()
+            print("[app] Unregistered Launch at Login")
+        } catch {
+            print("[app] Launch at Login unregister failed: \(error)")
         }
     }
 
