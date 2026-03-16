@@ -17,6 +17,10 @@ class DuckCoordinator: ObservableObject {
     private let speechService: SpeechService
     private let serialManager: SerialManager
     private let melodyEngine = MelodyEngine()
+    private var thinkingTimeout: DispatchWorkItem?
+
+    // Max thinking duration before auto-clearing (session crash safety net)
+    private let thinkingTimeoutSeconds: Double = 120
 
     init(evalService: EvalService, speechService: SpeechService, serialManager: SerialManager) {
         self.evalService = evalService
@@ -33,8 +37,22 @@ class DuckCoordinator: ObservableObject {
         let isUserEval = evalService.source == "user"
         isThinking = isUserEval
 
+        // Cancel any pending timeout, reset for new thinking cycle
+        thinkingTimeout?.cancel()
+        thinkingTimeout = nil
+
         // Stop any melody that was playing (Claude responded)
         melodyEngine.stop()
+
+        // Safety net: auto-clear thinking if Claude eval never arrives (session crash, etc.)
+        if isUserEval {
+            let timeout = DispatchWorkItem { [weak self] in
+                self?.isThinking = false
+                self?.melodyEngine.stop()
+            }
+            thinkingTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + thinkingTimeoutSeconds, execute: timeout)
+        }
 
         // ~10% chance: hum Jeopardy while Claude is thinking
         if isUserEval {
