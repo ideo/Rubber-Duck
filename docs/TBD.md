@@ -15,3 +15,8 @@
 - Currently Haiku-only (voice key returned in eval JSON)
 - Foundation Models needs a separate second-pass call after eval (can't modify the fragile 3B eval prompt)
 - Requires Xcode Playground iteration to tune the voice picker prompt for the 3B model
+
+## 3D duck viewer
+- Three.js viewer at localhost:3333/viewer exists but was never fully dialed in
+- Both duck prototypes (servo + LED) render but need polish
+- Could become a fun showpiece if the models and animations get proper attention

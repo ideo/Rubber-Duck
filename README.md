@@ -38,7 +38,7 @@ claude plugin install duck-duck-duck
 - Claude Code 1.0.33+
 - tmux for voice commands (`brew install tmux`)
 
-**Eval engine:** Defaults to Apple Foundation Models (free, on-device, sub-second). Optionally switch to Anthropic API (Claude Haiku) from the 🦆 menu bar for higher-quality scoring — requires an API key.
+**Eval engine:** Defaults to Apple Foundation Models (free, on-device, sub-second). Optionally switch to Anthropic API (Claude Haiku) or Google Gemini Flash from the 🦆 menu bar for higher-quality scoring — requires an API key.
 
 ## Architecture
 
@@ -194,6 +194,8 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - **DuckServer** — zero-dependency HTTP + WebSocket server on `:3333` built on Network.framework (`MiniServer`)
 - **LocalEvaluator** — on-device eval via Apple Foundation Models (~3B, free, default)
 - **ClaudeEvaluator** — calls Anthropic Messages API directly via URLSession (Claude Haiku, optional)
+- **GeminiEvaluator** — calls Google Generative Language API (Gemini Flash, optional)
+- **GeminiExtensionInstaller** — copies Gemini CLI extension hooks to `~/.gemini/extensions/`
 - **PermissionGate** — actor-based async blocking until voice response or 30s timeout
 - **WebSocketBroadcaster** — fans out eval results and permission events to dashboard/viewer clients
 - **TmuxBridge** — injects voice commands into Claude Code via `tmux send-keys`
@@ -225,7 +227,9 @@ SwiftUI macOS app — the duck's brain. Self-contained: no external services nee
 - `assets/duckIcon.icon/` — Apple Icon Composer bundle (`.icon` format) with layered eyes + beak on yellow fill
 - Compiled via `xcrun actool` in the Makefile → `.icns` + `Assets.car` in app bundle Resources
 
-Right-click menu: Start Claude Session, Start/Stop Listening, Mode Toggle, status info, Quit.
+**Menu bar (🦆):** Intelligence picker (Foundation Models / Haiku / Gemini), voice mode (Off / Permissions Only / Wake Word), Launch Claude Code, Experimental submenu (Launch Gemini CLI, Install Gemini Extension), Install Claude Plugin, Launch at Login selector, Show/Hide Duck, Quit. All items have SF Symbol icons.
+
+**Right-click menu:** Launch Claude Code, Experimental (Launch Gemini CLI), Mode selector (Critic / Relay), Voice selector (Off / Permissions Only / Wake Word), Quit.
 
 ### Server Routes (`:3333`)
 
@@ -236,6 +240,7 @@ Right-click menu: Start Claude Session, Start/Stop Listening, Mode Toggle, statu
 | `GET /ws` | WebSocket for live updates |
 | `POST /evaluate` | Trigger evaluation (called by hooks) |
 | `POST /permission` | Voice permission gate — blocks until response |
+| `POST /permission-gemini` | Gemini CLI notification (speak-only, no relay) |
 | `GET /health` | Server status JSON |
 
 ### Plugin (`plugin/`)
@@ -247,6 +252,16 @@ Claude Code plugin — installed via `claude plugin install duck-duck-duck`. Hoo
 | **UserPromptSubmit** | Sends your prompt to the duck for eval scoring |
 | **Stop** | Sends Claude's response for eval scoring |
 | **PermissionRequest** | Asks the duck (via voice) whether to allow the action |
+
+### Gemini CLI Support (Experimental)
+
+The duck can also watch [Gemini CLI](https://github.com/google-gemini/gemini-cli) sessions. Install via **Experimental → Install Gemini Extension** in the 🦆 menu bar, or manually copy `gemini-extension.json` to `~/.gemini/extensions/`.
+
+**Limitations:** Gemini CLI hooks are observe-only — the duck scores prompts/responses and speaks notification alerts for permission requests, but cannot relay approval decisions back. You must approve permissions manually in the terminal.
+
+| Hook | What it does |
+|------|-------------|
+| **OnNotification** | Scores eval text and speaks permission alerts (notification-only) |
 
 ### Scripts (`scripts/`)
 - `duck-session` — tmux launcher for Claude Code (widget must be running)

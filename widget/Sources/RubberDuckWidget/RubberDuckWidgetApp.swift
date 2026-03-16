@@ -70,6 +70,18 @@ struct RubberDuckWidgetApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
+        .commands {
+            CommandGroup(replacing: .help) {
+                HelpMenuButton()
+            }
+        }
+
+        Window("Duck Duck Duck Help", id: "help") {
+            HelpView()
+        }
+        .windowStyle(.automatic)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 
     // MARK: - Service Wiring
@@ -276,4 +288,17 @@ struct WindowDragArea: NSViewRepresentable {
 
 class DraggableView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
+}
+
+// MARK: - Help Menu
+
+struct HelpMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Duck Duck Duck Help") {
+            NSApp.activate()
+            openWindow(id: "help")
+        }
+    }
 }
