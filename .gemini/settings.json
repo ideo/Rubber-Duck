@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./gemini/hooks/on-notification.sh",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }

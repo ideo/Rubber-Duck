@@ -178,13 +178,16 @@ One line config. Script receives JSON with both prompt and response after each a
 - **AfterAgent hook** — scores Gemini's responses after each turn (equivalent to Claude's `Stop`)
 - **Project-level config** — `.gemini/settings.json` in repo root, hooks auto-discovered when `gemini` is run from repo root
 
+### Built but untested
+- **Tmux permission relay** — `Notification` hook (`on-notification.sh`) fires on `ToolPermission`, POSTs to `/permission-gemini` endpoint. Widget speaks question, listens for voice, TmuxBridge types `y`/`n` into Gemini's tmux pane. GitHub-release only (TmuxBridge blocked in sandbox). Endpoint + hook built, needs live testing in tmux.
+- **BeforeTool blocking hook** — `on-before-tool.sh` POSTs to `/permission` and blocks (exit 2 to deny). Works but fires for ALL tools, not just ones needing permission. Disabled in `.gemini/settings.json` — enable only if you want voice gating on every tool call.
+
 ### Not yet implemented
-- **Voice permission gating** — Gemini's `BeforeTool` fires for ALL tools (not just ones needing permission), and fires AFTER the permission dialog. No way to intercept permissions via hooks. Open issue: google-gemini/gemini-cli#18266
-- **Tmux permission relay** — Could use `Notification` hook (fires on `ToolPermission`) to hear about permission requests, then TmuxBridge to type y/n into Gemini's terminal. GitHub-release only (TmuxBridge blocked in sandbox). Not built yet.
 - **SessionStart greeting** — Gemini hooks don't support `additionalContext` injection like Claude's `SessionStart`. Could use `BeforeAgent` with `systemMessage` in the response JSON to inject duck personality context.
-- **Gemini API key from env** — Currently reads from file only (`~/Library/Application Support/DuckDuckDuck/gemini_api_key`). Could also check `GEMINI_API_KEY` env var for CI/automation use.
 - **Hook auto-setup** — User must run `gemini` from repo root for `.gemini/settings.json` to be found. No plugin marketplace equivalent for Gemini CLI yet.
-- **Foundation Models wildcard voice tuning** — Two-pass voice picking works (score first, pick voice second) but the 3B model's voice selection needs refinement in the Playground. Current `@Guide` description and system instruction get it mostly right (superstar default, extreme-only switches) but could be tighter. Iterate in `widget/Playground/` with real eval outputs to calibrate when non-superstar voices trigger.
+
+### Needs refinement
+- **Foundation Models wildcard voice tuning** — Two-pass voice picking works (score first, pick voice second) but the 3B model's voice selection needs calibration in `widget/Playground/`. Current prompt gets superstar ~80% right but other voices trigger too eagerly for middle-of-the-road content. Iterate with real eval outputs.
 
 ### Known limitations
 - Gemini CLI hooks only fire when run from a directory containing `.gemini/settings.json` (or a parent with one)

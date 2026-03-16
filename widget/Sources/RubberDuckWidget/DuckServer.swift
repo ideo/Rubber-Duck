@@ -284,6 +284,76 @@ class DuckServer: ObservableObject {
             return .json(responseData)
         }
 
+        // POST /permission-gemini — fire-and-forget Gemini CLI permission relay
+        // Notification hook posts here when Gemini pauses for tool approval.
+        // Returns 200 immediately, then async: speak question → voice listen → tmux y/n.
+        srv.post("/permission-gemini") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+
+            let toolName = json["tool_name"] as? String ?? "unknown"
+            let toolInput = json["tool_input"] ?? "{}"
+            let tmuxTarget = json["tmux_target"] as? String ?? ""
+
+            let summary = summarizePermission(toolName: toolName, toolInput: toolInput)
+            DuckLog.log("[permission-gemini] Notification: \(toolName) → \"\(summary)\" (tmux: \(tmuxTarget))")
+
+            // Broadcast pending
+            let pendingEvent = PermissionEvent(
+                type: "permission",
+                status: "pending",
+                toolName: toolName,
+                toolInput: String(describing: toolInput).prefix(200).description,
+                optionLabels: nil,
+                actionSummary: summary
+            )
+            await broadcaster.broadcast(pendingEvent)
+            await MainActor.run {
+                localTransport.deliverPermission(pendingEvent)
+            }
+
+            // Fire async: wait for voice, then tmux-relay the answer
+            let gate = permissionGate
+            let bridge = tmuxBridge
+            let bcast = broadcaster
+            let transport = localTransport
+            Task {
+                let (decision, _) = await gate.waitForDecision()
+
+                // Broadcast resolution
+                let resolvedEvent = PermissionEvent(
+                    type: "permission", status: decision,
+                    toolName: toolName, toolInput: nil, optionLabels: nil, actionSummary: nil
+                )
+                await bcast.broadcast(resolvedEvent)
+                await MainActor.run {
+                    transport.deliverPermission(resolvedEvent)
+                }
+
+                guard decision != "timeout" else {
+                    DuckLog.log("[permission-gemini] Timeout — no voice response")
+                    return
+                }
+
+                // Type y or n into Gemini's tmux pane
+                let keystroke = decision == "allow" ? "y" : "n"
+                if !tmuxTarget.isEmpty {
+                    // Use the hook-provided tmux target (Gemini's actual pane)
+                    let geminiBridge = TmuxBridge(targetOverride: tmuxTarget)
+                    geminiBridge.sendToClaudeCode(keystroke)
+                    DuckLog.log("[permission-gemini] Sent '\(keystroke)' to tmux \(tmuxTarget)")
+                } else {
+                    // Fallback: send to default tmux target
+                    bridge.sendToClaudeCode(keystroke)
+                    DuckLog.log("[permission-gemini] Sent '\(keystroke)' to default tmux target")
+                }
+            }
+
+            // Return immediately — don't block the hook
+            return .json("{\"status\":\"received\"}".data(using: .utf8)!)
+        }
+
         // GET /health
         srv.get("/health") { _ in
             await markPluginConnected()

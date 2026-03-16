@@ -1,5 +1,6 @@
-// Tmux Bridge — Inject voice commands into Claude Code CLI via tmux send-keys.
+// Tmux Bridge — Inject voice commands into a CLI tool via tmux send-keys.
 //
+// Used for Claude Code relay mode and Gemini CLI permission relay.
 // Uses Process to shell out to tmux. Only active in unsandboxed (dev) builds.
 
 import Foundation
@@ -8,16 +9,20 @@ struct TmuxBridge {
 
     let session: String
     let pane: String
+    /// Optional override — if set, used as the full tmux target (e.g. "duck:gemini.0").
+    let targetOverride: String?
 
     init(session: String = DuckConfig.tmuxSession,
-         pane: String = "\(DuckConfig.tmuxWindow).0") {
+         pane: String = "\(DuckConfig.tmuxWindow).0",
+         targetOverride: String? = nil) {
         self.session = session
         self.pane = pane
+        self.targetOverride = targetOverride
     }
 
-    /// Send text to Claude Code via tmux send-keys.
+    /// Send text to a CLI tool via tmux send-keys.
     func sendToClaudeCode(_ text: String) {
-        let target = "\(session):\(pane)"
+        let target = targetOverride ?? "\(session):\(pane)"
 
         do {
             // Send the text literally (-l flag)
