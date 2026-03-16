@@ -197,6 +197,14 @@ struct DuckView: View {
                 .offset(y: 4 + coordinator.expression.beakOpen * 3)
                 .opacity(coordinator.expression.beakOpen > 0.05 ? 1 : 0)
                 .animation(.spring(response: 0.2), value: coordinator.expression.beakOpen)
+
+            // "X" over mouth when duck is turned off
+            if !AppDelegate.isDuckActive {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(DuckTheme.eyeColor.opacity(0.6))
+                    .offset(y: 4)
+            }
         }
     }
 
