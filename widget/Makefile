@@ -10,10 +10,11 @@ ICON_OUT = .build/icon-out
 DIST_DIR = .build/dist
 DIST_APP = $(DIST_DIR)/DuckDuckDuck.app
 DIST_ZIP = $(DIST_DIR)/DuckDuckDuck.zip
+DIST_DMG = $(DIST_DIR)/DuckDuckDuck.dmg
 SIGN_IDENTITY = Developer ID Application: Daniel Deruntz (6E5CFN69H5)
 NOTARY_PROFILE = notarytool-profile
 
-.PHONY: build bundle run sandbox clean release dist sign notarize
+.PHONY: build bundle run sandbox clean release dist sign notarize dmg
 
 build:
 	swift build -c release
@@ -70,10 +71,24 @@ notarize: sign
 	@cd $(DIST_DIR) && ditto -c -k --keepParent DuckDuckDuck.app DuckDuckDuck.zip
 	@xcrun notarytool submit $(DIST_ZIP) --keychain-profile "$(NOTARY_PROFILE)" --wait
 	@xcrun stapler staple $(DIST_APP)
-	@cd $(DIST_DIR) && rm DuckDuckDuck.zip && ditto -c -k --keepParent DuckDuckDuck.app DuckDuckDuck.zip
-	@echo "✅ Notarized and stapled → $(DIST_ZIP)"
+	@echo "✅ Notarized and stapled"
 
-release: notarize
-	@echo "Ready to release $(DIST_ZIP)"
-	@echo "Run: gh release create vX.Y $(DIST_ZIP) --title 'Duck Duck Duck vX.Y' --notes 'Release notes'"
+dmg: notarize
+	@rm -f $(DIST_DMG)
+	@mkdir -p $(DIST_DIR)/dmg-staging
+	@cp -R $(DIST_APP) $(DIST_DIR)/dmg-staging/
+	@ln -s /Applications $(DIST_DIR)/dmg-staging/Applications
+	@hdiutil create -volname "Duck Duck Duck" \
+		-srcfolder $(DIST_DIR)/dmg-staging \
+		-ov -format UDZO \
+		$(DIST_DMG)
+	@rm -rf $(DIST_DIR)/dmg-staging
+	@codesign --force --sign "$(SIGN_IDENTITY)" $(DIST_DMG)
+	@xcrun notarytool submit $(DIST_DMG) --keychain-profile "$(NOTARY_PROFILE)" --wait
+	@xcrun stapler staple $(DIST_DMG)
+	@echo "✅ DMG ready → $(DIST_DMG)"
+
+release: dmg
+	@echo "Ready to release $(DIST_DMG)"
+	@echo "Run: gh release create vX.Y $(DIST_DMG) --title 'Duck Duck Duck vX.Y' --notes 'Release notes'"
 
