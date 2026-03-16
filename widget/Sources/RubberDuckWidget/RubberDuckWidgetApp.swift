@@ -201,10 +201,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // permanently. alphaValue=0 keeps it in the compositor so the glass tint
         // initializes properly and stays vibrant across on/off cycles.
         DispatchQueue.main.async {
-            // The duck window is the first (usually only) SwiftUI-created window
             if let window = NSApp.windows.first {
                 AppDelegate.duckWindow = window
                 AppDelegate.configureDuckWindow(window)
+                // Prevent macOS from caching window chrome between launches.
+                // Without this, state restoration re-adds the title bar.
+                window.isRestorable = false
                 window.alphaValue = 0
             }
         }

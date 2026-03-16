@@ -11,10 +11,19 @@
 - Verify the widget correctly detects the UAC device and switches audio paths
 - Verify switching back to ESP32 when Teensy is unplugged
 
-## Wildcard voice — Foundation Models support
-- Currently Haiku-only (voice key returned in eval JSON)
-- Foundation Models needs a separate second-pass call after eval (can't modify the fragile 3B eval prompt)
-- Requires Xcode Playground iteration to tune the voice picker prompt for the 3B model
+## Wildcard voice — tuning
+- Two-pass Foundation Models implementation works (LocalEvaluator: score → LocalVoicePick)
+- Currently defaults to Superstar for almost everything — only switches on extreme scores
+- Could use more Playground iteration to make voice picks more expressive/varied
+- Whisper might work well for skepticism — "I'm not sure about this..." inner-doubt moments
+- Removed bubbles (too weird). Now 10 wildcard voices.
+
+## Wake word in critic mode
+- "Ducky" wake word works in relay mode (sends commands to Claude via tmux)
+- In critic mode there's no tmux session — wake word triggers but has nothing to do
+- Options: disable wake word in critic, or give it a critic-specific role
+- Could speak last eval summary on demand: "ducky, how am I doing?" → recap scores
+- Could speak a verbal status: "I'm watching. Things are looking rough."
 
 ## 3D duck viewer
 - Three.js viewer at localhost:3333/viewer exists but was never fully dialed in

@@ -104,7 +104,6 @@ enum DuckVoices {
         case trinoids
         case zarvox
         case jester
-        case bubbles
     }
 
     /// Map WildcardKey → DuckVoice.
@@ -116,7 +115,6 @@ enum DuckVoices {
             (.cellos, "Cellos"), (.organ, "Organ"),
             (.whisper, "Whisper"), (.trinoids, "Trinoids"),
             (.zarvox, "Zarvox"), (.jester, "Jester"),
-            (.bubbles, "Bubbles"),
         ]
         for (key, sayName) in pairs {
             if let voice = sayNameMap[sayName] {
@@ -147,10 +145,9 @@ enum DuckVoices {
         - good_news: bright cheerful singing. for when the code is really good — elegant solution, impressive fix, high scores across the board.
         - cellos: deep dramatic strings. for big surprising changes — major refactors, unexpected approaches, "wait they did WHAT?"
         - organ: grand church-like. for ambitious scope — massive PRs, bold architecture decisions, swinging for the fences.
-        - whisper: quiet secretive. for secrets, very internal thoughts, confiding something private. the inner voice.
+        - whisper: quiet secretive. for secrets, private thoughts, embarrassing moments, or deep skepticism. the inner voice — confiding something awkward or muttering "I'm not sure about this..."
         - trinoids: alien robotic. for when the duck is acting like a machine — processing data, reciting lists, robotic behavior.
         - zarvox: electronic sci-fi. for when the duck is acting like a computer — calculating, analyzing, cold machine-like precision.
         - jester: silly court jester. ONLY when something is genuinely funny or absurd. must be hilarious.
-        - bubbles: bubbly underwater. ONLY for overwhelm — "I'm drowning here", too much at once.
         """
 }
