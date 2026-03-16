@@ -5,8 +5,8 @@
 // Embeds its own HTTP+WebSocket eval server (no Python needed).
 // Owns speech I/O (STT + TTS) and serial to Teensy.
 //
-// Always visible as a floating plain window. Uses SwiftUI's
-// .windowStyle(.plain) for chromeless liquid glass support.
+// Always visible as a floating borderless window. Uses SwiftUI's
+// .windowStyle(.hiddenTitleBar) + borderless styleMask for liquid glass.
 //
 // Build: cd widget && make run
 
@@ -67,8 +67,7 @@ struct RubberDuckWidgetApp: App {
                 .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
                 .background(WindowDragArea())
         }
-        .windowStyle(.plain)
-        .windowLevel(.floating)
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
         .commands {
@@ -202,19 +201,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ensure app is a regular dock app (not background agent)
         NSApp.setActivationPolicy(.regular)
 
-        // .plain gives chromeless window. Just add drag + spaces + transparency.
+        // Hide windows immediately to prevent one-frame flash of title bar chrome.
+        // SwiftUI renders .hiddenTitleBar first; we override to borderless on next tick.
+        for window in NSApp.windows {
+            window.alphaValue = 0
+        }
+
         DispatchQueue.main.async {
             for window in NSApp.windows {
-                window.backgroundColor = .clear
-                window.isOpaque = false
+                // Fully borderless — no titlebar, no chrome
+                window.styleMask = [.borderless]
                 window.isMovable = true
                 window.isMovableByWindowBackground = true
+                window.level = .floating
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
                 window.hasShadow = true
+                window.backgroundColor = .clear
+                window.isOpaque = false
                 window.isRestorable = false
+
+                // Match content view clip to duck glass corner radius
+                window.contentView?.wantsLayer = true
+                window.contentView?.layer?.backgroundColor = .clear
+                window.contentView?.layer?.cornerRadius = DuckTheme.cornerRadius
+                window.contentView?.layer?.masksToBounds = true
+
                 // Keep glass tint saturated even when app isn't frontmost
                 AlwaysActiveWindowHelper.apply(to: window)
                 window.invalidateShadow()
+
+                // Reveal now that chrome is gone
+                window.alphaValue = 1
             }
             NSApp.activate()
         }
@@ -229,23 +246,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Window Management
-
-    /// Configure a window as the borderless floating duck widget.
-    static func configureDuckWindow(_ window: NSWindow) {
-        window.styleMask = [.borderless]
-        window.isMovable = true
-        window.isMovableByWindowBackground = true
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.hasShadow = true
-        window.backgroundColor = .clear
-        window.isOpaque = false
-
-        window.contentView?.wantsLayer = true
-        window.contentView?.layer?.backgroundColor = .clear
-        window.contentView?.layer?.cornerRadius = DuckTheme.cornerRadius
-        window.contentView?.layer?.masksToBounds = true
-    }
 
     /// Turn on the duck companion: enable speech and reactions.
     @MainActor
