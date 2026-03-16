@@ -186,7 +186,8 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        Button("Start Claude Session") { ClaudeSession.launch() }
+        Button("Start Claude Session") { CLISession.launch() }
+        Button("Start Gemini Session") { CLISession.launchPlain("gemini") }
 
         Divider()
 

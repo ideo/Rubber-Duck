@@ -27,10 +27,34 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.button?.title = "🦆"
+        if let icon = Self.menuBarIcon() {
+            statusItem?.button?.image = icon
+            statusItem?.button?.title = ""
+        } else {
+            statusItem?.button?.title = "🦆"  // fallback
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem?.menu = menu
+    }
+
+    /// Load the duck silhouette SVG from the resource bundle as a menu bar template image.
+    private static func menuBarIcon() -> NSImage? {
+        guard let url = Resources.bundle.url(forResource: "duck-symbol", withExtension: "svg"),
+              let svgImage = NSImage(contentsOf: url) else {
+            return nil
+        }
+        // SVG is 13×12 (wider than tall). Scale to 18pt height, preserve aspect ratio.
+        let height: CGFloat = 18
+        let aspectRatio: CGFloat = 13.0 / 12.0
+        let width = height * aspectRatio
+        let size = NSSize(width: width, height: height)
+        let resized = NSImage(size: size, flipped: false) { rect in
+            svgImage.draw(in: rect)
+            return true
+        }
+        resized.isTemplate = true  // adapts to light/dark menu bar
+        return resized
     }
 
     // MARK: - NSMenuDelegate
@@ -45,12 +69,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         // --- Session launcher ---
-        menu.addItem(item("Start Claude Session", action: #selector(startClaudeSession)))
-        if duckServer.pluginConnected {
-            menu.addItem(item("Update Claude Plugin", action: #selector(installPlugin)))
-        } else {
-            menu.addItem(item("Install Claude Plugin", action: #selector(installPlugin)))
-        }
+        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
+        claudeSession.target = self
+        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        menu.addItem(claudeSession)
         menu.addItem(.separator())
 
         // --- Mode submenu ---
@@ -202,11 +224,49 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // --- Setup ---
+        if duckServer.pluginConnected {
+            menu.addItem(item("Update Claude Plugin", action: #selector(installPlugin)))
+        } else {
+            menu.addItem(item("Install Claude Plugin", action: #selector(installPlugin)))
+        }
+
+        // --- Experimental ---
+        let experimentalItem = NSMenuItem(title: "Experimental", action: nil, keyEquivalent: "")
+        let experimentalMenu = NSMenu()
+
+        let geminiInstall = NSMenuItem(title: "Install Gemini Extension", action: #selector(installGeminiExtension), keyEquivalent: "")
+        geminiInstall.target = self
+        geminiInstall.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Gemini")
+        geminiInstall.subtitle = "Experimental — eval scoring and alerts only"
+        experimentalMenu.addItem(geminiInstall)
+
+        let geminiLaunch = NSMenuItem(title: "Launch Gemini CLI", action: #selector(startGeminiSession), keyEquivalent: "")
+        geminiLaunch.target = self
+        geminiLaunch.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        geminiLaunch.subtitle = "Experimental — comments and notifications only"
+        experimentalMenu.addItem(geminiLaunch)
+
+        experimentalItem.submenu = experimentalMenu
+        menu.addItem(experimentalItem)
+
+        menu.addItem(.separator())
+
         // --- Turn On/Off ---
         if AppDelegate.isDuckActive {
-            menu.addItem(item("Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck)))
+            let offItem = NSMenuItem(title: "Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck), keyEquivalent: "")
+            offItem.target = self
+            if let icon = svgMenuIcon("no-duck-symbol") {
+                offItem.image = icon
+            }
+            menu.addItem(offItem)
         } else {
-            menu.addItem(item("Turn On Duck-Duck-Duck", action: #selector(turnOnDuck)))
+            let onItem = NSMenuItem(title: "Turn On Duck-Duck-Duck", action: #selector(turnOnDuck), keyEquivalent: "")
+            onItem.target = self
+            if let icon = svgMenuIcon("duck-symbol") {
+                onItem.image = icon
+            }
+            menu.addItem(onItem)
         }
 
         let quitItem = NSMenuItem(title: "Quit Duck-Duck-Duck", action: #selector(quitApp), keyEquivalent: "")
@@ -232,7 +292,15 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     // MARK: - Actions
 
     @objc private func startClaudeSession() {
-        ClaudeSession.launch()
+        CLISession.launch()
+    }
+
+    @objc private func startGeminiSession() {
+        CLISession.launchPlain("gemini")
+    }
+
+    @objc private func installGeminiExtension() {
+        GeminiExtensionInstaller.install()
     }
 
     @objc private func installPlugin() {
@@ -320,6 +388,19 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         return item
+    }
+
+    /// Load an SVG from the resource bundle as a 16pt menu item icon.
+    private func svgMenuIcon(_ name: String) -> NSImage? {
+        guard let url = Resources.bundle.url(forResource: name, withExtension: "svg"),
+              let svg = NSImage(contentsOf: url) else { return nil }
+        let size = NSSize(width: 16, height: 16)
+        let resized = NSImage(size: size, flipped: false) { rect in
+            svg.draw(in: rect)
+            return true
+        }
+        resized.isTemplate = true
+        return resized
     }
 
     private func disabledItem(_ title: String) -> NSMenuItem {
@@ -468,12 +549,108 @@ enum PluginInstaller {
     }
 }
 
-// MARK: - Claude Session Launcher (shared between DuckView + StatusBarManager)
+// MARK: - Gemini Extension Installer
 
-enum ClaudeSession {
-    static func launch() {
+enum GeminiExtensionInstaller {
+    private static let installCommand = "gemini extensions install ideo/Rubber-Duck"
+
+    static func install() {
+        if let gemini = findGemini() {
+            automaticInstall(gemini: gemini)
+        } else {
+            Task { @MainActor in
+                clipboardInstall()
+            }
+        }
+    }
+
+    private static func findGemini() -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["which", "gemini"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !path.isEmpty && proc.terminationStatus == 0 {
+                return path
+            }
+        } catch {}
+        return nil
+    }
+
+    private static func automaticInstall(gemini: String) {
+        print("[gemini-ext] Found gemini at \(gemini)")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: gemini)
+            proc.arguments = ["extensions", "install", "ideo/Rubber-Duck"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                let ok = proc.terminationStatus == 0
+                print("[gemini-ext] Install: ok=\(ok) output=\(output)")
+                Task { @MainActor in
+                    showResult(success: ok, detail: ok
+                        ? "Experimental — Gemini CLI hooks provide eval scoring and permission notifications, but cannot relay decisions back. You'll need to approve permissions manually in the terminal.\n\nStart a new Gemini CLI session to activate."
+                        : "Extension install failed:\n\(output)")
+                }
+            } catch {
+                Task { @MainActor in
+                    showResult(success: false, detail: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private static func clipboardInstall() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Install Gemini Extension"
+        alert.informativeText = "Experimental — Gemini CLI hooks provide eval scoring and permission notifications, but cannot relay decisions back. Approve permissions manually in the terminal.\n\nPaste the following command in Terminal:\n\n\(installCommand)\n\nIt has been copied to your clipboard."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Terminal")
+        alert.addButton(withTitle: "Copy Only")
+        alert.addButton(withTitle: "Cancel")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(installCommand, forType: .string)
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+        }
+    }
+
+    @MainActor
+    private static func showResult(success: Bool, detail: String) {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = success ? "Extension Installed" : "Install Failed"
+        alert.informativeText = detail
+        alert.alertStyle = success ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
+
+// MARK: - CLI Session Launcher (shared between DuckView + StatusBarManager)
+
+enum CLISession {
+    /// Launch Claude Code in a tmux session (needed for voice relay + TmuxBridge).
+    static func launch(_ tool: String = "claude") {
         let session = DuckConfig.tmuxSession
-        let window = DuckConfig.tmuxWindow
+        let windowName = DuckConfig.tmuxWindow
 
         // Walk up from binary to find repo root (look for Package.swift as marker)
         var repoRoot = Bundle.main.bundleURL
@@ -488,7 +665,7 @@ enum ClaudeSession {
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(window) 'claude'; fi && tmux set-option -t \(session) -w allow-rename off 2>/dev/null && tmux rename-window -t \(session) \(window) 2>/dev/null && tmux attach -t \(session)"
+            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(windowName) '\(tool)'; else tmux kill-window -t \(session):\(windowName) 2>/dev/null; tmux new-window -t \(session) -n \(windowName) '\(tool)'; fi && tmux attach -t \(session):\(windowName)"
         end tell
         """
 
@@ -500,9 +677,32 @@ enum ClaudeSession {
 
         do {
             try proc.run()
-            print("[app] Launched Claude terminal session")
+            print("[app] Launched \(tool) tmux session in \(session):\(windowName)")
         } catch {
-            print("[app] Failed to launch Claude session: \(error)")
+            print("[app] Failed to launch \(tool) session: \(error)")
+        }
+    }
+
+    /// Launch a tool in a plain Terminal window (no tmux).
+    static func launchPlain(_ tool: String) {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "\(tool)"
+        end tell
+        """
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            print("[app] Launched \(tool) in Terminal")
+        } catch {
+            print("[app] Failed to launch \(tool): \(error)")
         }
     }
 }

@@ -28,8 +28,8 @@ struct PermissionVoiceGate {
     var lastPrompt = ""
 
     // Word sets for matching
-    private let affirmatives: Set<String> = ["yes", "yeah", "yep", "yup", "sure", "allow", "approve", "okay", "proceed", "go", "do", "accepted", "affirmative", "correct", "right", "fine", "granted"]
-    private let negatives: Set<String> = ["no", "nope", "deny", "block", "stop", "cancel", "reject", "refused", "negative", "nah", "pass", "skip"]
+    private let affirmatives: Set<String> = ["yes", "yeah", "yep", "yup", "sure", "allow", "approve", "okay", "proceed", "accepted", "affirmative", "correct", "fine", "granted"]
+    private let negatives: Set<String> = ["no", "nope", "deny", "block", "stop", "cancel", "reject", "refused", "negative", "nah", "pass", "skip", "not", "don't", "dont", "never"]
     private let repeatWords: Set<String> = ["repeat", "what", "again", "options", "huh"]
     private let ordinalWords = ["first", "second", "third", "fourth"]
     private let numberWords = ["one", "two", "three", "four"]
@@ -60,13 +60,16 @@ struct PermissionVoiceGate {
             }
         }
 
-        // Yes / No — whole-word matching
-        if !words.isDisjoint(with: affirmatives) {
-            isWaiting = false
-            return .allow
-        } else if !words.isDisjoint(with: negatives) {
+        // No before Yes — so "do not allow", "don't", "not okay" are caught
+        // Negatives win when both match (e.g. "no, do not allow" has "allow" + "not")
+        let hasNeg = !words.isDisjoint(with: negatives)
+        let hasAff = !words.isDisjoint(with: affirmatives)
+        if hasNeg {
             isWaiting = false
             return .deny
+        } else if hasAff {
+            isWaiting = false
+            return .allow
         }
 
         return .noMatch
