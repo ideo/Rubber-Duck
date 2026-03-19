@@ -83,7 +83,7 @@ import Playgrounds
 
 // MARK: - Availability check
 
-#Playground {
+#Playground("Availability Check") {
     let model = SystemLanguageModel.default
     switch model.availability {
     case .available:
@@ -106,7 +106,7 @@ import Playgrounds
 
 // MARK: - Test 1: User ignores Claude's suggestion (expect: low everything, duck notices dismissal)
 
-#Playground {
+#Playground("User Ignores Suggestion") {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
     let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
@@ -131,7 +131,7 @@ import Playgrounds
 
 // MARK: - Test 2: Claude adds a boring null check (expect: high rigor, low novelty, low ambition)
 
-#Playground {
+#Playground("Claude: Null Check Fix") {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
     let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
@@ -156,7 +156,7 @@ import Playgrounds
 
 // MARK: - Test 3: User asks a vague question (expect: near-zero everything)
 
-#Playground {
+#Playground("User: Vague Question") {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
     let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
@@ -180,7 +180,7 @@ import Playgrounds
 
 // MARK: - Test 4: Claude over-engineers (expect: high craft, high ambition, moderate risk, user just wanted simple)
 
-#Playground {
+#Playground("Claude: Over-Engineers") {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
     let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
@@ -208,7 +208,7 @@ import Playgrounds
 
 // MARK: - Test 5: Claude admits mistake and fixes it (expect: high rigor, moderate craft, low risk)
 
-#Playground {
+#Playground("Claude: Admits Mistake") {
     let session = LanguageModelSession(instructions: Instructions(LocalEvalPromptsV3.system))
     let options = GenerationOptions(temperature: 0.7)
     let result = try await session.respond(
