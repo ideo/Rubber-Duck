@@ -2,6 +2,9 @@
 // Serial Protocol Parser (ESP32-S3 Duck)
 // ============================================================
 // Text-only serial protocol — no binary framing (TTS goes via UAC).
+
+#include <Arduino.h>
+#include "Config.h"
 //
 // Eval messages:
 //   U,0.20,0.70,0.00,0.60,-0.30    (user evaluation)

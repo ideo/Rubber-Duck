@@ -1,13 +1,45 @@
 # TBD — Open Items
 
-## 1. UAC audio — S3 launch readiness
-- S3 boards are the likely launch hardware — UAC audio path needs to be rock solid
-- Test USB Audio Class mic input from S3 (not just Teensy) — verify sample rate, format, latency
-- Test TTS output via `say -a` to S3 UAC device — verify routing, volume, no clipping
-- Test hot-plug behavior: S3 plugged in mid-session → widget detects and switches audio paths
-- Test hot-unplug: S3 removed mid-session → falls back to local Mac mic + speakers cleanly
-- Test swap: S3 connected while ESP32 serial device is also connected → correct device wins
-- Verify `AudioDeviceDiscovery.findTeensy()` naming works for S3 (device name may differ)
+## 1. UAC audio — S3 (LOW PRIORITY — shelved)
+
+**Status**: Shelved. Serial streaming works and is shipping-ready. UAC is a polish item.
+
+**Risks discovered**:
+- ESP32-S3 UAC ecosystem is immature vs Teensy (which does this in one line)
+- Composite USB (CDC serial + UAC audio) requires custom TinyUSB descriptors — no turnkey solution
+- macOS may reject 16kHz mono — one project had to use 48kHz stereo
+- Speaker audio reportedly crackly over UAC (mic is fine)
+- Requires ESP-IDF build system (not Arduino IDE) — different toolchain for one chip variant
+- `CONFIG_UAC_SUPPORT_MACOS=y` breaks Windows compatibility
+
+**What's done (widget side)**:
+- `AudioDeviceDiscovery.findDuckDevice()` — generalized from Teensy-only to match any duck UAC device
+- `DuckConfig.duckAudioDeviceNames` — list of UAC device name patterns, env-overridable
+- `SerialTransport.hasUAC` / `.needsSerialAudio` — board identity determines audio path
+- `SpeechService` — S3 triggers CoreAudio path if UAC detected, falls back to serial streaming if not
+- New `AudioPath.duckUAC` — ESP32-S3 uses same STTEngine + TTSEngine as Teensy
+- Widget dual-path logic is tested and working — this is all reusable if UAC ever ships
+
+**What's done (firmware side)**:
+- ESP-IDF project at `firmware/rubber_duck_s3_uac/` — compiles under ESP-IDF v5.3.4 + Arduino component
+- TLC59711 LED bar removed, replaced with built-in NeoPixel StatusLED (GPIO 48)
+- Gap analysis: `docs/S3-FIRMWARE-GAP.md`
+- UAC component (`usb_device_uac`) researched but NOT integrated yet
+- Build instructions: `firmware/rubber_duck_s3_uac/README.md`
+
+**What we tested (2026-03-20)**:
+- UAC component integrated, device enumerates on macOS as "usb uac" (1 in / 1 out)
+- macOS sees 16kHz, 1ch, 16-bit — format accepted, no rejection
+- Speaker output: NO AUDIO through MAX98357 I2S DAC despite callback wiring
+- Likely causes: blocking I2S write deadlocks USB task, DMA buffer sizing, possibly need ring buffer + separate writer task (see atomic14 blog, Prithul0218 loopback project)
+- CDC serial lost when UAC enabled (no composite device support without custom TinyUSB descriptors)
+- Device name "Duck Duck Duck" not applied — UAC component uses its own `CONFIG_UAC_TUSB_PRODUCT`
+
+**What's left if we revisit**:
+- Debug speaker output: add ring buffer between UAC callback and I2S, separate writer task
+- Solve composite CDC+UAC (custom TinyUSB descriptors + `skip_tinyusb_init`)
+- Fix device name in CoreAudio
+- Test NeoPixel status LED (need hardware to verify)
 - Test MelodyEngine routing to S3 UAC device (outputDeviceID)
 
 ## 2. Onboarding — golden path

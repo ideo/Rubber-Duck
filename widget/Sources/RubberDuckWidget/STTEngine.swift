@@ -189,8 +189,8 @@ class STTEngine: ObservableObject {
         // If stale device ID, re-discover Teensy
         if status != noErr {
             log("[stt] Cached Teensy device \(deviceID) stale (OSStatus \(status)), re-discovering...")
-            if let teensy = AudioDeviceDiscovery.findTeensy() {
-                deviceID = teensy.deviceID
+            if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
+                deviceID = duckDevice.deviceID
                 teensyDeviceID = deviceID
                 inputDeviceID = deviceID
                 status = AudioUnitSetProperty(

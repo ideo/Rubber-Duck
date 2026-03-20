@@ -199,6 +199,10 @@ struct ChirpTarget {
 extern EvalScores latestScores;
 extern bool       newEvalAvailable;
 
+// Master volume (0.0–1.0) — set by widget via VOL,X.XX command.
+// Scales chirp amplitude and streamed TTS output.
+extern float volumeScale;
+
 // Servo state (ServoControl.ino)
 extern bool  calibrationMode;
 extern float servoCurrentAngle;

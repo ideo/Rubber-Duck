@@ -446,8 +446,9 @@ void updateChirp() {
       sample = svfProcess(sample);
 
       // Scale to 16-bit — sine (startup) at half, all sawtooth chirps 2x
+      // volumeScale (0.0–1.0) from widget VOL command
       float amp = chirpIsSine ? (CHIRP_AMPLITUDE * 0.5f) : (CHIRP_AMPLITUDE * 2.0f);
-      sample *= amp * 32767.0f;
+      sample *= amp * volumeScale * 32767.0f;
       if (sample > 32767.0f) sample = 32767.0f;
       if (sample < -32767.0f) sample = -32767.0f;
 

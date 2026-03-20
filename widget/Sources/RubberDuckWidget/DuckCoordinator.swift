@@ -60,8 +60,8 @@ class DuckCoordinator: ObservableObject {
         // ~10% chance: hum Jeopardy while Claude is thinking
         if isUserEval {
             if Int.random(in: 1...10) == 1 {
-                if let teensy = AudioDeviceDiscovery.findTeensy() {
-                    melodyEngine.outputDeviceID = teensy.deviceID
+                if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
+                    melodyEngine.outputDeviceID = duckDevice.deviceID
                 } else {
                     melodyEngine.outputDeviceID = nil
                 }

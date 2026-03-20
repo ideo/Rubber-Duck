@@ -142,7 +142,7 @@ class SerialTransport: DeviceTransport {
         }
     }
 
-    /// Whether the connected device is an ESP32 (serial audio path).
+    /// Whether the connected device is an ESP32 (any variant).
     var isESP32: Bool {
         connectedBoard?.hasPrefix("ESP32") ?? false
     }
@@ -150,6 +150,20 @@ class SerialTransport: DeviceTransport {
     /// Whether the connected device is a Teensy (UAC audio path).
     var isTeensy: Bool {
         connectedBoard?.hasPrefix("TEENSY") ?? false
+    }
+
+    /// Whether the connected device supports USB Audio Class (UAC).
+    /// Teensy and ESP32-S3 have UAC — audio goes through CoreAudio.
+    /// ESP32-C3 lacks UAC — audio streams over serial binary frames.
+    var hasUAC: Bool {
+        if isTeensy { return true }
+        if connectedBoard == "ESP32S3" { return true }
+        return false
+    }
+
+    /// Whether the connected device needs serial audio streaming (no UAC).
+    var needsSerialAudio: Bool {
+        isESP32 && !hasUAC
     }
 
     // MARK: - Discovery

@@ -14,6 +14,9 @@ class SerialTTSEngine {
     /// Voice identifier for AVSpeechSynthesizer.
     var voice: String = DuckConfig.ttsVoice
 
+    /// Master volume (0.0–1.0). Scales the PCM boost applied during resampling.
+    var volume: Float = DuckConfig.volume
+
     private let synth = AVSpeechSynthesizer()
     private weak var transport: SerialTransport?
     private var streamingTask: Task<Void, Never>?
@@ -56,6 +59,7 @@ class SerialTTSEngine {
 
         let engine = self
         let shouldWaitForChirp = !skipChirpWait
+        let vol = volume
         streamingTask = Task.detached {
             // Wait for chirp to finish before entering audio mode.
             // The firmware sends "K\n" when the chirp completes.
@@ -99,7 +103,7 @@ class SerialTTSEngine {
             for await pcmBuffer in bufferStream {
                 if Task.isCancelled { break }
 
-                let samples = SerialTTSEngine.resampleTo16kMono(pcmBuffer)
+                let samples = SerialTTSEngine.resampleTo16kMono(pcmBuffer, volume: vol)
                 if samples.isEmpty { continue }
 
                 // Send in chunks of 512 samples (1024 bytes) — matches firmware expectations
@@ -215,7 +219,8 @@ class SerialTTSEngine {
     }
 
     /// Resample an AVAudioPCMBuffer to 16kHz 16-bit mono Int16 samples.
-    private nonisolated static func resampleTo16kMono(_ buffer: AVAudioPCMBuffer) -> [Int16] {
+    /// Volume (0.0–1.0) scales the output boost.
+    private nonisolated static func resampleTo16kMono(_ buffer: AVAudioPCMBuffer, volume: Float = 1.0) -> [Int16] {
         let format = buffer.format
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return [] }
@@ -267,7 +272,8 @@ class SerialTTSEngine {
             let interpolated = s0 + frac * (s1 - s0)
 
             // Boost + scale to Int16 range (AVSpeechSynthesizer output is conservative)
-            let boosted = interpolated * 2.5
+            // Volume scales the base boost (2.5 at 100%) down to silence at 0%.
+            let boosted = interpolated * 2.5 * volume
             let clamped = max(-1.0, min(1.0, boosted))
             output.append(Int16(clamped * 32767.0))
         }

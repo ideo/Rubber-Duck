@@ -1,0 +1,38 @@
+# ============================================================
+# Duck Duck Duck — S3 UAC sdkconfig defaults
+# ============================================================
+
+# --- Arduino ---
+CONFIG_AUTOSTART_ARDUINO=y
+CONFIG_ARDUINO_RUN_CORE1=y
+CONFIG_ARDUINO_EVENT_RUN_CORE1=y
+
+# --- FreeRTOS ---
+# USB needs 1000Hz tick rate for responsive audio
+CONFIG_FREERTOS_HZ=1000
+
+# --- USB / TinyUSB ---
+CONFIG_TINYUSB_ENABLED=y
+# CDC disabled for now — UAC-only test (serial won't work over USB)
+CONFIG_TUSB_PRODUCT="Duck Duck Duck"
+CONFIG_TUSB_MANUFACTURER="IDEO"
+CONFIG_TUSB_VID=0x1209
+CONFIG_TUSB_PID=0xD0C0
+
+# --- UAC device identity (separate from TinyUSB defaults) ---
+CONFIG_UAC_TUSB_PRODUCT="Duck Duck Duck"
+CONFIG_UAC_TUSB_MANUFACTURER="IDEO"
+
+# --- USB Audio Class (UAC) ---
+CONFIG_UAC_SAMPLE_RATE=16000
+CONFIG_UAC_MIC_CHANNEL_NUM=1
+CONFIG_UAC_SPEAKER_CHANNEL_NUM=1
+CONFIG_UAC_MIC_SAMPLES_IN_ONE_FRAME=16
+CONFIG_UAC_SPK_SAMPLES_IN_ONE_FRAME=16
+CONFIG_UAC_MIC_INTERVAL_MS=10
+CONFIG_UAC_SPK_INTERVAL_MS=10
+CONFIG_UAC_SUPPORT_MACOS=y
+
+# --- Flash / Partition ---
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP=y

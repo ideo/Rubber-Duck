@@ -122,6 +122,16 @@ void parseTextMessage(char *msg) {
     return;
   }
 
+  // --- Volume control ---
+  // VOL,0.80 = set master volume (0.0–1.0)
+  if (strncmp(msg, "VOL,", 4) == 0) {
+    float vol = strtof(msg + 4, NULL);
+    volumeScale = constrain(vol, 0.0f, 1.0f);
+    Serial.print("[duck] Volume: ");
+    Serial.println(volumeScale, 2);
+    return;
+  }
+
   // --- Ping / Permission ---
   if (source == 'P') {
     if (msg[1] == ',' && msg[2] == '1') {
