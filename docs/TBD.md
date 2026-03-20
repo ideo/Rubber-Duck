@@ -18,21 +18,42 @@
 - First-run experience: duck should introduce itself, explain what it does, set expectations
 - Existing onboarding notes in `docs/ONBOARDING.md` — build on those, don't start from scratch
 
-### Sub-task: on-device help / support via Foundation Models
-- Can the 3B model answer user questions about the duck widget grounded in a support doc?
-- Grounding document: `docs/DUCK-HELP-GROUNDING.md` — compact help entries (~1200 tokens)
+### Sub-task: on-device help / support — R&D DONE, ready to build
+
+**R&D results** (Playground-tested, all tiers pass):
+- Grounding document: `docs/DUCK-HELP-GROUNDING.md` — compact help entries in duck's voice (~1200 tokens)
 - Playground tests: `widget/Playground/Sources/LLMPlayground/HelpPlayground.swift`
-- Three tiers to test (each in the Playground):
-  1. **Grounded single-turn Q&A** — model answers from inline help text. Tests accuracy, grounding (no hallucination), conciseness. 5 test cases covering factual, troubleshooting, out-of-scope, ambiguous.
-  2. **Classification + retrieval** — model picks the right help topic from a list, then answers from that entry. Tests whether a two-step retrieve→answer approach works. Uses `@Generable` struct for structured topic pick.
-  3. **Multi-turn conversation** — model holds a 3-4 turn support dialog using `LanguageModelSession` transcript. Tests context preservation, off-topic handling, coherence across turns.
-- Apple's guidance (WWDC25 "Meet Foundation Models"): use `LanguageModelSession` for multi-turn (transcript preserved), use tool calling to ground responses in app data, model is NOT suited for world knowledge or advanced reasoning — keep tasks small and specific.
-- Apple's guidance (WWDC25 "Prompt Design & Safety"): embed verified information directly in prompts for grounding, break complex tasks into simpler steps, avoid code generation, use ALL-CAPS directives.
-- Apple's guidance (WWDC25 "Deep dive"): tool calling for on-demand retrieval is recommended over stuffing everything in the prompt. Define a `SearchHelp` tool that the model calls to fetch relevant entries.
-- Known risk: 4096 token context window — full help doc fits in single-turn (~1600 total), but multi-turn fills up fast. Rotate sessions after 3-4 turns.
-- Known risk: 3B model parrots examples (our research) — FAQ answers must not appear as few-shot examples. Use instructions-only grounding.
-- Known risk: aggressive safety guardrails may reject harmless help content — test actual entries for false positives.
-- If Foundation can't handle conversational support, fall back to tier 1 (grounded Q&A) or simple FAQ matching and surface a "learn more" link to docs.
+- Single-turn Q&A: ✅ accurate, grounded, no hallucination, good TTS output
+- Classification + retrieval: ✅ correct topic routing with `@Generable` struct
+- Multi-turn conversation: ✅ holds 3-4 turns coherently, handles off-topic refusal
+- Key finding: entries must be meta-aware ("if you're talking to me, I'm running")
+- Key finding: "Can you help me debug" triggers Apple safety filter — keep questions duck-focused
+- Key finding: model quality tracks grounding doc quality directly — tight duck-voiced entries produce tight duck-voiced answers
+
+**Implementation plan — DuckHelpService**:
+
+Architecture:
+- New `DuckHelpService.swift` actor (mirrors `LocalEvaluator` pattern)
+- Connected to wake word: "ducky, how do I install the plugin?" → duck answers directly
+- **Critic mode**: all wake word input routes to help (no tmux to relay to — this gives wake word a purpose)
+- **Relay mode**: help always tries first. If Foundation recognizes it's NOT a duck question, it says something like "That sounds like a Claude question" and seamlessly relays to tmux
+- **Intelligence-agnostic**: uses whatever eval engine is selected (Foundation/Haiku/Gemini), not just Foundation Models. Same grounding content, different backend.
+
+Wake word UX:
+- "Ducky" → duck immediately responds "What?" / "Hmm?" / "Yeah?" (short, varied pool) AND cocks head (expression state). Instant feedback it heard you.
+- Currently wake word silently starts listening — that's a dead-air gap
+- Help response spoken via same TTS path as eval reactions
+
+Session lifecycle:
+- `LanguageModelSession` kept alive between wake word activations
+- Auto-reset after 4 turns (4K token window fills up) — duck says "I'm losing my train of thought — ask me again fresh?" (natural, in-character)
+- Also reset after 60s inactivity (timer in SpeechService)
+
+Files to change:
+- `DuckHelpService.swift` (NEW) — actor with grounding content, session management, `ask()` method
+- `SpeechService.swift` — add `onHelpQuestion` callback, wake word acknowledgment pool, mode awareness
+- `RubberDuckWidgetApp.swift` — create help service, wire callbacks
+- `DuckCoordinator.swift` — optional `isAnsweringHelp` state for thinking animation
 
 ## 3. Permissions-only mode
 - Third mode alongside critic and relay — duck only handles permission requests
@@ -54,11 +75,10 @@
 - Removed bubbles (too weird). Now 10 wildcard voices.
 
 ## 6. Wake word in critic mode
-- "Ducky" wake word works in relay mode (sends commands to Claude via tmux)
-- In critic mode there's no tmux session — wake word triggers but has nothing to do
-- Options: disable wake word in critic, or give it a critic-specific role
-- Could speak last eval summary on demand: "ducky, how am I doing?" → recap scores
+- **Largely solved by help mode** — in critic mode, wake word now routes to on-device help (see #2 sub-task)
+- Remaining: could also speak last eval summary on demand: "ducky, how am I doing?" → recap scores
 - Could speak a verbal status: "I'm watching. Things are looking rough."
+- Wake word acknowledgment: "ducky" should immediately trigger a short response ("What?" / "Yeah?" / "Hmm?") + head cock animation, before the user even finishes speaking. This replaces the current silent-listening gap.
 
 ---
 
