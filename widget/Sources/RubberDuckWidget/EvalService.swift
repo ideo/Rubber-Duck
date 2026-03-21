@@ -60,14 +60,7 @@ class EvalService: ObservableObject {
             summary = newScores.summary ?? ""
             source = result.source ?? ""
             evalCount += 1
-
-            sentiment = (
-                newScores.soundness * 0.3 +
-                newScores.elegance * 0.25 +
-                newScores.creativity * 0.2 +
-                newScores.ambition * 0.15 -
-                newScores.risk * 0.1
-            )
+            sentiment = newScores.sentiment
 
         case .permission(let event):
             permissionTool = event.toolName ?? "unknown"
@@ -91,9 +84,18 @@ class EvalService: ObservableObject {
     }
 
     func sendPermissionDecision(index: Int) {
+        // Bounds check: suggestion index must be within available options (1-based)
+        let clampedIndex: Int
+        if index > 0 && index > permissionOptions.count {
+            DuckLog.log("[eval] Warning: suggestion index \(index) out of bounds (\(permissionOptions.count) options), clamping to allow")
+            clampedIndex = 0  // Fall back to simple allow
+        } else {
+            clampedIndex = index
+        }
+
         let cmd = PermissionResponseCommand(
-            decision: index >= 0 ? "allow" : "deny",
-            suggestionIndex: index > 0 ? index : nil
+            decision: clampedIndex >= 0 ? "allow" : "deny",
+            suggestionIndex: clampedIndex > 0 ? clampedIndex : nil
         )
         transport.send(.permissionResponse(cmd))
         permissionPending = false

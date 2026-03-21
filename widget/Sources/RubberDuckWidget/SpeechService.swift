@@ -27,6 +27,15 @@ enum ListenMode: Int, CaseIterable {
         }
     }
 
+    /// SF Symbol name for this listen mode.
+    var iconName: String {
+        switch self {
+        case .off: return "microphone.slash.fill"
+        case .permissionsOnly: return "microphone.badge.xmark"
+        case .active: return "microphone.fill"
+        }
+    }
+
     /// Cycle to the next mode.
     var next: ListenMode {
         ListenMode(rawValue: (rawValue + 1) % ListenMode.allCases.count) ?? .off

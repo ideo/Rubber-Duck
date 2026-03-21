@@ -42,13 +42,7 @@ enum ExpressionEngine {
         }
 
         // --- Sentiment → body warmth + glow ---
-        let sentiment = (
-            s.soundness * 0.3 +
-            s.elegance * 0.25 +
-            s.creativity * 0.2 +
-            s.ambition * 0.15 -
-            s.risk * 0.1
-        )
+        let sentiment = s.sentiment
 
         // Positive = warmer (toward orange), negative = cooler (toward green)
         // Negate because hueRotation positive = green, negative = orange
