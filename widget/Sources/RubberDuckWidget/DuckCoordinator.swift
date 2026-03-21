@@ -98,7 +98,7 @@ class DuckCoordinator: ObservableObject {
             serialManager.sendScores(scores, source: evalService.source)
         }
 
-        // Speak based on current mode
+        // Speak based on current mode (permissionsOnly exits early above)
         // Relay mode: only speak Claude's output, not the user's (you know what you said)
         let textToSpeak: String
         switch mode {
@@ -107,7 +107,7 @@ class DuckCoordinator: ObservableObject {
         case .relay:
             textToSpeak = isUserEval ? "" : evalService.summary
         case .permissionsOnly:
-            textToSpeak = ""  // unreachable — early return above
+            textToSpeak = ""  // unreachable — early return above; kept for exhaustive switch
         }
         if !textToSpeak.isEmpty {
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
@@ -135,13 +135,6 @@ class DuckCoordinator: ObservableObject {
         mode = newMode
         DuckConfig.duckMode = newMode
 
-        let label: String
-        switch mode {
-        case .critic: label = "Critic mode"
-        case .relay: label = "Relay mode"
-        case .permissionsOnly: label = "Permissions only"
-        }
-
         // In permissions-only, force mic to permissionsOnly listen mode + reset face to neutral
         if mode == .permissionsOnly {
             speechService.listenMode = .permissionsOnly
@@ -153,7 +146,7 @@ class DuckCoordinator: ObservableObject {
         // Clear any thinking state when switching modes
         clearThinking()
 
-        speechService.speak(label)
+        speechService.speak(mode.spokenLabel)
     }
 
     /// Clean up thinking state (called on turn-off).

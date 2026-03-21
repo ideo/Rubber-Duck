@@ -8,8 +8,23 @@ import Foundation
 
 /// Thread-safe mute flag — accessed from both MainActor and the audio render thread.
 /// Separate class (not actor-isolated) so the STTEngine's audio tap can read it directly.
+/// Uses os_unfair_lock for atomic read/write across threads.
 class TTSGate: @unchecked Sendable {
-    var muted = false
+    private var _muted = false
+    private var _lock = os_unfair_lock()
+
+    var muted: Bool {
+        get {
+            os_unfair_lock_lock(&_lock)
+            defer { os_unfair_lock_unlock(&_lock) }
+            return _muted
+        }
+        set {
+            os_unfair_lock_lock(&_lock)
+            _muted = newValue
+            os_unfair_lock_unlock(&_lock)
+        }
+    }
 }
 
 @MainActor

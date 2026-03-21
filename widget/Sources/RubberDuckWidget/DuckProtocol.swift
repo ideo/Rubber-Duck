@@ -17,6 +17,12 @@ struct EvalScores: Codable, Equatable {
     let reaction: String?
     let summary: String?      // Factual summary (relay mode)
     var voice: String?        // Wildcard voice key (AI-picked, Haiku only for now)
+
+    /// Weighted sentiment score combining all dimensions.
+    /// Positive = good code, negative = concerning code.
+    var sentiment: Double {
+        soundness * 0.3 + elegance * 0.25 + creativity * 0.2 + ambition * 0.15 - risk * 0.1
+    }
 }
 
 // MARK: - Enums
@@ -38,6 +44,42 @@ enum DuckMode: String, CaseIterable {
     case permissionsOnly  // Silent watchdog — only voice-confirmed permissions (default)
     case critic           // Speak opinionated reaction
     case relay            // Speak factual summary
+
+    /// Human-readable label for menus and TTS.
+    var label: String {
+        switch self {
+        case .permissionsOnly: return "Permissions Only"
+        case .critic: return "Critic Mode"
+        case .relay: return "Relay Mode"
+        }
+    }
+
+    /// SF Symbol name for this mode.
+    var iconName: String {
+        switch self {
+        case .permissionsOnly: return "lock.shield"
+        case .critic: return "eyeglasses"
+        case .relay: return "phone.fill"
+        }
+    }
+
+    /// Short subtitle for menu items.
+    var subtitle: String {
+        switch self {
+        case .permissionsOnly: return "Silent watchdog — voice permissions only"
+        case .critic: return "Inner monologue and alerts"
+        case .relay: return "Walkie talkie with Claude"
+        }
+    }
+
+    /// TTS-friendly label (no "Mode" suffix).
+    var spokenLabel: String {
+        switch self {
+        case .permissionsOnly: return "Permissions only"
+        case .critic: return "Critic mode"
+        case .relay: return "Relay mode"
+        }
+    }
 }
 
 // MARK: - Inbound Messages (service → widget via WebSocket)

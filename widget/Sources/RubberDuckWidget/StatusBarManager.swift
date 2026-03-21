@@ -95,37 +95,24 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Mode submenu ---
-        let modeLabel: String
-        let modeIcon: String
-        switch coordinator.mode {
-        case .critic: modeLabel = "Critic Mode"; modeIcon = "eyeglasses"
-        case .relay: modeLabel = "Relay Mode"; modeIcon = "phone.fill"
-        case .permissionsOnly: modeLabel = "Permissions Only"; modeIcon = "lock.shield"
-        }
-        let modeItem = NSMenuItem(title: modeLabel, action: nil, keyEquivalent: "")
-        modeItem.image = NSImage(systemSymbolName: modeIcon, accessibilityDescription: modeLabel)
+        let currentMode = coordinator.mode
+        let modeItem = NSMenuItem(title: currentMode.label, action: nil, keyEquivalent: "")
+        modeItem.image = NSImage(systemSymbolName: currentMode.iconName, accessibilityDescription: currentMode.label)
         let modeMenu = NSMenu()
 
-        let permItem = NSMenuItem(title: "Permissions Only", action: #selector(setModePermissions), keyEquivalent: "")
-        permItem.target = self
-        permItem.state = coordinator.mode == .permissionsOnly ? .on : .off
-        permItem.image = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: "Permissions only")
-        permItem.subtitle = "Silent watchdog — voice permissions only"
-        modeMenu.addItem(permItem)
-
-        let criticItem = NSMenuItem(title: "Critic", action: #selector(setModeCritic), keyEquivalent: "")
-        criticItem.target = self
-        criticItem.state = coordinator.mode == .critic ? .on : .off
-        criticItem.image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: "Critic mode")
-        criticItem.subtitle = "Inner monologue and alerts"
-        modeMenu.addItem(criticItem)
-
-        let relayItem = NSMenuItem(title: "Relay", action: #selector(setModeRelay), keyEquivalent: "")
-        relayItem.target = self
-        relayItem.state = coordinator.mode == .relay ? .on : .off
-        relayItem.image = NSImage(systemSymbolName: "phone.fill", accessibilityDescription: "Relay mode")
-        relayItem.subtitle = "Walkie talkie with Claude"
-        modeMenu.addItem(relayItem)
+        let modeActions: [(DuckMode, Selector)] = [
+            (.permissionsOnly, #selector(setModePermissions)),
+            (.critic, #selector(setModeCritic)),
+            (.relay, #selector(setModeRelay)),
+        ]
+        for (mode, action) in modeActions {
+            let item = NSMenuItem(title: mode.label, action: action, keyEquivalent: "")
+            item.target = self
+            item.state = currentMode == mode ? .on : .off
+            item.image = NSImage(systemSymbolName: mode.iconName, accessibilityDescription: mode.label)
+            item.subtitle = mode.subtitle
+            modeMenu.addItem(item)
+        }
 
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
@@ -202,31 +189,17 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(voiceItem)
 
         // --- Mic submenu ---
-        let micLabel = speechService.listenMode.label
-        let micIcon: String = {
-            switch speechService.listenMode {
-            case .off: return "microphone.slash.fill"
-            case .permissionsOnly: return "microphone.badge.xmark"
-            case .active: return "microphone.fill"
-            }
-        }()
-        let micItem = NSMenuItem(title: "Mic: \(micLabel)", action: nil, keyEquivalent: "")
-        micItem.image = NSImage(systemSymbolName: micIcon, accessibilityDescription: micLabel)
+        let currentListenMode = speechService.listenMode
+        let micItem = NSMenuItem(title: "Mic: \(currentListenMode.label)", action: nil, keyEquivalent: "")
+        micItem.image = NSImage(systemSymbolName: currentListenMode.iconName, accessibilityDescription: currentListenMode.label)
         let micMenu = NSMenu()
 
-        let listenModeIcons: [ListenMode: String] = [
-            .off: "microphone.slash.fill",
-            .permissionsOnly: "microphone.badge.xmark",
-            .active: "microphone.fill",
-        ]
         for mode in ListenMode.allCases {
             let listenItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
             listenItem.target = self
             listenItem.tag = mode.rawValue
-            listenItem.state = speechService.listenMode == mode ? .on : .off
-            if let iconName = listenModeIcons[mode] {
-                listenItem.image = NSImage(systemSymbolName: iconName, accessibilityDescription: mode.label)
-            }
+            listenItem.state = currentListenMode == mode ? .on : .off
+            listenItem.image = NSImage(systemSymbolName: mode.iconName, accessibilityDescription: mode.label)
             if mode == .active {
                 listenItem.subtitle = "Use wake word \"Ducky\""
             }

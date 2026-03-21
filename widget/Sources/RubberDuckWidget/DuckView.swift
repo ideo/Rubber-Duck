@@ -248,21 +248,7 @@ struct DuckView: View {
                 Label("Relay Mode", systemImage: "phone.fill")
             }
         } label: {
-            let modeLabel: String = {
-                switch coordinator.mode {
-                case .critic: return "Critic Mode"
-                case .relay: return "Relay Mode"
-                case .permissionsOnly: return "Permissions Only"
-                }
-            }()
-            let modeIcon: String = {
-                switch coordinator.mode {
-                case .critic: return "eyeglasses"
-                case .relay: return "phone.fill"
-                case .permissionsOnly: return "lock.shield"
-                }
-            }()
-            Label(modeLabel, systemImage: modeIcon)
+            Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)
         }
 
         // Voice
@@ -285,9 +271,7 @@ struct DuckView: View {
         } label: {
             Label(
                 "Voice: \(speechService.listenMode.label)",
-                systemImage: speechService.listenMode == .off ? "microphone.slash.fill"
-                    : speechService.listenMode == .permissionsOnly ? "microphone.badge.xmark"
-                    : "microphone.fill"
+                systemImage: speechService.listenMode.iconName
             )
         }
 
