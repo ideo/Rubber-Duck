@@ -135,13 +135,28 @@ Files to change:
 - Larger DMA buffers (8→12 count)
 - 22050Hz sample rate (worse than 16kHz)
 - schreibfaul1/ESP32-audioI2S library (designed for streaming, not raw sample injection)
+- 15625Hz "clean divider" rate (160MHz / 4M = exactly 40) — disproved fractional divider theory
+- Soft-knee tanh compressor on chirp output — peaks aren't the issue
+- Widget-side chirp generation streamed over serial — same garble, confirming it's the I2S output path
+- 220µF cap (bigger cap helped power but didn't fix tonal garble)
+
+**Key finding**: Streamed chirps (generated on Mac, identical samples) garble the same as locally generated ones. The problem is definitively the C3 I2S output path with tonal content, not the synthesis code.
+
+**Key finding**: Servo plugged in = cleaner audio. The servo motor's inductance acts as a power filter on the rail. Without it, audio quality drops.
+
+**Hardware notes for C3 BOM**:
+- 220µF+ electrolytic cap on MAX98357 VIN/GND (essential)
+- 5V power to MAX98357 (not 3.3V — C3 regulator too weak)
+- Servo on same rail provides accidental filtering
 
 **Possible next steps**:
-- Dirty up chirp waveforms: add noise/harmonics to mask jitter (FM synthesis, wider filter Q)
-- PDM output mode instead of I2S STD (C3 supports PCM→PDM TX, different clock path)
-- Sigma-delta DAC output (bypasses I2S entirely, lower quality but jitter-free)
+- FM synthesis or noise-based chirps (less power-dynamic, masks jitter naturally)
+- Wavetable DDS (proven clean on C3 by psitech project)
+- PCM5102A DAC (own oscillator, bypasses C3 clock entirely — hardware swap)
 - Accept it: TTS clean + chirps recognizable is a shippable C3 product
 - Skip chirps on C3, use servo-only expression
+
+**Test tool**: `firmware/rubber_duck_c3/test_chirp_synth.py` — Python port of ChirpSynth.ino, plays on laptop or streams to duck via `--serial` for A/B comparison
 
 **Forum reference**: https://forum.seeedstudio.com/t/xiao-esp32c3-and-i2s-how-to/270576
 
