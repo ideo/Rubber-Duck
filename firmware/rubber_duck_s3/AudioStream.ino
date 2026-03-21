@@ -132,7 +132,6 @@ void setupAudio() {
   Serial.print((int)I2S_WS_PIN);
   Serial.print(" DOUT=GPIO");
   Serial.println((int)I2S_DOUT_PIN);
-
 }
 
 // Helper: change sample rate on the fly
@@ -252,7 +251,7 @@ void audioFeedI2S() {
   uint32_t toRead = min((uint32_t)I2S_DMA_BUF_LEN, avail);
   uint32_t got = ringRead(monoChunk, toRead);
 
-  // Expand mono → stereo (MAX98357A expects stereo frames)
+  // Expand mono → stereo
   for (uint32_t i = 0; i < got; i++) {
     stereoChunk[i * 2]     = monoChunk[i];
     stereoChunk[i * 2 + 1] = monoChunk[i];

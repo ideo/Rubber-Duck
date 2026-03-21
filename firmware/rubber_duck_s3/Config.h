@@ -69,7 +69,7 @@
 #define AUDIO_CHANNELS     1       // mono (MAX98357 picks L or R based on SD pin)
 
 // I2S DMA buffers — these feed the MAX98357 continuously.
-// 8 buffers × 256 samples = 128ms of DMA runway.
+// 4 buffers × 256 samples = 64ms of DMA runway.
 #define I2S_DMA_BUF_COUNT  8       // More DMA buffers = more runway before underrun
 #define I2S_DMA_BUF_LEN    256     // samples per DMA buffer
 
