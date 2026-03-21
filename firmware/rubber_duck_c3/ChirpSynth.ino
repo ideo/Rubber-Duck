@@ -130,7 +130,7 @@ static unsigned long lastChirpGenMs = 0;
 static uint32_t chirpSamplesGenerated = 0;
 
 // Scratch buffer for generated samples
-#define CHIRP_CHUNK_SAMPLES 64
+#define CHIRP_CHUNK_SAMPLES 16
 static int16_t chirpScratch[CHIRP_CHUNK_SAMPLES];
 
 // ============================================================
@@ -348,15 +348,15 @@ void updateChirp() {
     return;
   }
 
-  // Generate all samples needed to stay caught up with real-time.
-  // Loop in chunks — single 64-sample pass can't keep up if loop() > 4ms.
-  while (true) {
+  // Generate ONE small chunk per loop() call — drip-feed like TTS.
+  // Don't burst-generate ahead of real-time. Let audioFeedI2S() pull naturally.
+  {
   uint32_t targetSamples = (uint32_t)((float)elapsed / 1000.0f * CHIRP_SAMPLE_RATE);
   uint32_t toGenerate = 0;
   if (targetSamples > chirpSamplesGenerated) {
     toGenerate = targetSamples - chirpSamplesGenerated;
   }
-  if (toGenerate == 0) break;
+  if (toGenerate == 0) return;
   if (toGenerate > CHIRP_CHUNK_SAMPLES) toGenerate = CHIRP_CHUNK_SAMPLES;
 
   // Generate samples
@@ -461,7 +461,7 @@ void updateChirp() {
   // Write to ring buffer (same as TTS audio path)
   audioStreamWrite((const uint8_t *)chirpScratch, toGenerate * 2);
 
-  } // end while(true) — loop until caught up with real-time
+  } // end single chunk per loop()
 }
 
 #else

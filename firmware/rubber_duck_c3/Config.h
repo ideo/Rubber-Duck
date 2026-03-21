@@ -69,8 +69,9 @@
 #define AUDIO_CHANNELS     1       // mono (MAX98357 picks L or R based on SD pin)
 
 // I2S DMA buffers — these feed the MAX98357 continuously.
-// 8 buffers × 256 samples = 128ms of DMA runway.
-#define I2S_DMA_BUF_COUNT  8       // More DMA buffers = more runway before underrun
+// 16 buffers × 256 samples = 256ms of DMA runway.
+// C3 single-core needs more runway to absorb serial/servo CPU spikes.
+#define I2S_DMA_BUF_COUNT  16      // More DMA buffers = more runway before underrun
 #define I2S_DMA_BUF_LEN    256     // samples per DMA buffer
 
 // --- Ring Buffer Config ---
