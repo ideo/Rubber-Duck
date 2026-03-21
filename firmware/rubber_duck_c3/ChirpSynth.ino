@@ -449,8 +449,15 @@ void updateChirp() {
       // volumeScale (0.0–1.0) from widget VOL command
       float amp = chirpIsSine ? (CHIRP_AMPLITUDE * 0.5f) : (CHIRP_AMPLITUDE * 2.0f);
       sample *= amp * volumeScale * 32767.0f;
-      if (sample > 32767.0f) sample = 32767.0f;
-      if (sample < -32767.0f) sample = -32767.0f;
+
+      // Soft-knee compressor: tames peaks that cause power rail sag on C3
+      // Threshold at 40% of max, ratio ~4:1 above threshold via tanh
+      float threshold = 13000.0f;
+      if (sample > threshold) {
+        sample = threshold + (32767.0f - threshold) * tanhf((sample - threshold) / (32767.0f - threshold));
+      } else if (sample < -threshold) {
+        sample = -threshold - (32767.0f - threshold) * tanhf((-sample - threshold) / (32767.0f - threshold));
+      }
 
       chirpScratch[i] = (int16_t)sample;
     }
