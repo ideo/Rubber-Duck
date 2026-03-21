@@ -116,6 +116,35 @@ Files to change:
 
 ## Shelved
 
+### C3 audio quality — chirp synthesis
+
+**Status**: Chirps intelligible but garbled. TTS is nearly clean. Hardware limitation.
+
+**Root cause**: ESP32-C3 has no APLL (Audio PLL). The I2S bit clock is derived from the 160MHz crystal via integer dividers, producing ~0.1% jitter. This is inaudible in broadband speech (TTS) but very audible on pure tones (chirps). Every ESP32-C3 board has this — it's silicon, not a defect.
+
+**What worked**:
+- pschatzmann/arduino-audio-tools library (better I2S clock config than raw IDF driver)
+- 16kHz sample rate (cleanest for C3; 22kHz was worse, 8kHz had aliasing)
+- 47µF cap on MAX98357 VIN (essential — eliminates power rail noise)
+- 5V power to MAX98357 (3.3V causes dropouts on C3's smaller regulator)
+- Drip-feed chirp generation (16 samples/chunk, one chunk per loop() call)
+
+**What didn't help**:
+- MCLK_MULTIPLE overrides (256, 384, 512 — all worse or no change)
+- Assigning MCLK to a GPIO pin
+- Larger DMA buffers (8→12 count)
+- 22050Hz sample rate (worse than 16kHz)
+- schreibfaul1/ESP32-audioI2S library (designed for streaming, not raw sample injection)
+
+**Possible next steps**:
+- Dirty up chirp waveforms: add noise/harmonics to mask jitter (FM synthesis, wider filter Q)
+- PDM output mode instead of I2S STD (C3 supports PCM→PDM TX, different clock path)
+- Sigma-delta DAC output (bypasses I2S entirely, lower quality but jitter-free)
+- Accept it: TTS clean + chirps recognizable is a shippable C3 product
+- Skip chirps on C3, use servo-only expression
+
+**Forum reference**: https://forum.seeedstudio.com/t/xiao-esp32c3-and-i2s-how-to/270576
+
 ### 3D duck viewer
 - Three.js viewer at localhost:3333/viewer exists but was never fully dialed in
 - Both duck prototypes (servo + LED) render but need polish
