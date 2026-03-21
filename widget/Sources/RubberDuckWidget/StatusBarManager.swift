@@ -71,6 +71,27 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         claudeSession.target = self
         claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
         menu.addItem(claudeSession)
+
+        // --- Volume slider ---
+        menu.addItem(volumeSliderItem())
+
+        // --- Turn On/Off ---
+        if AppDelegate.isDuckActive {
+            let offItem = NSMenuItem(title: "Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck), keyEquivalent: "")
+            offItem.target = self
+            if let icon = svgMenuIcon("no-duck-symbol") {
+                offItem.image = icon
+            }
+            menu.addItem(offItem)
+        } else {
+            let onItem = NSMenuItem(title: "Turn On Duck-Duck-Duck", action: #selector(turnOnDuck), keyEquivalent: "")
+            onItem.target = self
+            if let icon = svgMenuIcon("duck-symbol") {
+                onItem.image = icon
+            }
+            menu.addItem(onItem)
+        }
+
         menu.addItem(.separator())
 
         // --- Mode submenu ---
@@ -280,27 +301,102 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // --- Turn On/Off ---
-        if AppDelegate.isDuckActive {
-            let offItem = NSMenuItem(title: "Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck), keyEquivalent: "")
-            offItem.target = self
-            if let icon = svgMenuIcon("no-duck-symbol") {
-                offItem.image = icon
-            }
-            menu.addItem(offItem)
-        } else {
-            let onItem = NSMenuItem(title: "Turn On Duck-Duck-Duck", action: #selector(turnOnDuck), keyEquivalent: "")
-            onItem.target = self
-            if let icon = svgMenuIcon("duck-symbol") {
-                onItem.image = icon
-            }
-            menu.addItem(onItem)
-        }
-
         let quitItem = NSMenuItem(title: "Quit Duck-Duck-Duck", action: #selector(quitApp), keyEquivalent: "")
         quitItem.target = self
         quitItem.image = NSImage(systemSymbolName: "xmark.square.fill", accessibilityDescription: "Quit")
         menu.addItem(quitItem)
+    }
+
+    // MARK: - Volume Slider
+
+    /// Speaker SF Symbol name for a given volume level.
+    private static func speakerIcon(for volume: Float) -> String {
+        switch volume {
+        case 0:              return "speaker.slash.fill"
+        case ..<0.33:        return "speaker.wave.1.fill"
+        case ..<0.66:        return "speaker.wave.2.fill"
+        default:             return "speaker.wave.3.fill"
+        }
+    }
+
+    /// Render speaker SF Symbol into a fixed-size bitmap to prevent vertical jitter.
+    /// Different speaker symbols have slightly different intrinsic metrics even at the
+    /// same point size — stamping them into a uniform canvas eliminates the shift.
+    private static func speakerImage(for volume: Float) -> NSImage? {
+        let name = speakerIcon(for: volume)
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: "Volume")?
+            .withSymbolConfiguration(config) else { return nil }
+
+        // Fixed canvas — symbol drawn centered vertically, left-aligned
+        let canvas = NSSize(width: 20, height: 18)
+        let result = NSImage(size: canvas, flipped: false) { rect in
+            let symbolSize = symbol.size
+            let y = (canvas.height - symbolSize.height) / 2
+            symbol.draw(in: NSRect(x: 0, y: y, width: symbolSize.width, height: symbolSize.height))
+            return true
+        }
+        return result
+    }
+
+    private static let volumeIconTag = 998
+    private static let volumeLabelTag = 999
+
+    private func volumeSliderItem() -> NSMenuItem {
+        let item = NSMenuItem()
+
+        // Container view: icon + slider + percentage label
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
+
+        let vol = DuckConfig.volume
+        let icon = NSImageView(frame: NSRect(x: 18, y: 5, width: 20, height: 18))
+        icon.image = Self.speakerImage(for: vol)
+        icon.imageScaling = .scaleNone
+        icon.imageAlignment = .alignCenter
+        icon.contentTintColor = .labelColor
+        icon.tag = Self.volumeIconTag
+        container.addSubview(icon)
+
+        let slider = NSSlider(frame: NSRect(x: 43, y: 5, width: 165, height: 20))
+        slider.minValue = 0
+        slider.maxValue = 1
+        slider.floatValue = vol
+        slider.isContinuous = true
+        slider.trackFillColor = NSColor(red: 0.925, green: 0.725, blue: 0.278, alpha: 1.0)
+        slider.target = self
+        slider.action = #selector(volumeChanged(_:))
+        container.addSubview(slider)
+
+        let label = NSTextField(labelWithString: "\(Int(vol * 100))%")
+        label.frame = NSRect(x: 212, y: 6, width: 36, height: 16)
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .right
+        label.tag = Self.volumeLabelTag
+        container.addSubview(label)
+
+        item.view = container
+        return item
+    }
+
+    @objc private func volumeChanged(_ sender: NSSlider) {
+        let vol = sender.floatValue
+        DuckConfig.volume = vol
+
+        if let container = sender.superview {
+            // Update percentage label
+            if let label = container.viewWithTag(Self.volumeLabelTag) as? NSTextField {
+                label.stringValue = "\(Int(vol * 100))%"
+            }
+            // Update speaker icon to match volume level
+            if let icon = container.viewWithTag(Self.volumeIconTag) as? NSImageView {
+                icon.image = Self.speakerImage(for: vol)
+            }
+        }
+
+        // Push volume to TTS engines + firmware
+        speechService.setVolume(vol)
+        serialManager.sendCommand(String(format: "VOL,%.2f", vol))
     }
 
     // MARK: - Voice Submenu

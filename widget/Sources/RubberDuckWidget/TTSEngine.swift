@@ -24,6 +24,12 @@ class TTSEngine {
     /// When set, TTS routes to this device via `say -a <name>`.
     var outputDeviceName: String?
 
+    /// Master volume (0.0–1.0). Applied via CoreAudio device volume when
+    /// routing to a duck device. No effect on system default output.
+    var volume: Float = DuckConfig.volume {
+        didSet { applyDeviceVolume() }
+    }
+
     private var ttsProcess: Process?
     private func log(_ msg: String) { DuckLog.log(msg) }
 
@@ -111,4 +117,15 @@ class TTSEngine {
 
     /// Whether TTS is currently muting the mic.
     var isMuted: Bool { gate.muted }
+
+    // MARK: - CoreAudio Device Volume
+
+    /// Apply the current volume to the duck output device via CoreAudio.
+    /// Only affects duck UAC devices (Teensy, ESP32-S3) — not system default output.
+    private func applyDeviceVolume() {
+        guard outputDeviceName != nil else { return }
+        guard let device = AudioDeviceDiscovery.findDuckDevice() else { return }
+        AudioDeviceDiscovery.setDeviceVolume(device.deviceID, volume: volume)
+        log("[tts] Set device volume to \(Int(volume * 100))%")
+    }
 }

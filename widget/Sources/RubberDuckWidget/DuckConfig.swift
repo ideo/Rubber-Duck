@@ -226,6 +226,14 @@ enum DuckConfig {
         ProcessInfo.processInfo.environment["DUCK_AUDIO_DEVICE_NAME"] ?? "teensy"
     }()
 
+    /// Substrings to match when searching CoreAudio for any duck UAC device.
+    /// Matches Teensy ("Teensy MIDI_Audio") and ESP32-S3 ("Duck Duck Duck").
+    /// Override the S3 name: DUCK_S3_AUDIO_DEVICE_NAME=...
+    static let duckAudioDeviceNames: [String] = {
+        let s3Name = ProcessInfo.processInfo.environment["DUCK_S3_AUDIO_DEVICE_NAME"] ?? "duck duck duck"
+        return [teensyAudioDeviceName, s3Name.lowercased()]
+    }()
+
     // MARK: - TTS
 
     /// Voice for macOS `say` command.
@@ -233,6 +241,18 @@ enum DuckConfig {
     static let ttsVoice: String = {
         ProcessInfo.processInfo.environment["DUCK_VOICE"] ?? "Boing"
     }()
+
+    /// Master volume (0.0–1.0). Controls TTS output and firmware chirp level.
+    static var volume: Float {
+        get {
+            let val = UserDefaults.standard.float(forKey: "duck_volume")
+            return val == 0 && !UserDefaults.standard.bool(forKey: "duck_volume_set") ? 0.8 : val
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "duck_volume")
+            UserDefaults.standard.set(true, forKey: "duck_volume_set")
+        }
+    }
 
     // MARK: - tmux
 

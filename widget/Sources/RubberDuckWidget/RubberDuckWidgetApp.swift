@@ -66,6 +66,7 @@ struct RubberDuckWidgetApp: App {
                 .environmentObject(serialManager)
                 .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
                 .background(WindowDragArea())
+                .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -133,6 +134,8 @@ struct RubberDuckWidgetApp: App {
             speech?.handleSerialDeviceChange()
             if serial?.isConnected == true {
                 AppDelegate.turnOn()
+                // Send persisted volume to firmware on connect
+                serial?.sendCommand(String(format: "VOL,%.2f", DuckConfig.volume))
             }
         }
 

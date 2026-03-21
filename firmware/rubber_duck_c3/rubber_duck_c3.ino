@@ -32,6 +32,7 @@
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
+float volumeScale = 0.8f;  // Default 80%, updated by widget VOL command
 
 // --- Permission State ---
 bool          permissionPending = false;
