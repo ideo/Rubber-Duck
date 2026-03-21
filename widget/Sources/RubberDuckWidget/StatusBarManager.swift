@@ -59,10 +59,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - NSMenuDelegate
 
-    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
-        MainActor.assumeIsolated {
-            self.rebuildMenu(menu)
-        }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildMenu(menu)
     }
 
     private func rebuildMenu(_ menu: NSMenu) {
