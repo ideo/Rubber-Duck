@@ -336,6 +336,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             symbol.draw(in: NSRect(x: 0, y: y, width: symbolSize.width, height: symbolSize.height))
             return true
         }
+        result.isTemplate = true  // Adapts to light/dark menu appearance
         return result
     }
 

@@ -84,7 +84,7 @@ class SpeechService: ObservableObject {
     enum AudioPath {
         case local          // Mac system mic + speakers (default fallback)
         case teensy         // Teensy UAC — STTEngine + TTSEngine via CoreAudio
-        case duckUAC        // ESP32-S3 UAC — STTEngine + TTSEngine via CoreAudio (same engines as Teensy)
+        // case duckUAC     // TBD: ESP32-S3 UAC — not yet working, shelved for now
         case esp32Serial    // ESP32-C3 — SerialMicEngine + SerialTTSEngine via binary frames
     }
 
@@ -180,11 +180,10 @@ class SpeechService: ObservableObject {
         guard let transport = serialTransport else { return }
 
         if transport.isESP32 && transport.isConnected {
-            // ESP32 connected — check if it also has a UAC device in CoreAudio.
-            // Give CoreAudio a moment to enumerate the USB audio endpoints,
-            // then check. If no UAC device appears, fall back to serial streaming.
-            log("[speech] ESP32 connected (\(transport.connectedBoard ?? "?")) — checking for UAC device...")
-            scheduleESP32AudioCheck()
+            // ESP32 connected — always use serial streaming.
+            // UAC support is experimental and shelved for now.
+            log("[speech] ESP32 connected (\(transport.connectedBoard ?? "?")) — using serial streaming")
+            switchAudioPath(.esp32Serial)
         } else if transport.isConnected {
             // Teensy or unknown — let CoreAudio handle it
             log("[speech] Serial device connected: \(transport.connectedBoard ?? "unknown") — using CoreAudio path")
@@ -196,28 +195,9 @@ class SpeechService: ObservableObject {
         }
     }
 
-    /// After an ESP32 connects via serial, wait briefly for a UAC device
-    /// to appear in CoreAudio. If found → duckUAC path. If not → serial streaming.
-    private func scheduleESP32AudioCheck() {
-        deviceCheckTask?.cancel()
-        deviceCheckTask = Task {
-            // USB audio enumeration can take up to 1s after serial handshake
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if Task.isCancelled { return }
-
-            if let device = AudioDeviceDiscovery.findDuckDevice() {
-                // UAC device found — use CoreAudio path
-                self.log("[speech] Found UAC device: \(device.name) — using CoreAudio path")
-                self.stt.setTeensyDevice(device.deviceID)
-                self.tts.outputDeviceName = device.name
-                self.switchAudioPath(.duckUAC)
-            } else {
-                // No UAC device — this ESP32 uses serial streaming
-                self.log("[speech] No UAC device found — using serial streaming path")
-                self.switchAudioPath(.esp32Serial)
-            }
-        }
-    }
+    // TBD: scheduleESP32AudioCheck() — shelved until UAC firmware works.
+    // Was: wait 1s after serial handshake, check CoreAudio for duck UAC device,
+    // switch to duckUAC path if found, else fall back to serial streaming.
 
     /// Switch to a new audio path, swapping active backends and restarting listening.
     private func switchAudioPath(_ newPath: AudioPath) {
@@ -236,7 +216,7 @@ class SpeechService: ObservableObject {
         case .esp32Serial:
             if let mic = serialMic { activeSTT = mic }
             if let ttsEngine = serialTTS { activeTTS = ttsEngine }
-        case .teensy, .duckUAC, .local:
+        case .teensy, .local:
             activeSTT = stt
             activeTTS = tts
         }
@@ -368,8 +348,8 @@ class SpeechService: ObservableObject {
                 stt.setTeensyDevice(device.deviceID)
                 tts.outputDeviceName = device.name
                 tts.volume = DuckConfig.volume  // Apply persisted volume to device
-                audioPath = device.isTeensy ? .teensy : .duckUAC
-                log("[speech] Selected \(device.isTeensy ? "Teensy" : "duck UAC") mic: \(device.name)")
+                audioPath = .teensy  // TBD: distinguish Teensy vs S3 UAC when UAC works
+                log("[speech] Selected duck UAC mic: \(device.name)")
                 log("[tts] Will route TTS to \(device.name) via `say -a`")
             }
         } else {
@@ -405,7 +385,7 @@ class SpeechService: ObservableObject {
         // Don't let CoreAudio changes override the ESP32-C3 serial path
         if audioPath == .esp32Serial { return }
 
-        let wasDuckUAC = (audioPath == .teensy || audioPath == .duckUAC)
+        let wasDuckUAC = (audioPath == .teensy)
         let duckNow = AudioDeviceDiscovery.findDuckDevice()
 
         if wasDuckUAC && duckNow == nil {
