@@ -212,6 +212,22 @@ enum DuckConfig {
         return nil
     }
 
+    // MARK: - Duck Mode
+
+    /// Persisted duck mode. Defaults to `.critic`.
+    static var duckMode: DuckMode {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: "duck_mode"),
+               let mode = DuckMode(rawValue: raw) {
+                return mode
+            }
+            return .critic
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "duck_mode")
+        }
+    }
+
     // MARK: - Serial / Device
 
     /// Prefix to match when scanning /dev for Teensy serial ports.

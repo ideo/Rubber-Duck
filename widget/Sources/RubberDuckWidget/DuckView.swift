@@ -233,6 +233,11 @@ struct DuckView: View {
         // Mode selector — icon reflects current mode
         Menu {
             Button {
+                coordinator.setMode(.permissionsOnly)
+            } label: {
+                Label("Permissions Only", systemImage: "lock.shield")
+            }
+            Button {
                 coordinator.setMode(.critic)
             } label: {
                 Label("Critic Mode", systemImage: "eyeglasses")
@@ -243,10 +248,21 @@ struct DuckView: View {
                 Label("Relay Mode", systemImage: "phone.fill")
             }
         } label: {
-            Label(
-                coordinator.mode == .critic ? "Critic Mode" : "Relay Mode",
-                systemImage: coordinator.mode == .critic ? "eyeglasses" : "phone.fill"
-            )
+            let modeLabel: String = {
+                switch coordinator.mode {
+                case .critic: return "Critic Mode"
+                case .relay: return "Relay Mode"
+                case .permissionsOnly: return "Permissions Only"
+                }
+            }()
+            let modeIcon: String = {
+                switch coordinator.mode {
+                case .critic: return "eyeglasses"
+                case .relay: return "phone.fill"
+                case .permissionsOnly: return "lock.shield"
+                }
+            }()
+            Label(modeLabel, systemImage: modeIcon)
         }
 
         // Voice

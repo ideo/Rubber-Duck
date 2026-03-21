@@ -95,11 +95,23 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Mode submenu ---
-        let modeLabel = coordinator.mode == .critic ? "Critic Mode" : "Relay Mode"
-        let modeIcon = coordinator.mode == .critic ? "eyeglasses" : "phone.fill"
+        let modeLabel: String
+        let modeIcon: String
+        switch coordinator.mode {
+        case .critic: modeLabel = "Critic Mode"; modeIcon = "eyeglasses"
+        case .relay: modeLabel = "Relay Mode"; modeIcon = "phone.fill"
+        case .permissionsOnly: modeLabel = "Permissions Only"; modeIcon = "lock.shield"
+        }
         let modeItem = NSMenuItem(title: modeLabel, action: nil, keyEquivalent: "")
         modeItem.image = NSImage(systemSymbolName: modeIcon, accessibilityDescription: modeLabel)
         let modeMenu = NSMenu()
+
+        let permItem = NSMenuItem(title: "Permissions Only", action: #selector(setModePermissions), keyEquivalent: "")
+        permItem.target = self
+        permItem.state = coordinator.mode == .permissionsOnly ? .on : .off
+        permItem.image = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: "Permissions only")
+        permItem.subtitle = "Silent watchdog — voice permissions only"
+        modeMenu.addItem(permItem)
 
         let criticItem = NSMenuItem(title: "Critic", action: #selector(setModeCritic), keyEquivalent: "")
         criticItem.target = self
@@ -443,6 +455,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func setModeRelay() {
         coordinator.setMode(.relay)
+    }
+
+    @objc private func setModePermissions() {
+        coordinator.setMode(.permissionsOnly)
     }
 
     @objc private func setProviderFoundation() {

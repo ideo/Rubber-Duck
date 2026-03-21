@@ -35,8 +35,9 @@ enum PermissionStatus: String, Codable {
 
 /// Voice output mode — controls which eval text the duck speaks.
 enum DuckMode: String, CaseIterable {
-    case critic   // Speak opinionated reaction (default)
-    case relay    // Speak factual summary
+    case permissionsOnly  // Silent watchdog — only voice-confirmed permissions (default)
+    case critic           // Speak opinionated reaction
+    case relay            // Speak factual summary
 }
 
 // MARK: - Inbound Messages (service → widget via WebSocket)

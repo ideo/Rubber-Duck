@@ -20,6 +20,11 @@ enum LaunchGreeting {
         let minutesSince = minutesSinceLastLaunch()
         recordLaunch()
 
+        // Permissions-only: passive, helpful watchdog tone
+        if mode == .permissionsOnly {
+            return permissionsGreeting(hour: hour, minutesSince: minutesSince)
+        }
+
         let isCritic = mode == .critic
 
         // First ever launch
@@ -40,7 +45,7 @@ enum LaunchGreeting {
             return isCritic
                 ? ["They're back already. That was fast.",
                    "Couldn't stay away, huh.",
-                   "Something must have broken."].randomElement()!
+                   "Quick reboot. Picking up where we left off."].randomElement()!
                 : ["Miss me already?",
                    "Back so soon?",
                    "That was quick.",
@@ -87,6 +92,13 @@ enum LaunchGreeting {
 
     /// Pick a session-connect greeting (when /health is pinged by a Claude session).
     static func sessionConnect(mode: DuckMode = .critic) -> String {
+        if mode == .permissionsOnly {
+            return ["Session connected. I'll keep watch.",
+                    "Plugged in. I'll speak up if something needs your attention.",
+                    "Session's live. I'm here if you need me.",
+                    "Connected. You do your thing, I've got permissions.",
+                    "On it. I'll let you know when something comes up."].randomElement()!
+        }
         let isCritic = mode == .critic
         return isCritic
             ? ["Session's up. Let's see what they're made of.",
@@ -102,6 +114,73 @@ enum LaunchGreeting {
                "Ready when you are.",
                "Let's do this.",
                "Quack. I mean, hi."].randomElement()!
+    }
+
+    // MARK: - Permissions-Only Greetings (passive, helpful watchdog)
+
+    private static func permissionsGreeting(hour: Int, minutesSince: Int?) -> String {
+        let time: String
+        switch hour {
+        case 0..<6:   time = "Late night. "
+        case 6..<12:  time = "Morning. "
+        case 12..<17: time = "Afternoon. "
+        case 17..<21: time = "Evening. "
+        default:       time = "Late night. "
+        }
+
+        // First ever launch
+        if minutesSince == nil {
+            return ["\(time)I'll keep an eye out.",
+                    "Hey. I'm on permissions duty.",
+                    "\(time)I'll speak up when you need me.",
+                    "I'm your lookout. Let's go.",
+                    "\(time)Here to keep things moving."].randomElement()!
+        }
+
+        let mins = minutesSince!
+
+        // Quick relaunch
+        if mins < 5 {
+            return ["Back on watch.",
+                    "Still here.",
+                    "Quick restart. On it.",
+                    "Right where we left off.",
+                    "Back. Eyes open."].randomElement()!
+        }
+
+        // Within an hour
+        if mins < 60 {
+            return ["\(time)On the lookout.",
+                    "Back on watch.",
+                    "\(time)Here if you need me.",
+                    "I've got permissions.",
+                    "\(time)Ready when you are.",
+                    "Watching. You do your thing."].randomElement()!
+        }
+
+        // Been hours
+        if mins < 1440 {
+            return ["\(time)I've got your back.",
+                    "\(time)You code, I'll watch.",
+                    "I'll keep things unstuck.",
+                    "\(time)On lookout duty.",
+                    "\(time)Here to help."].randomElement()!
+        }
+
+        // Been days
+        let days = mins / 1440
+        if days == 1 {
+            return ["\(time)Been a day. I'm on it.",
+                    "Back. I've got permissions.",
+                    "\(time)Let's keep things moving.",
+                    "A day later. Watching.",
+                    "\(time)I'll keep an eye out."].randomElement()!
+        }
+        return ["\(time)\(days) days. I'm here.",
+                "Long time. I've got you.",
+                "\(time)Back on watch.",
+                "\(days) days later. Let's go.",
+                "Missed you. I'll keep watch."].randomElement()!
     }
 
     private static func timeOfDayGreeting(_ hour: Int, isCritic: Bool) -> String {

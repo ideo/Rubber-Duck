@@ -10,7 +10,7 @@ import SwiftUI
 class DuckCoordinator: ObservableObject {
     @Published var expression = DuckExpression()
     @Published var showReaction = false
-    @Published var mode: DuckMode = .critic
+    @Published var mode: DuckMode = DuckConfig.duckMode
     @Published var isThinking = false
 
     private let evalService: EvalService
@@ -26,6 +26,11 @@ class DuckCoordinator: ObservableObject {
         self.evalService = evalService
         self.speechService = speechService
         self.serialManager = serialManager
+
+        // Restore permissions-only side effects if that mode was persisted
+        if mode == .permissionsOnly {
+            speechService.listenMode = .permissionsOnly
+        }
     }
 
     // MARK: - Event Handlers
@@ -37,6 +42,15 @@ class DuckCoordinator: ObservableObject {
 
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
+        // Permissions-only mode: ignore evals entirely — just resolve any stale permission
+        if mode == .permissionsOnly {
+            if evalService.permissionPending {
+                evalService.permissionPending = false
+            }
+            serialManager.sendCommand("P,0")
+            return
+        }
+
         let isUserEval = evalService.source == "user"
         isThinking = isUserEval
 
@@ -79,7 +93,7 @@ class DuckCoordinator: ObservableObject {
         }
         serialManager.sendCommand("P,0")
 
-        // Send to Teensy via serial
+        // Send to duck via serial
         if let scores = evalService.scores {
             serialManager.sendScores(scores, source: evalService.source)
         }
@@ -92,6 +106,8 @@ class DuckCoordinator: ObservableObject {
             textToSpeak = evalService.reaction
         case .relay:
             textToSpeak = isUserEval ? "" : evalService.summary
+        case .permissionsOnly:
+            textToSpeak = ""  // unreachable — early return above
         }
         if !textToSpeak.isEmpty {
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
@@ -104,16 +120,39 @@ class DuckCoordinator: ObservableObject {
         }
     }
 
-    /// Toggle between critic and relay mode. Speaks the new mode name as confirmation.
+    /// Cycle through modes: permissionsOnly → critic → relay → permissionsOnly.
     func toggleMode() {
-        setMode(mode == .critic ? .relay : .critic)
+        switch mode {
+        case .permissionsOnly: setMode(.critic)
+        case .critic: setMode(.relay)
+        case .relay: setMode(.permissionsOnly)
+        }
     }
 
     /// Set a specific mode. Speaks confirmation if the mode actually changed.
     func setMode(_ newMode: DuckMode) {
         guard newMode != mode else { return }
         mode = newMode
-        let label = mode == .critic ? "Critic mode" : "Relay mode"
+        DuckConfig.duckMode = newMode
+
+        let label: String
+        switch mode {
+        case .critic: label = "Critic mode"
+        case .relay: label = "Relay mode"
+        case .permissionsOnly: label = "Permissions only"
+        }
+
+        // In permissions-only, force mic to permissionsOnly listen mode + reset face to neutral
+        if mode == .permissionsOnly {
+            speechService.listenMode = .permissionsOnly
+            withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
+                expression = DuckExpression()
+            }
+        }
+
+        // Clear any thinking state when switching modes
+        clearThinking()
+
         speechService.speak(label)
     }
 
@@ -142,18 +181,29 @@ class DuckCoordinator: ObservableObject {
     func handlePermissionDecision(index: Int) {
         evalService.sendPermissionDecision(index: index)
         serialManager.sendCommand("P,0")
-        updateExpression()
+        resetOrUpdateExpression()
     }
 
     /// Called when permission resolves (pending → false) via onChange.
     /// Backup path in case decision comes from outside the widget (CLI, timeout).
     func handlePermissionResolved() {
-        updateExpression()
+        resetOrUpdateExpression()
         serialManager.sendCommand("P,0")
         speechService.clearPermissionGate()
     }
 
     // MARK: - Expression
+
+    /// In permissions-only mode, reset to neutral. Otherwise rebuild from scores.
+    private func resetOrUpdateExpression() {
+        if mode == .permissionsOnly {
+            withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
+                expression = DuckExpression()
+            }
+        } else {
+            updateExpression()
+        }
+    }
 
     func updateExpression() {
         withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
