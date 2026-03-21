@@ -1,12 +1,99 @@
 # TBD — Open Items
 
-## 1. Onboarding — golden path
+## 1. Permissions-only mode
+
+**Why first**: This is the simplest, most universally useful duck mode. Many users want voice-confirmed permissions without commentary. It also forces us to nail the permission UX before layering on evals and onboarding.
+
+**Current state**: The mic menu already has a "Permissions Only" listen mode that disables wake word but keeps permission listening. However, this is a *mic* setting, not a *mode*. The duck still runs evals and speaks reactions — it just ignores wake word input.
+
+**What we want**: A true permissions-only mode where the duck is silent until a permission request arrives. No evals, no reactions, no scoring overhead. Just a watchdog.
+
+### Implementation plan
+
+**Menu change** — Add "Permissions Only" as a third mode alongside Critic and Relay:
+```
+Mode (current: Critic)
+  ☑ Critic           [inner monologue and alerts]
+  ◯ Relay            [walkie talkie with Claude]
+  ◯ Permissions Only [voice-confirmed permissions only]
+```
+
+**Behavior in permissions-only mode**:
+- Evals: **OFF** — hooks still fire but widget discards eval results (no scoring, no TTS reaction)
+- Permission hook: **ON** — full voice flow as today (speak prompt, listen for yes/no)
+- Mic: **always on** in permissions-only (forced to `.permissionsOnly` listen mode)
+- Duck face: neutral/idle, no expression changes from evals
+- Chirps: only permission chirp (uh-oh), no expression chirps
+- Servo: only permission nag animation, no eval-driven movement
+- Serial to firmware: only `P,1` / `P,0` commands, no score messages
+
+**Files to change**:
+- `StatusBarManager.swift` — add Permissions Only to mode submenu
+- `DuckCoordinator.swift` — check mode before processing evals, skip scoring/expression/TTS in permissions-only
+- `SpeechService.swift` — force `.permissionsOnly` listen mode when in this mode
+- `EvalService.swift` — skip eval processing when mode is permissions-only (or just don't speak results)
+- `DuckConfig.swift` — persist mode as enum: `.critic`, `.relay`, `.permissionsOnly`
+
+**Estimated effort**: Small — mostly gating existing code paths with a mode check.
+
+## 2. Improved permission option handling
+
+**Why second**: The current permission prompt is too simple. It always says "Tool name. Allow?" regardless of what the tool is or what options Claude offers. Smarter prompts make the duck more useful and less annoying.
+
+**Current flow**:
+1. Hook sends: `tool_name`, `tool_input` (JSON), `permission_suggestions` (array of rules)
+2. Widget speaks: `"Read config. Allow?"` (or just `"Read. Allow?"` if no summary)
+3. User says: "yes" / "no" / "first" / "second" (to select a suggestion)
+
+**Problems**:
+- `tool_input` is raw JSON — not human-friendly for TTS
+- Permission suggestions are rule objects, not plain English — user has no idea what "first" or "second" means
+- All permissions sound the same regardless of risk level
+- MCP connector tool calls trigger permission prompts even when they shouldn't block
+
+### Implementation plan
+
+**Phase 1: Better prompts (no intelligence needed)**
+- Parse `tool_input` to extract meaningful context:
+  - Bash: read the `command` field → "Run git status. Allow?"
+  - Edit: read `file_path` → "Edit StatusBarManager.swift. Allow?"
+  - Read: read `file_path` → "Read Config.h. Allow?"
+  - WebFetch: read `url` → "Fetch from github.com. Allow?"
+- Speak suggestion labels clearly: "Say 'first' to always allow Read, or 'second' to always allow in this project"
+- Use `PermissionGate.describeSuggestion()` (already exists) to generate TTS-friendly labels
+
+**Phase 2: Intelligence-powered summaries**
+- Send `tool_name` + `tool_input` to the selected eval engine (Foundation/Haiku/Gemini)
+- Prompt: "Summarize this tool call in 5 words for a voice assistant"
+- Example: Bash `{"command": "rm -rf /tmp/build"}` → "Delete temp build folder"
+- Risk assessment: "Is this destructive? Rate 1-5" → adjust TTS urgency/voice
+
+**Phase 3: Smarter response matching**
+- Use intelligence to interpret ambiguous responses: "uh, I guess so" → allow
+- Handle conditional responses: "allow but only this once" → allow without suggestion
+- Handle questions: "what does it do?" → re-read the summary
+
+**Phase 4: MCP connector bug**
+- Investigate why MCP tool calls trigger permission requests
+- May need to filter by tool source in the hook script
+
+**Files to change**:
+- `scripts/on-permission-request.sh` — pass more structured data (extract command/path before sending)
+- `DuckServer.swift` — parse tool_input JSON, extract human-readable summary per tool type
+- `SpeechService.swift` — speak richer prompts with option descriptions
+- `PermissionVoiceGate.swift` — smarter matching (Phase 3)
+- `EvalService.swift` or new `PermissionSummarizer.swift` — intelligence-powered summaries (Phase 2)
+
+**Estimated effort**: Phase 1 is small (string parsing). Phase 2 is medium (new eval prompt). Phase 3-4 are polish.
+
+## 3. Onboarding — golden path
 - Simulate the full onboarding flow end-to-end and handle every step
 - Golden path: user has Claude Code installed → installs widget from App Store → plugin discovery/install → first session with duck active
 - Each transition needs to be smooth: what does the user see/hear at every step?
 - Handle edge cases: Claude not installed, widget not running, plugin not found, port conflict
 - First-run experience: duck should introduce itself, explain what it does, set expectations
 - Existing onboarding notes in `docs/ONBOARDING.md` — build on those, don't start from scratch
+- **Depends on #1 and #2**: onboarding should default to permissions-only mode (least intimidating) and demonstrate the improved permission prompts
 
 ### Sub-task: on-device help / support — R&D DONE, ready to build
 
@@ -45,26 +132,14 @@ Files to change:
 - `RubberDuckWidgetApp.swift` — create help service, wire callbacks
 - `DuckCoordinator.swift` — optional `isAnsweringHelp` state for thinking animation
 
-## 2. Permissions-only mode
-- Third mode alongside critic and relay — duck only handles permission requests
-- No evals, no speech reactions, no scoring — just the voice permission flow
-- Useful for users who want the safety net of voice-confirmed permissions without the commentary
-- Needs mode selector in menu (critic / relay / permissions-only)
-
-## 3. Improved permission option handling
-- Currently always says "ALLOW?" with allow/deny — but not all permission prompts are binary allow/deny
-- Use the selected intelligence (Foundation Models or API) to interpret the user's spoken response more flexibly
-- Use intelligence to concisely summarize what the permission options actually are before asking
-- Bug: MCP connector tool calls trigger "ALLOW?" as if they're blocked, but connectors don't necessarily block — investigate why they're treated as permission requests
-
-## 4. Wildcard voice — tuning
+## 5. Wildcard voice — tuning
 - Two-pass Foundation Models implementation works (LocalEvaluator: score → LocalVoicePick)
 - Currently defaults to Superstar for almost everything — only switches on extreme scores
 - Could use more Playground iteration to make voice picks more expressive/varied
 - Whisper might work well for skepticism — "I'm not sure about this..." inner-doubt moments
 - Removed bubbles (too weird). Now 10 wildcard voices.
 
-## 5. Wake word in critic mode
+## 6. Wake word in critic mode
 - **Largely solved by help mode** — in critic mode, wake word now routes to on-device help (see #2 sub-task)
 - Remaining: could also speak last eval summary on demand: "ducky, how am I doing?" → recap scores
 - Could speak a verbal status: "I'm watching. Things are looking rough."
