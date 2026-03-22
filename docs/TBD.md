@@ -1,101 +1,27 @@
 # TBD — Open Items
 
-## 1. Permissions-only mode
+## Completed
 
-**Why first**: This is the simplest, most universally useful duck mode. Many users want voice-confirmed permissions without commentary. It also forces us to nail the permission UX before layering on evals and onboarding.
+- [x] **Permissions-only mode** — full watchdog mode with passive greetings, face reset, mode persistence
+- [x] **Improved permission handling** — Bash description field, internal tool names, natural language voice matching, Foundation Models classifier fallback, empty-suggestion skip
+- [x] **Wildcard voice V2** — score-gated architecture replaces V1 (see `docs/VOICE-SELECTION-V2.md`). Math filters pool, LLM picks tone label, mapped back to Mac voice. Jester removed.
+- [x] **New hooks** — SessionEnd, PreCompact, PostCompact, StopFailure
+- [x] **Companion mode rename** — Critic → Companion (`.critic` enum kept internal)
+- [x] **Relay mode rename** — subtitle now "Walkie Talkie with Claude CLI", flask icon
 
-**Current state**: The mic menu already has a "Permissions Only" listen mode that disables wake word but keeps permission listening. However, this is a *mic* setting, not a *mode*. The duck still runs evals and speaks reactions — it just ignores wake word input.
+---
 
-**What we want**: A true permissions-only mode where the duck is silent until a permission request arrives. No evals, no reactions, no scoring overhead. Just a watchdog.
+## 3. Onboarding + Help (unified)
 
-### Implementation plan
+The duck IS the onboarding. It walks you through setup, answers questions, and that first interaction is also the demo of what it does. Help and onboarding are the same system.
 
-**Menu change** — Add "Permissions Only" as a third mode alongside Critic and Relay:
-```
-Mode (current: Critic)
-  ☑ Critic           [inner monologue and alerts]
-  ◯ Relay            [walkie talkie with Claude]
-  ◯ Permissions Only [voice-confirmed permissions only]
-```
+### Golden path
+1. User installs widget from App Store → duck appears, introduces itself
+2. Duck guides plugin installation via voice/text: "Say 'ducky, help me install' or click the button"
+3. First permission fires → duck demonstrates the voice flow
+4. User is set up and understands all three modes
 
-**Behavior in permissions-only mode**:
-- Evals: **OFF** — hooks still fire but widget discards eval results (no scoring, no TTS reaction)
-- Permission hook: **ON** — full voice flow as today (speak prompt, listen for yes/no)
-- Mic: **always on** in permissions-only (forced to `.permissionsOnly` listen mode)
-- Duck face: neutral/idle, no expression changes from evals
-- Chirps: only permission chirp (uh-oh), no expression chirps
-- Servo: only permission nag animation, no eval-driven movement
-- Serial to firmware: only `P,1` / `P,0` commands, no score messages
-
-**Files to change**:
-- `StatusBarManager.swift` — add Permissions Only to mode submenu
-- `DuckCoordinator.swift` — check mode before processing evals, skip scoring/expression/TTS in permissions-only
-- `SpeechService.swift` — force `.permissionsOnly` listen mode when in this mode
-- `EvalService.swift` — skip eval processing when mode is permissions-only (or just don't speak results)
-- `DuckConfig.swift` — persist mode as enum: `.critic`, `.relay`, `.permissionsOnly`
-
-**Estimated effort**: Small — mostly gating existing code paths with a mode check.
-
-## 2. Improved permission option handling
-
-**Why second**: The current permission prompt is too simple. It always says "Tool name. Allow?" regardless of what the tool is or what options Claude offers. Smarter prompts make the duck more useful and less annoying.
-
-**Current flow**:
-1. Hook sends: `tool_name`, `tool_input` (JSON), `permission_suggestions` (array of rules)
-2. Widget speaks: `"Read config. Allow?"` (or just `"Read. Allow?"` if no summary)
-3. User says: "yes" / "no" / "first" / "second" (to select a suggestion)
-
-**Problems**:
-- `tool_input` is raw JSON — not human-friendly for TTS
-- Permission suggestions are rule objects, not plain English — user has no idea what "first" or "second" means
-- All permissions sound the same regardless of risk level
-- MCP connector tool calls trigger permission prompts even when they shouldn't block
-
-### Implementation plan
-
-**Phase 1: Better prompts (no intelligence needed)**
-- Parse `tool_input` to extract meaningful context:
-  - Bash: read the `command` field → "Run git status. Allow?"
-  - Edit: read `file_path` → "Edit StatusBarManager.swift. Allow?"
-  - Read: read `file_path` → "Read Config.h. Allow?"
-  - WebFetch: read `url` → "Fetch from github.com. Allow?"
-- Speak suggestion labels clearly: "Say 'first' to always allow Read, or 'second' to always allow in this project"
-- Use `PermissionGate.describeSuggestion()` (already exists) to generate TTS-friendly labels
-
-**Phase 2: Intelligence-powered summaries**
-- Send `tool_name` + `tool_input` to the selected eval engine (Foundation/Haiku/Gemini)
-- Prompt: "Summarize this tool call in 5 words for a voice assistant"
-- Example: Bash `{"command": "rm -rf /tmp/build"}` → "Delete temp build folder"
-- Risk assessment: "Is this destructive? Rate 1-5" → adjust TTS urgency/voice
-
-**Phase 3: Smarter response matching**
-- Use intelligence to interpret ambiguous responses: "uh, I guess so" → allow
-- Handle conditional responses: "allow but only this once" → allow without suggestion
-- Handle questions: "what does it do?" → re-read the summary
-
-**Phase 4: MCP connector bug**
-- Investigate why MCP tool calls trigger permission requests
-- May need to filter by tool source in the hook script
-
-**Files to change**:
-- `scripts/on-permission-request.sh` — pass more structured data (extract command/path before sending)
-- `DuckServer.swift` — parse tool_input JSON, extract human-readable summary per tool type
-- `SpeechService.swift` — speak richer prompts with option descriptions
-- `PermissionVoiceGate.swift` — smarter matching (Phase 3)
-- `EvalService.swift` or new `PermissionSummarizer.swift` — intelligence-powered summaries (Phase 2)
-
-**Estimated effort**: Phase 1 is small (string parsing). Phase 2 is medium (new eval prompt). Phase 3-4 are polish.
-
-## 3. Onboarding — golden path
-- Simulate the full onboarding flow end-to-end and handle every step
-- Golden path: user has Claude Code installed → installs widget from App Store → plugin discovery/install → first session with duck active
-- Each transition needs to be smooth: what does the user see/hear at every step?
-- Handle edge cases: Claude not installed, widget not running, plugin not found, port conflict
-- First-run experience: duck should introduce itself, explain what it does, set expectations
-- Existing onboarding notes in `docs/ONBOARDING.md` — build on those, don't start from scratch
-- **Depends on #1 and #2**: onboarding should default to permissions-only mode (least intimidating) and demonstrate the improved permission prompts
-
-### Sub-task: on-device help / support — R&D DONE, ready to build
+### On-device help — R&D DONE, ready to build
 
 **R&D results** (Playground-tested, all tiers pass):
 - Grounding document: `docs/DUCK-HELP-GROUNDING.md` — compact help entries in duck's voice (~1200 tokens)
@@ -107,43 +33,62 @@ Mode (current: Critic)
 - Key finding: "Can you help me debug" triggers Apple safety filter — keep questions duck-focused
 - Key finding: model quality tracks grounding doc quality directly — tight duck-voiced entries produce tight duck-voiced answers
 
-**Implementation plan — DuckHelpService**:
+### DuckHelpService architecture
 
-Architecture:
 - New `DuckHelpService.swift` actor (mirrors `LocalEvaluator` pattern)
 - Connected to wake word: "ducky, how do I install the plugin?" → duck answers directly
-- **Critic mode**: all wake word input routes to help (no tmux to relay to — this gives wake word a purpose)
-- **Relay mode**: help always tries first. If Foundation recognizes it's NOT a duck question, it says something like "That sounds like a Claude question" and seamlessly relays to tmux
-- **Intelligence-agnostic**: uses whatever eval engine is selected (Foundation/Haiku/Gemini), not just Foundation Models. Same grounding content, different backend.
+- **Companion mode**: wake word routes to help (gives wake word a purpose beyond relay)
+- **Relay mode**: help tries first. If Foundation recognizes it's NOT a duck question, says "That sounds like a Claude question" and relays to tmux
+- Handles random chats and curious people poking at the duck
+- **Intelligence-agnostic**: uses whatever eval engine is selected (Foundation/Haiku/Gemini)
 
-Wake word UX:
-- "Ducky" → duck immediately responds "What?" / "Hmm?" / "Yeah?" (short, varied pool) AND cocks head (expression state). Instant feedback it heard you.
-- Currently wake word silently starts listening — that's a dead-air gap
+### Wake word UX
+- "Ducky" → immediate short response ("What?" / "Hmm?" / "Yeah?") + head cock expression. No dead-air gap.
+- Can also recap status on demand: "ducky, how am I doing?" → verbal score summary
 - Help response spoken via same TTS path as eval reactions
 
-Session lifecycle:
+### Session lifecycle
 - `LanguageModelSession` kept alive between wake word activations
-- Auto-reset after 4 turns (4K token window fills up) — duck says "I'm losing my train of thought — ask me again fresh?" (natural, in-character)
-- Also reset after 60s inactivity (timer in SpeechService)
+- Auto-reset after 4 turns (4K token window) — "I'm losing my train of thought — ask me again fresh?"
+- Also reset after 60s inactivity
 
-Files to change:
+### Speech bubble fallback
+- Not everyone has speakers/mic — duck needs a text fallback
+- Speech bubble below/beside the duck face shows what it would have said
+- Liquid glass bubble that appears/fades with the utterance
+- Required for: App Store version (sandbox blocks mic on some setups), silent environments, accessibility
+- Also useful as a visual transcript — see what the duck said even with audio on
+
+### Files to change
 - `DuckHelpService.swift` (NEW) — actor with grounding content, session management, `ask()` method
-- `SpeechService.swift` — add `onHelpQuestion` callback, wake word acknowledgment pool, mode awareness
+- `SpeechService.swift` — add `onHelpQuestion` callback, wake word acknowledgment pool
 - `RubberDuckWidgetApp.swift` — create help service, wire callbacks
-- `DuckCoordinator.swift` — optional `isAnsweringHelp` state for thinking animation
+- `DuckCoordinator.swift` — `isAnsweringHelp` state for thinking animation
+- `DuckView.swift` — speech bubble overlay (NEW)
 
-## 5. Wildcard voice — tuning
-- Two-pass Foundation Models implementation works (LocalEvaluator: score → LocalVoicePick)
-- Currently defaults to Superstar for almost everything — only switches on extreme scores
-- Could use more Playground iteration to make voice picks more expressive/varied
-- Whisper might work well for skepticism — "I'm not sure about this..." inner-doubt moments
-- Removed bubbles (too weird). Now 10 wildcard voices.
+## 4. Foundation Models eval prompt tuning
 
-## 6. Wake word in critic mode
-- **Largely solved by help mode** — in critic mode, wake word now routes to on-device help (see #2 sub-task)
-- Remaining: could also speak last eval summary on demand: "ducky, how am I doing?" → recap scores
-- Could speak a verbal status: "I'm watching. Things are looking rough."
-- Wake word acknowledgment: "ducky" should immediately trigger a short response ("What?" / "Yeah?" / "Hmm?") + head cock animation, before the user even finishes speaking. This replaces the current silent-listening gap.
+The 3B on-device model has personality issues:
+- **Typo obsession** — fixates on typos in user prompts. "phase 1" → "really, a typo." Short casual messages get roasted for no reason.
+- **Meaner than Haiku** — Foundation reactions skew harsher than Claude Haiku on the same input. The duck should be snarky but not hostile.
+- **User prompts aren't code** — user messages to Claude are conversational, not code. The eval prompt treats everything like a code review. Short human messages ("ok", "yes do that", "phase 1") shouldn't trigger craft/rigor scoring as if they're sloppy code.
+
+### Possible fixes
+- Separate prompt paths for user prompts vs Claude responses — user prompts scored more leniently
+- Add "short casual messages are normal and fine" to the system prompt
+- Adjust reaction tone: "snarky but ultimately supportive" not "mean"
+- More Playground iteration with real user prompt examples (not just code scenarios)
+- Compare Foundation vs Haiku side-by-side on same inputs to calibrate
+
+### Testing
+- `widget/Playground/Sources/LLMPlayground/` — add a "User Prompts" batch with casual/short messages
+- Compare reaction tone across eval engines
+
+## ~~5. Wildcard voice — tuning~~ ✅ DONE
+Score-gated V2 shipped. See `docs/VOICE-SELECTION-V2.md`.
+
+## ~~6. Wake word in companion mode~~ → merged into #3
+Help mode covers this. Wake word in companion = help. Wake word in relay = help-first, then relay.
 
 ---
 
