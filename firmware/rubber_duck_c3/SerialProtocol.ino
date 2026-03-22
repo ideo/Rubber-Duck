@@ -103,7 +103,6 @@ void parseTextMessage(char *msg) {
       binHeaderPos = 0;
       frameExpectedLen = 0;
       frameReceivedLen = 0;
-      Serial.println("[serial] Entered audio mode");
     }
     return;
   }
@@ -114,10 +113,8 @@ void parseTextMessage(char *msg) {
   if (source == 'M') {
     if (msg[1] == ',' && msg[2] == '1') {
       micStreaming = true;
-      Serial.println("[mic] Streaming ON");
     } else if (msg[1] == ',' && msg[2] == '0') {
       micStreaming = false;
-      Serial.println("[mic] Streaming OFF");
     }
     return;
   }
@@ -127,8 +124,6 @@ void parseTextMessage(char *msg) {
   if (strncmp(msg, "VOL,", 4) == 0) {
     float vol = strtof(msg + 4, NULL);
     volumeScale = constrain(vol, 0.0f, 1.0f);
-    Serial.print("[duck] Volume: ");
-    Serial.println(volumeScale, 2);
     return;
   }
 
@@ -364,7 +359,6 @@ void readSerialBinary() {
             audioStreamEnd();
             micSetMuted(false);  // Unmute mic after TTS ends
             audioMode = false;
-            Serial.println("[serial] Exited audio mode (A,0 control)");
           } else {
             parseTextMessage((char *)frameBuf);
           }

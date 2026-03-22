@@ -109,12 +109,6 @@ void updateServo() {
     ambientSpringActive = false;
     idleClusterRemaining--;
 
-    Serial.print("[idle] follow-up delta=");
-    Serial.print(delta, 1);
-    Serial.print(" target=");
-    Serial.print(ambientTargetOffset, 1);
-    Serial.print(" remaining=");
-    Serial.println(idleClusterRemaining);
     if (idleClusterRemaining > 0) {
       nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
     }
@@ -138,10 +132,6 @@ void updateServo() {
 
     nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
 
-    Serial.print("[idle] hop cluster=");
-    Serial.print(clusterSize);
-    Serial.print(" target=");
-    Serial.println(ambientTargetOffset, 1);
   }
 
   // TTS talking head animation: retarget ambient while speaking

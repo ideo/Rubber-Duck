@@ -1,7 +1,7 @@
 // LaunchGreeting — context-aware startup greetings for the duck.
 //
 // Picks a greeting based on time of day, time since last launch, and duck mode.
-// Critic mode = inner monologue ("Oh, they're back..."), Relay mode = direct address ("Hey!").
+// Companion mode = inner monologue ("Oh, they're back..."), Relay mode = direct address ("Hey!").
 // State file lives in Application Support (sandbox-safe).
 
 import Foundation

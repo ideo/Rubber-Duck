@@ -1,4 +1,5 @@
 #!/bin/bash
+#
 # Hook: PermissionRequest - fires when Claude wants to take an action
 # POSTs to the eval service and BLOCKS until voice approval or timeout.
 # Returns hookSpecificOutput with behavior: "allow"/"deny" to Claude Code.
