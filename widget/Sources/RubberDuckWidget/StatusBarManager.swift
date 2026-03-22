@@ -768,20 +768,24 @@ enum CLISession {
         let session = DuckConfig.tmuxSession
         let windowName = DuckConfig.tmuxWindow
 
-        // Walk up from binary to find repo root (look for Package.swift as marker)
-        var repoRoot = Bundle.main.bundleURL
+        // Walk up from binary to find repo root (look for Package.swift as marker).
+        // When launched from DMG/Applications, the repo won't be found — fall back to ~.
+        var repoRoot: URL? = nil
+        var candidate = Bundle.main.bundleURL
         for _ in 0..<10 {
-            repoRoot = repoRoot.deletingLastPathComponent()
-            let marker = repoRoot.appendingPathComponent("widget/Package.swift")
+            candidate = candidate.deletingLastPathComponent()
+            let marker = candidate.appendingPathComponent("widget/Package.swift")
             if FileManager.default.fileExists(atPath: marker.path) {
+                repoRoot = candidate
                 break
             }
         }
 
+        let cdPart = repoRoot.map { "cd \($0.path) && " } ?? ""
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(repoRoot.path) && if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(windowName) '\(tool)'; else tmux kill-window -t \(session):\(windowName) 2>/dev/null; tmux new-window -t \(session) -n \(windowName) '\(tool)'; fi && tmux attach -t \(session):\(windowName)"
+            do script "\(cdPart)if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(windowName) '\(tool)'; else tmux kill-window -t \(session):\(windowName) 2>/dev/null; tmux new-window -t \(session) -n \(windowName) '\(tool)'; fi && tmux attach -t \(session):\(windowName)"
         end tell
         """
 

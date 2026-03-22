@@ -198,12 +198,14 @@ struct DuckView: View {
             Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)
         }
 
-        // Voice
+        // Voice — hide "Off" when in permissions-only mode (mic is required)
         Menu {
-            Button {
-                speechService.listenMode = .off
-            } label: {
-                Label("Off", systemImage: "microphone.slash.fill")
+            if coordinator.mode != .permissionsOnly {
+                Button {
+                    speechService.listenMode = .off
+                } label: {
+                    Label("Off", systemImage: "microphone.slash.fill")
+                }
             }
             Button {
                 speechService.listenMode = .permissionsOnly
@@ -283,6 +285,14 @@ struct DuckView: View {
         }
 
         Divider()
+
+        if !duckServer.pluginConnected {
+            Button {
+                PluginInstaller.install()
+            } label: {
+                Label("Install Claude Plugin", systemImage: "puzzlepiece.extension.fill")
+            }
+        }
 
         Button {
             CLISession.launch()

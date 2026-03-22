@@ -27,15 +27,11 @@ enum LaunchGreeting {
 
         let isCritic = mode == .critic
 
-        // First ever launch
+        // First ever launch — introduce + guide to plugin install
         if minutesSince == nil {
             return isCritic
-                ? ["Oh. A new one. Let's see what they've got.",
-                   "First launch. No pressure.",
-                   "Fresh install smell. Interesting."].randomElement()!
-                : ["First time! Let's see what you've got.",
-                   "Hey there. I'm the duck.",
-                   "New duck, who dis?"].randomElement()!
+                ? "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
+                : "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
         }
 
         let mins = minutesSince!
@@ -128,13 +124,9 @@ enum LaunchGreeting {
         default:       time = "Late night. "
         }
 
-        // First ever launch
+        // First ever launch — guide to plugin install
         if minutesSince == nil {
-            return ["\(time)I'll keep an eye out.",
-                    "Hey. I'm on permissions duty.",
-                    "\(time)I'll speak up when you need me.",
-                    "I'm your lookout. Let's go.",
-                    "\(time)Here to keep things moving."].randomElement()!
+            return "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
         }
 
         let mins = minutesSince!
