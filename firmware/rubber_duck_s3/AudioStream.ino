@@ -159,13 +159,6 @@ void audioStreamBegin(uint32_t sampleRate, uint8_t bits, uint8_t channels) {
 
   audioSetSampleRate(sampleRate);
 
-  Serial.print("[audio] Stream begin — ");
-  Serial.print(sampleRate);
-  Serial.print("Hz ");
-  Serial.print(bits);
-  Serial.print("bit ");
-  Serial.print(channels);
-  Serial.println("ch");
 }
 
 void audioStreamEnd() {
@@ -174,11 +167,6 @@ void audioStreamEnd() {
   streaming = false;
   draining = true;
 
-  Serial.print("[audio] Stream end — received ");
-  Serial.print(totalSamplesReceived);
-  Serial.print(" samples, ");
-  Serial.print(underrunCount);
-  Serial.println(" underruns");
 }
 
 bool isAudioStreaming() {
@@ -211,13 +199,10 @@ void audioStreamWrite(const uint8_t *data, size_t len) {
   totalSamplesReceived += written;
 
   if (written < sampleCount) {
-    Serial.print("[audio] OVERRUN dropped ");
-    Serial.println(sampleCount - written);
   }
 
   if (!prefilled && ringAvailable() >= RING_BUF_PREFILL) {
     prefilled = true;
-    Serial.println("[audio] Prefill reached, starting playback");
   }
 }
 
@@ -239,7 +224,6 @@ void audioFeedI2S() {
   if (draining && !chirpPlaying && avail == 0) {
     draining = false;
     // auto_clear handles silence
-    Serial.println("[audio] Drain complete");
     return;
   }
 

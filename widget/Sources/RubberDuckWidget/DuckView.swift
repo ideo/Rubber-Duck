@@ -240,12 +240,12 @@ struct DuckView: View {
             Button {
                 coordinator.setMode(.critic)
             } label: {
-                Label("Critic Mode", systemImage: "eyeglasses")
+                Label(DuckMode.critic.label, systemImage: DuckMode.critic.iconName)
             }
             Button {
                 coordinator.setMode(.relay)
             } label: {
-                Label("Relay Mode", systemImage: "phone.fill")
+                Label(DuckMode.relay.label, systemImage: DuckMode.relay.iconName)
             }
         } label: {
             Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)

@@ -56,13 +56,14 @@ void setup() {
   Serial.setRxBufferSize(16384); // Large USB CDC RX buffer — prevents byte loss during i2s writes
   Serial.begin(SERIAL_BAUD);
   Serial.setTimeout(10);         // Short timeout for readBytes (default 1000ms!)
-  while (!Serial && millis() < 3000) {
+  while (!Serial && millis() < 1000) {
     delay(10);
   }
-  delay(200);
 
-  Serial.println();
-  Serial.println("=== RUBBER DUCK C3 ===");
+  if (Serial) {
+    Serial.println();
+    Serial.println("=== RUBBER DUCK C3 ===");
+  }
 
   // Mic must init before audio on S3 — I2S mic takes I2S_NUM_0,
   // speaker moves to I2S_NUM_1. On C3, mic uses ADC (no I2S conflict).
@@ -87,13 +88,10 @@ void setup() {
     playStartupChirp();
   #endif
 
-  Serial.println("[duck] Ready. XIAO ESP32 + MAX98357");
-  Serial.println("[duck] Protocol: text + binary audio framing");
-  Serial.print("[duck] Ring buffer: ");
-  Serial.print(RING_BUF_SAMPLES);
-  Serial.print(" samples (");
-  Serial.print(RING_BUF_SAMPLES * 2 / 1024);
-  Serial.println("KB)");
+  if (Serial) {
+    Serial.println("[duck] Ready. XIAO ESP32 + MAX98357");
+    Serial.println("[duck] Protocol: text + binary audio framing");
+  }
 }
 
 void loop() {
@@ -206,8 +204,17 @@ void loop() {
 // Permission State Machine
 // ============================================================
 
+// Defers while TTS is speaking — timer restarts after speech ends.
 void updatePermissionNag(unsigned long now) {
   if ((now - lastPermissionNag) <= nextNagInterval) return;
+
+  // Don't chirp over TTS — defer the nag until speech finishes
+  #if ENABLE_AUDIO
+  if (isAudioStreaming()) {
+    lastPermissionNag = now;  // Reset timer so it starts fresh after TTS
+    return;
+  }
+  #endif
 
   lastPermissionNag = now;
   unsigned long elapsed = now - permissionStartTime;
@@ -223,7 +230,6 @@ void updatePermissionNag(unsigned long now) {
   #if ENABLE_AUDIO
     playPermissionChirp();
   #endif
-  Serial.println("[perm] nag");
 }
 
 void enterPermission() {
@@ -257,16 +263,5 @@ void exitPermission() {
 // ============================================================
 
 void printEval(EvalScores &scores) {
-  Serial.print("[duck] ");
-  Serial.print(scores.source == 'U' ? "USER" : "CLAUDE");
-  Serial.print(" | cre:");
-  Serial.print(scores.creativity, 2);
-  Serial.print(" snd:");
-  Serial.print(scores.soundness, 2);
-  Serial.print(" amb:");
-  Serial.print(scores.ambition, 2);
-  Serial.print(" elg:");
-  Serial.print(scores.elegance, 2);
-  Serial.print(" rsk:");
-  Serial.println(scores.risk, 2);
+  // Scores already logged widget-side — firmware stays quiet
 }

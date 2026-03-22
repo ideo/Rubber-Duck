@@ -387,17 +387,19 @@ class DuckServer: ObservableObject {
         }
 
         // POST /permission-clear — tool succeeded, permission is resolved
-        // Lightweight signal from PostToolUse hook — clears stuck permission state
-        // when user approved via CLI instead of voice.
-        srv.post("/permission-clear") { [localTransport] _ in
-            DuckLog.log("[permission-clear] Tool succeeded, clearing permission state")
+        // Signal from PostToolUse hook — user approved via CLI (not voice).
+        // Resolves the PermissionGate so the original /permission curl unblocks,
+        // clears the voice gate, and updates the UI.
+        srv.post("/permission-clear") { [permissionGate, localTransport] _ in
+            DuckLog.log("[permission] CLI approval — tool succeeded, clearing permission state")
+            // Resolve the gate so /permission's blocked curl returns
+            await permissionGate.resolve(decision: "allow")
             await MainActor.run {
                 localTransport.onClearThinking?()
             }
-            // Also deliver a resolved permission event to clear the UI
             let resolved = PermissionEvent(
                 type: "permission",
-                status: "resolved",
+                status: "allow",
                 toolName: "",
                 toolInput: nil,
                 optionLabels: nil,

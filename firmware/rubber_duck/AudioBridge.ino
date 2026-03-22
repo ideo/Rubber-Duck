@@ -73,11 +73,9 @@ void updateAudioBridge() {
     ttsLastAbove = now;
     if (!ttsActive) {
       ttsActive = true;
-      Serial.println("[tts] Speaking detected");
     }
   } else if (ttsActive && (now - ttsLastAbove) > TTS_SILENCE_TIMEOUT) {
     ttsActive = false;
-    Serial.println("[tts] Speaking ended");
   }
 
   // Talking head animation: retarget ambient at rapid intervals while speaking

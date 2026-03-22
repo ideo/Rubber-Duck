@@ -42,14 +42,14 @@ enum PermissionStatus: String, Codable {
 /// Voice output mode — controls which eval text the duck speaks.
 enum DuckMode: String, CaseIterable {
     case permissionsOnly  // Silent watchdog — only voice-confirmed permissions (default)
-    case critic           // Speak opinionated reaction
+    case critic           // Speak opinionated reaction (UI: "Sidekick Mode")
     case relay            // Speak factual summary
 
     /// Human-readable label for menus and TTS.
     var label: String {
         switch self {
         case .permissionsOnly: return "Permissions Only"
-        case .critic: return "Critic Mode"
+        case .critic: return "Companion Mode"
         case .relay: return "Relay Mode"
         }
     }
@@ -58,8 +58,8 @@ enum DuckMode: String, CaseIterable {
     var iconName: String {
         switch self {
         case .permissionsOnly: return "lock.shield"
-        case .critic: return "eyeglasses"
-        case .relay: return "phone.fill"
+        case .critic: return "figure.2.left.holdinghands"
+        case .relay: return "flask.fill"
         }
     }
 
@@ -67,8 +67,8 @@ enum DuckMode: String, CaseIterable {
     var subtitle: String {
         switch self {
         case .permissionsOnly: return "Silent watchdog — voice permissions only"
-        case .critic: return "Inner monologue and alerts"
-        case .relay: return "Walkie talkie with Claude"
+        case .critic: return "Experimental — opinions and alerts only"
+        case .relay: return "Experimental — walkie-talkie with Claude CLI"
         }
     }
 
@@ -76,7 +76,7 @@ enum DuckMode: String, CaseIterable {
     var spokenLabel: String {
         switch self {
         case .permissionsOnly: return "Permissions only"
-        case .critic: return "Critic mode"
+        case .critic: return "Companion mode"
         case .relay: return "Relay mode"
         }
     }

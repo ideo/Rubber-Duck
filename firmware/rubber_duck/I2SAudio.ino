@@ -362,7 +362,6 @@ void playPermissionChirp() {
   servoOscillationAmp = 4.0;
   servoOscillationPhase = 0.0;
 
-  Serial.println("[perm] uh-oh chirp");
 }
 
 #else

@@ -44,8 +44,8 @@ struct HelpView: View {
                 """)
 
                 section("Modes", """
-                **Critic Mode** — The duck watches and judges. It scores your prompts \
-                and Claude's responses, speaks gut reactions, and makes faces. \
+                **Companion Mode** — The duck watches and reacts. It scores your prompts \
+                and Claude's responses, speaks gut reactions, and helps with notifications. \
                 This is the default and works everywhere, including the App Store.
 
                 **Relay Mode** — The duck becomes a voice interface. Say "ducky" \

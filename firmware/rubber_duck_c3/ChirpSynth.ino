@@ -240,13 +240,6 @@ void playChirp(ChirpTarget &target) {
   lastEvalTime = millis();
 
   startChirpInternal(target.startFreq, false);
-  Serial.print("[chirp] Play: ");
-  Serial.print(target.startFreq);
-  Serial.print("→");
-  Serial.print(chirpEndFreq);
-  Serial.print("Hz");
-  if (doubleChirp) Serial.print(isWhistle ? " (whistle)" : " (uh-uh)");
-  Serial.println();
 }
 
 // ============================================================
@@ -272,7 +265,6 @@ void playStartupChirp() {
   filterTrackHarmonic = false;
 
   startChirpInternal(400, true);  // sine for startup
-  Serial.println("[chirp] Startup");
 }
 
 // ============================================================
@@ -314,7 +306,6 @@ void playPermissionChirp() {
   servoOscillationAmp = 4.0f;
   servoOscillationPhase = 0.0f;
 
-  Serial.println("[chirp] Permission uh-oh");
 }
 
 // ============================================================
@@ -343,7 +334,6 @@ void updateChirp() {
     isWhistle = false;
     doubleChirp = false;
     audioChirpEnd();
-    Serial.println("[chirp] Done");
     Serial.println("K");  // Machine-readable chirp-complete signal for widget
     return;
   }

@@ -227,8 +227,15 @@ void startupAnimation() {
 // --- Permission State Machine ---
 
 // Three-tier nag: urgent (4-8s) → lazy (15-30s) → rare (5-10min)
+// Defers while TTS is speaking — timer restarts after speech ends.
 void updatePermissionNag(unsigned long now) {
   if ((now - lastPermissionNag) <= nextNagInterval) return;
+
+  // Don't chirp over TTS — defer the nag until speech finishes
+  if (ttsActive) {
+    lastPermissionNag = now;  // Reset timer so it starts fresh after TTS
+    return;
+  }
 
   lastPermissionNag = now;
   unsigned long elapsed = now - permissionStartTime;
@@ -266,16 +273,5 @@ void exitPermission() {
 
 // --- Debug print ---
 void printEval(EvalScores &scores) {
-  Serial.print("[duck] ");
-  Serial.print(scores.source == 'U' ? "USER" : "CLAUDE");
-  Serial.print(" | cre:");
-  Serial.print(scores.creativity, 2);
-  Serial.print(" snd:");
-  Serial.print(scores.soundness, 2);
-  Serial.print(" amb:");
-  Serial.print(scores.ambition, 2);
-  Serial.print(" elg:");
-  Serial.print(scores.elegance, 2);
-  Serial.print(" rsk:");
-  Serial.println(scores.risk, 2);
+  // Scores already logged widget-side — firmware stays quiet
 }
