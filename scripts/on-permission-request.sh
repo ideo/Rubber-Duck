@@ -28,6 +28,14 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_NAME: $TOOL_NAME" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_INPUT: $TOOL_INPUT" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 
+# 3b. If no permission suggestions, this tool is already allowed — pass through silently
+SUGGESTION_COUNT=$(echo "$PERMISSION_SUGGESTIONS" | jq 'length')
+if [ "$SUGGESTION_COUNT" = "0" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] No suggestions — tool already allowed, passing through" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
 # 4. Log the curl request being made
 CURL_BODY=$(jq -n \
     --arg tool "$TOOL_NAME" \

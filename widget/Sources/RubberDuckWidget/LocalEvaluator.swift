@@ -45,12 +45,51 @@ struct LocalEvalResult {
     var summary: String
 }
 
-/// Lightweight voice picker — second pass after scoring.
-/// Given the eval results, pick the best voice. Keeps the 3B model focused on one task at a time.
+/// Score-gated voice picker — math narrows candidates, LLM picks the tone.
+///
+/// Flow: eval scores → candidateTones() filters pool → LLM picks from 2-4 tone labels
+///       → map tone label back to Mac voice name.
+/// See docs/VOICE-SELECTION-V2.md for full rationale.
+
 @Generable
-struct LocalVoicePick {
-    @Guide(description: "Almost always superstar. superstar: default for positive, neutral, boring, mundane (USE 80% OF THE TIME). ralph: ONLY dead serious batman moments like security warnings or critical errors. bad_news: ONLY genuine failures or breaking changes. good_news: ONLY truly great elegant code. cellos: ONLY big surprising changes. organ: ONLY massive ambitious scope. whisper: ONLY secrets or private thoughts. trinoids: ONLY robotic machine behavior. zarvox: ONLY cold calculating computer behavior. jester: ONLY genuinely hilarious moments. bubbles: ONLY overwhelmed drowning in work.")
-    var voice: String
+struct TonePick {
+    @Guide(description: "Pick one tone from the list provided.")
+    var tone: String
+}
+
+/// Tone label → Mac voice name mapping.
+private let toneToVoice: [String: String] = [
+    "normal": "superstar",
+    "cheerful": "good_news",
+    "gloomy": "bad_news",
+    "grave": "ralph",
+    "grand": "organ",
+    "dramatic": "cellos",
+    "overwhelmed": "bubbles",
+    "secretive": "whisper",
+    "robotic": "trinoids",
+    "cold": "zarvox",
+]
+
+/// Score-gate the voice pool. Returns tone labels the LLM can pick from.
+private func candidateTones(rigor: Int, craft: Int, novelty: Int, ambition: Int, risk: Int) -> [String] {
+    let r = Double(rigor) / 100.0
+    let c = Double(craft) / 100.0
+    let n = Double(novelty) / 100.0
+    let a = Double(ambition) / 100.0
+    let k = Double(risk) / 100.0
+    let sentiment = r * 0.3 + c * 0.25 + n * 0.2 + a * 0.15 - k * 0.1
+
+    var tones = ["normal"]
+    if sentiment > 0.6 { tones.append("cheerful") }
+    if sentiment < -0.4 { tones.append("gloomy") }
+    if k > 0.7 { tones.append("grave") }
+    if a > 0.7 { tones.append("grand") }
+    if n > 0.6 && abs(a) > 0.5 { tones.append("dramatic") }
+    if a > 0.8 && k > 0.8 { tones.append("overwhelmed") }
+    tones.append("secretive")
+    if c < -0.3 && n < -0.3 { tones.append("robotic"); tones.append("cold") }
+    return tones
 }
 
 // MARK: - Local Evaluator Actor
@@ -117,21 +156,26 @@ actor LocalEvaluator {
         )
 
         // Pass 2: Pick a voice (only when wildcard is on).
-        // Separate call so the 3B model focuses on one task at a time.
+        // Score gates narrow the pool, LLM picks tone from survivors.
         if wildcardEnabled {
-            let voicePrompt = """
-                The duck just reacted: "\(r.reaction)"
-                Scores: rigor=\(r.rigor), craft=\(r.craft), novelty=\(r.novelty), ambition=\(r.ambition), risk=\(r.risk).
-                Pick the voice that best delivers this reaction.
-                """
-            let voiceSession = LanguageModelSession(instructions: Instructions(
-                "You pick a voice for a rubber duck. Default to superstar for almost everything. Only pick a different voice when the scores are extreme (above 70 or below -70) and clearly match that voice."))
-            let voiceResult = try await voiceSession.respond(
-                to: voicePrompt,
-                generating: LocalVoicePick.self,
-                options: options
-            )
-            scores.voice = voiceResult.content.voice
+            let tones = candidateTones(rigor: r.rigor, craft: r.craft, novelty: r.novelty, ambition: r.ambition, risk: r.risk)
+
+            let voice: String
+            if tones == ["normal", "secretive"] {
+                // Only default tones qualified — skip LLM
+                voice = "superstar"
+            } else {
+                let voiceSession = LanguageModelSession(instructions: Instructions(
+                    "Pick the tone that best matches this reaction: \(tones.joined(separator: ", "))."))
+                let toneResult = try await voiceSession.respond(
+                    to: r.reaction,
+                    generating: TonePick.self,
+                    options: options
+                )
+                voice = toneToVoice[toneResult.content.tone] ?? "superstar"
+            }
+            scores.voice = voice
+            DuckLog.log("[wildcard] voice=\(voice) tones=[\(tones.joined(separator: ","))] | reaction=\"\(r.reaction)\"")
         }
 
         return scores

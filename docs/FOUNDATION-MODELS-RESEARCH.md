@@ -134,6 +134,55 @@ Context helps the duck understand the conversation dynamic (user ignoring advice
 - Each `#Playground` block runs independently in the Xcode Canvas
 - Latency: sub-second per eval on Apple Silicon (initial estimate of ~2s was too conservative)
 
+## Voice Selection V2 — Score-Gated Architecture
+
+The biggest lesson from this project: **don't ask a 3B model to be smart about 11 choices.**
+
+### The Problem (V1)
+V1 gave the model all 11 Mac voice names and asked it to pick. Results:
+- Hallucinated invalid voices ("stalwart" — not a real voice)
+- Over-selected special voices on neutral content (good_news on "They haven't asked anything yet")
+- Jester used way too often (unintelligible on long sentences)
+- Superstar (the correct default 80% of the time) was only picked ~43%
+
+### The Fix (V2)
+We already have eval scores. Use math to filter, LLM to pick tone.
+
+**Architecture**: `eval scores → score gates (math) → candidate pool → LLM picks tone`
+
+1. **Score gates** filter voices into a pool of 2-4 candidates using hard thresholds
+2. If only superstar qualifies → skip LLM entirely
+3. LLM picks from **tone labels** (not voice names) — "gloomy" not "bad_news"
+4. Map tone back to voice name via dictionary
+
+### Key Insights
+
+- **Use tone labels, not voice names.** The model has no idea what "trinoids" or "zarvox" means. "robotic" and "cold" are instantly understood. This single change took Extreme accuracy from 0/6 to 6/6.
+- **"Grave" not "serious."** "Serious" is too ambiguous — the model confused it with "gloomy." "Grave" clearly means danger/alarm. Ralph went from never-picked to always-correct.
+- **Don't say "default to X."** Telling the model "default to superstar" made it pick superstar 100% of the time. The gates already did the filtering — if bad_news qualified, it should be a real contender. Neutral prompt = better choices.
+- **Remove voices that don't work.** Jester is unintelligible on sentences longer than 2 words. Removed entirely rather than trying to prompt-engineer around it.
+- **`@Generable` enums constrain output** at the JSON schema level — the model literally can't hallucinate values outside the enum. Use this for any fixed set of options.
+- **`@Guide` doesn't work on enum cases** — only on stored properties in structs. Put guidance in the system prompt or on the struct property that holds the enum.
+
+### Score Gates
+
+| Voice | Tone Label | Gate |
+|-------|-----------|------|
+| good_news | cheerful | sentiment > 0.6 |
+| bad_news | gloomy | sentiment < -0.4 |
+| ralph | grave | risk > 0.7 |
+| organ | grand | ambition > 0.7 |
+| cellos | dramatic | novelty > 0.6 AND abs(ambition) > 0.5 |
+| bubbles | overwhelmed | ambition > 0.8 AND risk > 0.8 |
+| whisper | secretive | always available (LLM-only) |
+| trinoids | robotic | craft < -0.3 AND novelty < -0.3 |
+| zarvox | cold | craft < -0.3 AND novelty < -0.3 |
+| superstar | normal | always available |
+| jester | — | **removed** |
+
+### Playground Testing
+`widget/Playground/Sources/LLMPlayground/VoicePickerPlayground.swift` — batch tests per category (Neutral, Positive, Negative, Extreme). Each is a separate Canvas tab.
+
 ## Known Issues / Future Work
 
 - [ ] Over-engineering detection (two-pass approach)

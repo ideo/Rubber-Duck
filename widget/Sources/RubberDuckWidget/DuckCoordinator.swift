@@ -105,8 +105,12 @@ class DuckCoordinator: ObservableObject {
                 let voiceKey = evalService.scores?.voice
                 let picked = voiceKey.map { DuckVoices.wildcardVoice(for: $0) } ?? DuckVoices.wildcardDefault
                 speechService.setVoiceTransient(picked.sayName)
+                speechService.speak(textToSpeak)
+                // Reset to default voice so permissions/greetings don't inherit the wildcard pick
+                speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
+            } else {
+                speechService.speak(textToSpeak)
             }
-            speechService.speak(textToSpeak)
         }
     }
 
