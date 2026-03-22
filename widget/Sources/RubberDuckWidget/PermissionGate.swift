@@ -66,10 +66,12 @@ actor PermissionGate {
     // MARK: - Suggestion Labels
 
     /// Generate a short, TTS-friendly label for a permission suggestion.
+    /// Labels are designed for natural voice interaction:
+    /// "Say always allow to [label]" or "Got it. [Label]."
     static func describeSuggestion(_ suggestion: [String: Any]) -> String {
         let stype = suggestion["type"] as? String ?? ""
         let dest = suggestion["destination"] as? String ?? "session"
-        let scope = dest == "session" ? "for this session" : "permanently"
+        let scope = dest == "session" ? "for this session" : "for this project"
 
         switch stype {
         case "addRules":
@@ -78,7 +80,7 @@ actor PermissionGate {
                let tool = first["toolName"] as? String {
                 return "always allow \(tool) \(scope)"
             }
-            return "add a rule \(scope)"
+            return "add a permission rule \(scope)"
         case "addDirectories":
             return "allow this directory \(scope)"
         case "setMode":
@@ -90,7 +92,7 @@ actor PermissionGate {
             let tool = suggestion["toolName"] as? String ?? "this tool"
             return "always allow \(tool)"
         case "acceptEdits":
-            return "allow all file edits"
+            return "allow all file edits \(scope)"
         default:
             return "apply a permission rule"
         }

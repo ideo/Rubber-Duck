@@ -117,5 +117,5 @@ open http://localhost:3333          # dashboard
 open http://localhost:3333/viewer   # 3D viewer
 
 # Check logs
-tail -f ~/Library/Logs/RubberDuck.log
+tail -f ~/Library/Application\ Support/DuckDuckDuck/DuckDuckDuck.log
 ```

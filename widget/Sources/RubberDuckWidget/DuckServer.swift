@@ -319,6 +319,95 @@ class DuckServer: ObservableObject {
             return .json("{\"status\":\"received\"}".data(using: .utf8)!)
         }
 
+        // POST /session-end — Claude Code session terminated
+        srv.post("/session-end") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let reason = json?["reason"] as? String ?? "unknown"
+            DuckLog.log("[session-end] reason=\(reason)")
+
+            let goodbyes: [String] = switch reason {
+            case "prompt_input_exit":
+                ["Later!", "See ya.", "Peace out.", "Catch you next time.", "Till next time."]
+            case "clear":
+                ["Fresh start. Nice.", "Clean slate.", "Wiped clean."]
+            default:
+                ["Session over.", "Done for now.", "Signing off."]
+            }
+
+            await MainActor.run {
+                localTransport.onClearThinking?()
+                localTransport.onSpeak?(goodbyes.randomElement()!)
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /stop-failure — API error (rate limit, auth, server error, etc.)
+        srv.post("/stop-failure") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let errorType = json?["error_type"] as? String ?? "unknown"
+            DuckLog.log("[stop-failure] error_type=\(errorType)")
+
+            let reaction: String = switch errorType {
+            case "rate_limit":
+                ["Hit the rate limit. Take a breather.", "Throttled. Slow down.", "Rate limited. Wait a sec."].randomElement()!
+            case "authentication_failed":
+                ["Auth failed. Check your API key.", "Credentials expired."].randomElement()!
+            case "billing_error":
+                ["Billing issue. Check your account.", "Payment problem."].randomElement()!
+            case "server_error":
+                ["Server's down. Not our fault.", "Server error. Try again.", "Their end, not ours."].randomElement()!
+            case "max_output_tokens":
+                ["Hit the output limit. Response was too long.", "Ran out of tokens."].randomElement()!
+            default:
+                ["Something went wrong.", "Hit a snag.", "Error. Not sure what."].randomElement()!
+            }
+
+            await MainActor.run {
+                localTransport.onClearThinking?()
+                localTransport.onSpeak?(reaction)
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /compact — context window compaction (pre/post)
+        srv.post("/compact") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let phase = json?["phase"] as? String ?? "pre"
+            let trigger = json?["trigger"] as? String ?? "auto"
+            DuckLog.log("[compact] phase=\(phase) trigger=\(trigger)")
+
+            await MainActor.run {
+                if phase == "pre" {
+                    localTransport.onMelodyStart?()
+                } else {
+                    localTransport.onMelodyStop?()
+                }
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /permission-clear — tool succeeded, permission is resolved
+        // Lightweight signal from PostToolUse hook — clears stuck permission state
+        // when user approved via CLI instead of voice.
+        srv.post("/permission-clear") { [localTransport] _ in
+            DuckLog.log("[permission-clear] Tool succeeded, clearing permission state")
+            await MainActor.run {
+                localTransport.onClearThinking?()
+            }
+            // Also deliver a resolved permission event to clear the UI
+            let resolved = PermissionEvent(
+                type: "permission",
+                status: "resolved",
+                toolName: "",
+                toolInput: nil,
+                optionLabels: nil,
+                actionSummary: nil
+            )
+            await MainActor.run { localTransport.deliverPermission(resolved) }
+            await broadcaster.broadcast(resolved)
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
         // GET /health
         srv.get("/health") { _ in
             await markPluginConnected()
@@ -441,38 +530,26 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
 
     switch toolName {
     case "Bash":
-        guard let command = dict["command"] as? String else { return "Run a command" }
-        let base = command.trimmingCharacters(in: .whitespaces)
-            .components(separatedBy: .whitespaces).first ?? ""
-        switch base {
-        case "git":     return "Run git"
-        case "npm", "npx": return "Run \(base)"
-        case "make":    return "Run make"
-        case "swift":   return "Run swift"
-        case "curl", "wget": return "Make a network request"
-        case "rm":      return "Delete files"
-        case "mkdir":   return "Create a directory"
-        case "pip", "pip3", "brew", "cargo", "yarn", "pnpm", "bun":
-            return "Run \(base)"
-        case "ls", "find", "tree": return "List files"
-        case "cat", "head", "tail", "less": return "Read a file"
-        case "cd":      return "Run a command"
-        case "cp", "mv": return "Move files"
-        case "chmod", "chown": return "Change file permissions"
-        case "docker":  return "Run docker"
-        case "xcodebuild": return "Build with Xcode"
-        default:        return "Run a command"
+        // Claude Code provides a description field — use it directly when available
+        if let desc = dict["description"] as? String, !desc.isEmpty {
+            // Cap at ~8 words for TTS
+            let words = desc.components(separatedBy: .whitespaces)
+            let truncated = words.prefix(8).joined(separator: " ")
+            return truncated
         }
+        guard let command = dict["command"] as? String else { return "Run a command" }
+        return summarizeBashCommand(command)
 
     case "Edit":
         if let path = dict["file_path"] as? String {
-            let basename = (path as NSString).lastPathComponent
-            let name = (basename as NSString).deletingPathExtension
-            return "Edit \(name)"
+            return "Edit \(fileLabel(path))"
         }
         return "Edit a file"
 
     case "Write":
+        if let path = dict["file_path"] as? String {
+            return "Write \(fileLabel(path))"
+        }
         return "Write a new file"
 
     case "WebFetch":
@@ -483,11 +560,23 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
 
     case "Read":
         if let path = dict["file_path"] as? String {
-            let basename = (path as NSString).lastPathComponent
-            let name = (basename as NSString).deletingPathExtension
-            return "Read \(name)"
+            return "Read \(fileLabel(path))"
         }
         return "Read a file"
+
+    // Claude Code internal tools — still require voice confirmation, but friendlier prompts
+    case "ExitPlanMode":
+        return "Claude wants to exit plan mode"
+    case "EnterPlanMode":
+        return "Claude wants to enter plan mode"
+    case "AskUserQuestion":
+        return "Claude has a question"
+    case "TodoWrite":
+        return "Claude wants to update tasks"
+    case "NotebookEdit":
+        return "Edit a notebook"
+    case "Agent":
+        return "Claude wants to launch a sub-agent"
 
     default:
         // MCP tools: mcp__server-name__tool_name → "Use a connector"
@@ -499,6 +588,67 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
             return "Use a tool"
         }
         return toolName
+    }
+}
+
+/// Extract a short, speakable label from a file path (e.g. "DuckView" from ".../DuckView.swift").
+private func fileLabel(_ path: String) -> String {
+    let basename = (path as NSString).lastPathComponent
+    return (basename as NSString).deletingPathExtension
+}
+
+/// Parse a Bash command string to extract the first meaningful command for TTS.
+/// Skips cd, source, export, and chains (&&, ||, ;) to find the real action.
+private func summarizeBashCommand(_ command: String) -> String {
+    // Split on shell operators to find meaningful commands
+    let segments = command
+        .replacingOccurrences(of: "&&", with: "\n")
+        .replacingOccurrences(of: "||", with: "\n")
+        .replacingOccurrences(of: ";", with: "\n")
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+
+    // Find the first non-trivial command (skip cd, source, export, set, eval)
+    let trivial: Set<String> = ["cd", "source", "export", "set", "eval", "pushd", "popd", "shopt", "setopt", "unset"]
+    let meaningful = segments.first { line in
+        let base = line.components(separatedBy: .whitespaces).first ?? ""
+        return !trivial.contains(base)
+    } ?? segments.last ?? command
+
+    let words = meaningful.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+    let base = words.first ?? ""
+
+    switch base {
+    case "git":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run git" : "Run git \(sub)"
+    case "npm", "npx":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run \(base)" : "Run \(base) \(sub)"
+    case "make":
+        let target = words.count > 1 && !words[1].hasPrefix("-") ? words[1] : ""
+        return target.isEmpty ? "Run make" : "Run make \(target)"
+    case "swift":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run swift" : "Run swift \(sub)"
+    case "curl", "wget": return "Make a network request"
+    case "rm":      return "Delete files"
+    case "mkdir":   return "Create a directory"
+    case "pip", "pip3", "brew", "cargo", "yarn", "pnpm", "bun":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run \(base)" : "Run \(base) \(sub)"
+    case "ls", "find", "tree": return "List files"
+    case "cat", "head", "tail", "less": return "Read a file"
+    case "cp", "mv": return "Move files"
+    case "chmod", "chown": return "Change file permissions"
+    case "docker":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run docker" : "Run docker \(sub)"
+    case "xcodebuild": return "Build with Xcode"
+    case "kill", "killall", "pkill": return "Stop a process"
+    case "echo":    return "Run a command"
+    default:        return "Run a command"
     }
 }
 

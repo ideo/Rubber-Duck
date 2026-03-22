@@ -117,7 +117,8 @@ class SerialMicEngine: ObservableObject {
 
         isListening = true
         _feedingAudio = true
-        restartController.resetAttempts()
+        // Don't reset attempts here — let the backoff accumulate across restarts.
+        // Only reset on successful recognition (line 93) or explicit resetRestartAttempts().
         log("[serial-mic] Listening via ESP32 mic...")
     }
 
@@ -141,7 +142,7 @@ class SerialMicEngine: ObservableObject {
 
     func restart() {
         stop()
-        restartController.scheduleRestart(isListening: isListening)
+        restartController.scheduleRestart()
     }
 
     func resetRestartAttempts() {
