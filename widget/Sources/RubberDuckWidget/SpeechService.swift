@@ -7,7 +7,7 @@
 //   PermissionVoiceGate — yes/no/ordinal word matching
 //   AudioDeviceDiscovery — CoreAudio device enumeration
 //
-// Logs to ~/Library/Logs/DuckDuckDuck.log for debugging.
+// Logs to ~/Library/Application Support/DuckDuckDuck/DuckDuckDuck.log for debugging.
 
 import Foundation
 import Speech

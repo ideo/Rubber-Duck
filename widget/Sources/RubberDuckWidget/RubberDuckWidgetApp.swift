@@ -161,6 +161,13 @@ struct RubberDuckWidgetApp: App {
             duckServer: server
         )
 
+        // Wire lifecycle hooks from DuckServer → coordinator
+        let transport = server.localTransport
+        transport.onSpeak = { [weak speech] text in speech?.speak(text) }
+        transport.onClearThinking = { [weak coordinator] in coordinator?.clearThinking() }
+        transport.onMelodyStart = { [weak coordinator] in coordinator?.startMelody() }
+        transport.onMelodyStop = { [weak coordinator] in coordinator?.stopMelody() }
+
         // TTS greeting when a Claude session connects via /health
         server.onSessionConnect = { [weak speech, weak coordinator] in
             let mode = coordinator?.mode ?? .critic

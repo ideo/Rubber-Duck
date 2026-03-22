@@ -319,6 +319,95 @@ class DuckServer: ObservableObject {
             return .json("{\"status\":\"received\"}".data(using: .utf8)!)
         }
 
+        // POST /session-end — Claude Code session terminated
+        srv.post("/session-end") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let reason = json?["reason"] as? String ?? "unknown"
+            DuckLog.log("[session-end] reason=\(reason)")
+
+            let goodbyes: [String] = switch reason {
+            case "prompt_input_exit":
+                ["Later!", "See ya.", "Peace out.", "Catch you next time.", "Till next time."]
+            case "clear":
+                ["Fresh start. Nice.", "Clean slate.", "Wiped clean."]
+            default:
+                ["Session over.", "Done for now.", "Signing off."]
+            }
+
+            await MainActor.run {
+                localTransport.onClearThinking?()
+                localTransport.onSpeak?(goodbyes.randomElement()!)
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /stop-failure — API error (rate limit, auth, server error, etc.)
+        srv.post("/stop-failure") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let errorType = json?["error_type"] as? String ?? "unknown"
+            DuckLog.log("[stop-failure] error_type=\(errorType)")
+
+            let reaction: String = switch errorType {
+            case "rate_limit":
+                ["Hit the rate limit. Take a breather.", "Throttled. Slow down.", "Rate limited. Wait a sec."].randomElement()!
+            case "authentication_failed":
+                ["Auth failed. Check your API key.", "Credentials expired."].randomElement()!
+            case "billing_error":
+                ["Billing issue. Check your account.", "Payment problem."].randomElement()!
+            case "server_error":
+                ["Server's down. Not our fault.", "Server error. Try again.", "Their end, not ours."].randomElement()!
+            case "max_output_tokens":
+                ["Hit the output limit. Response was too long.", "Ran out of tokens."].randomElement()!
+            default:
+                ["Something went wrong.", "Hit a snag.", "Error. Not sure what."].randomElement()!
+            }
+
+            await MainActor.run {
+                localTransport.onClearThinking?()
+                localTransport.onSpeak?(reaction)
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /compact — context window compaction (pre/post)
+        srv.post("/compact") { [localTransport] request in
+            let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            let phase = json?["phase"] as? String ?? "pre"
+            let trigger = json?["trigger"] as? String ?? "auto"
+            DuckLog.log("[compact] phase=\(phase) trigger=\(trigger)")
+
+            await MainActor.run {
+                if phase == "pre" {
+                    localTransport.onMelodyStart?()
+                } else {
+                    localTransport.onMelodyStop?()
+                }
+            }
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
+        // POST /permission-clear — tool succeeded, permission is resolved
+        // Lightweight signal from PostToolUse hook — clears stuck permission state
+        // when user approved via CLI instead of voice.
+        srv.post("/permission-clear") { [localTransport] _ in
+            DuckLog.log("[permission-clear] Tool succeeded, clearing permission state")
+            await MainActor.run {
+                localTransport.onClearThinking?()
+            }
+            // Also deliver a resolved permission event to clear the UI
+            let resolved = PermissionEvent(
+                type: "permission",
+                status: "resolved",
+                toolName: "",
+                toolInput: nil,
+                optionLabels: nil,
+                actionSummary: nil
+            )
+            await MainActor.run { localTransport.deliverPermission(resolved) }
+            await broadcaster.broadcast(resolved)
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
+        }
+
         // GET /health
         srv.get("/health") { _ in
             await markPluginConnected()

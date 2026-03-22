@@ -133,7 +133,8 @@ class STTEngine: ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
             isListening = true
-            restartController.resetAttempts()
+            // Don't reset attempts here — let backoff accumulate across error restarts.
+            // Only reset on successful recognition or explicit resetRestartAttempts().
             log("[stt] Listening...")
         } catch {
             log("[stt] Audio engine failed: \(error.localizedDescription)")
@@ -157,7 +158,7 @@ class STTEngine: ObservableObject {
 
     func restart() {
         stop()
-        restartController.scheduleRestart(isListening: isListening)
+        restartController.scheduleRestart()
     }
 
     /// Reset restart attempts (e.g. after a successful voice command).

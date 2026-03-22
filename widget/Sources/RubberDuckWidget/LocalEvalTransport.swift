@@ -14,6 +14,12 @@ class LocalEvalTransport: EvalTransport {
     var onVoiceInput: ((String) -> Void)?
     var onPermissionResponse: ((String, Int?) -> Void)?
 
+    // Lifecycle hooks (set by DuckCoordinator during wiring)
+    var onSpeak: ((String) -> Void)?
+    var onMelodyStart: (() -> Void)?
+    var onMelodyStop: (() -> Void)?
+    var onClearThinking: (() -> Void)?
+
     func connect() { /* no-op — always connected */ }
     func disconnect() { /* no-op */ }
 

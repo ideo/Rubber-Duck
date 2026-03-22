@@ -71,17 +71,7 @@ class DuckCoordinator: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + thinkingTimeoutSeconds, execute: timeout)
         }
 
-        // ~10% chance: hum Jeopardy while Claude is thinking
-        if isUserEval {
-            if Int.random(in: 1...10) == 1 {
-                if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
-                    melodyEngine.outputDeviceID = duckDevice.deviceID
-                } else {
-                    melodyEngine.outputDeviceID = nil
-                }
-                melodyEngine.start()
-            }
-        }
+        // Melody now triggered by /compact hook (PreCompact), not random chance.
 
         updateExpression()
         flashReaction()
@@ -154,6 +144,21 @@ class DuckCoordinator: ObservableObject {
         isThinking = false
         thinkingTimeout?.cancel()
         thinkingTimeout = nil
+        melodyEngine.stop()
+    }
+
+    /// Start the Jeopardy thinking melody (called from /compact endpoint).
+    func startMelody() {
+        if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
+            melodyEngine.outputDeviceID = duckDevice.deviceID
+        } else {
+            melodyEngine.outputDeviceID = nil
+        }
+        melodyEngine.start()
+    }
+
+    /// Stop the Jeopardy thinking melody.
+    func stopMelody() {
         melodyEngine.stop()
     }
 

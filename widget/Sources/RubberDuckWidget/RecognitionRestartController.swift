@@ -26,9 +26,14 @@ final class RecognitionRestartController {
         self.watchdogTimeout = UInt64(watchdogTimeoutSeconds) * 1_000_000_000
     }
 
+    /// Whether a restart is currently scheduled (prevents stacking).
+    private var pendingRestart: Task<Void, Never>?
+
     /// Schedule a restart with exponential backoff.
-    /// Returns false if max attempts exceeded.
-    func scheduleRestart(isListening: Bool) {
+    func scheduleRestart() {
+        // Cancel any previously scheduled restart to prevent stacking
+        pendingRestart?.cancel()
+
         attempts += 1
         if attempts > maxAttempts {
             DuckLog.log("[\(label)] Too many restart attempts (\(attempts)). Giving up.")
@@ -38,17 +43,18 @@ final class RecognitionRestartController {
         let delay = UInt64(pow(2.0, Double(attempts - 1))) * 1_000_000_000
         DuckLog.log("[\(label)] Restarting in \(attempts)s (attempt \(attempts)/\(maxAttempts))...")
 
-        Task {
+        pendingRestart = Task {
             try? await Task.sleep(nanoseconds: delay)
-            if !isListening {
-                self.onRestart?()
-            }
+            guard !Task.isCancelled else { return }
+            self.onRestart?()
         }
     }
 
     /// Reset attempt counter (e.g. after successful recognition or device change).
     func resetAttempts() {
         attempts = 0
+        pendingRestart?.cancel()
+        pendingRestart = nil
     }
 
     /// Pet the watchdog — recognition is still alive.
