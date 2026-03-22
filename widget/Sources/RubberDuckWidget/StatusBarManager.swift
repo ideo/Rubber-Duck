@@ -66,12 +66,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // --- Session launcher ---
-        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
-        claudeSession.target = self
-        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
-        menu.addItem(claudeSession)
-
         // --- Volume slider ---
         menu.addItem(volumeSliderItem())
 
@@ -258,6 +252,11 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // --- Setup ---
+        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
+        claudeSession.target = self
+        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        menu.addItem(claudeSession)
+
         let pluginTitle = duckServer.pluginConnected ? "Update Claude Plugin" : "Install Claude Plugin"
         let pluginItem = NSMenuItem(title: pluginTitle, action: #selector(installPlugin), keyEquivalent: "")
         pluginItem.target = self
@@ -464,8 +463,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     @objc private func selectVoice(_ sender: NSMenuItem) {
         guard let sayName = sender.representedObject as? String else { return }
         speechService.ttsVoice = sayName
-        let label = DuckVoices.all.first { $0.sayName == sayName }?.label ?? sayName
-        speechService.speak("Hi, I'm \(label).", skipChirpWait: true)
+        let voice = DuckVoices.all.first { $0.sayName == sayName }
+        speechService.speak(voice?.preview ?? "This is how I sound.", skipChirpWait: true)
     }
 
     @objc private func setLaunchAtLogin() {

@@ -65,7 +65,7 @@ class SpeechService: ObservableObject {
 
     // Config
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
-    var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
+    @Published var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
         didSet {
             let engineVoice = DuckVoices.resolvedSayName(for: ttsVoice)
             tts.voice = engineVoice

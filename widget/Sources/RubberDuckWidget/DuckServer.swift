@@ -325,18 +325,35 @@ class DuckServer: ObservableObject {
             let reason = json?["reason"] as? String ?? "unknown"
             DuckLog.log("[session-end] reason=\(reason)")
 
-            let goodbyes: [String] = switch reason {
-            case "prompt_input_exit":
-                ["Later!", "See ya.", "Peace out.", "Catch you next time.", "Till next time."]
+            let phrases: [String] = switch reason {
             case "clear":
                 ["Fresh start. Nice.", "Clean slate.", "Wiped clean."]
             default:
-                ["Session over.", "Done for now.", "Signing off."]
+                [
+                    "Another one bites the dust.",
+                    "Session closed.",
+                    "One down.",
+                    "Wrapping up.",
+                    "And... scene.",
+                    "That's a wrap on that one.",
+                    "Moving on.",
+                    "Check.",
+                    "Done and done.",
+                    "Noted.",
+                    "Next.",
+                    "Filed away.",
+                    "Onwards.",
+                    "Chapter closed.",
+                    "That'll do.",
+                    "Off the board.",
+                    "Crossed off.",
+                    "Clean exit.",
+                ]
             }
 
             await MainActor.run {
                 localTransport.onClearThinking?()
-                localTransport.onSpeak?(goodbyes.randomElement()!)
+                localTransport.onSpeak?(phrases.randomElement()!)
             }
             return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
         }

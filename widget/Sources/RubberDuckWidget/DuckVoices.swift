@@ -9,53 +9,82 @@ struct DuckVoice {
     let label: String       // Short name for the menu
     let sayName: String     // Full name passed to `say -v` (Teensy/local path)
     let voiceId: String     // AVSpeechSynthesisVoice identifier (serial TTS path)
+    var previews: [String] = ["This is how I sound."]
+
+    /// Random preview line about the tone/sound (not a character intro).
+    var preview: String { previews.randomElement()! }
 }
 
 enum DuckVoices {
 
     // MARK: - Named voices (used as direct references instead of string lookups)
 
-    static let superstar = DuckVoice(label: "Superstar", sayName: "Superstar", voiceId: "com.apple.speech.synthesis.voice.Princess")
+    static let superstar = DuckVoice(label: "Superstar", sayName: "Superstar", voiceId: "com.apple.speech.synthesis.voice.Princess",
+                                         previews: ["Bright and sparkly.", "The showstopper.", "Extra in the best way.", "Glittery and bold.", "Main character energy."])
 
     // Main — the duck's best voices, top of the menu
     static let main: [DuckVoice] = [
-        DuckVoice(label: "Boing", sayName: "Boing", voiceId: "com.apple.speech.synthesis.voice.Boing"),
-        DuckVoice(label: "Ralph", sayName: "Ralph", voiceId: "com.apple.speech.synthesis.voice.Ralph"),
-        DuckVoice(label: "Kathy", sayName: "Kathy", voiceId: "com.apple.speech.synthesis.voice.Kathy"),
+        DuckVoice(label: "Boing", sayName: "Boing", voiceId: "com.apple.speech.synthesis.voice.Boing",
+                  previews: ["The classic duck sound.", "Bouncy and quacky.", "Peak rubber duck energy.", "Sproingy and fun.", "Maximum cartoon vibes."]),
+        DuckVoice(label: "Ralph", sayName: "Ralph", voiceId: "com.apple.speech.synthesis.voice.Ralph",
+                  previews: ["Low and serious.", "The no-nonsense tone.", "Sounds like business.", "Deep and grounded.", "Straight to the point."]),
+        DuckVoice(label: "Kathy", sayName: "Kathy", voiceId: "com.apple.speech.synthesis.voice.Kathy",
+                  previews: ["Warm and steady.", "A friendly tone.", "Clear and calm.", "Approachable and even.", "Like a good coworker."]),
         superstar,
-        DuckVoice(label: "Samantha", sayName: "Samantha", voiceId: "com.apple.voice.compact.en-US.Samantha"),
+        DuckVoice(label: "Samantha", sayName: "Samantha", voiceId: "com.apple.voice.compact.en-US.Samantha",
+                  previews: ["Clean and natural.", "The modern default.", "Crisp and clear.", "Smooth and polished.", "Neutral and reliable."]),
     ]
 
     // Classic — robot / speak-n-spell vibes
     static let classic: [DuckVoice] = [
-        DuckVoice(label: "Fred", sayName: "Fred", voiceId: "com.apple.speech.synthesis.voice.Fred"),
-        DuckVoice(label: "Eddy", sayName: "Eddy (English (US))", voiceId: "com.apple.eloquence.en-US.Eddy"),
-        DuckVoice(label: "Rocko", sayName: "Rocko (English (US))", voiceId: "com.apple.eloquence.en-US.Rocko"),
-        DuckVoice(label: "Shelley", sayName: "Shelley (English (US))", voiceId: "com.apple.eloquence.en-US.Shelley"),
-        DuckVoice(label: "Flo", sayName: "Flo (English (US))", voiceId: "com.apple.eloquence.en-US.Flo"),
-        DuckVoice(label: "Nicky", sayName: "Nicky (Enhanced)", voiceId: "com.apple.ttsbundle.siri_Nicky_en-US_premium"),
-        DuckVoice(label: "Junior", sayName: "Junior", voiceId: "com.apple.speech.synthesis.voice.Junior"),
+        DuckVoice(label: "Fred", sayName: "Fred", voiceId: "com.apple.speech.synthesis.voice.Fred",
+                  previews: ["The original Mac voice.", "Old school computing.", "Retro and classic.", "Nineteen eighty four called.", "The grandfather of Mac speech."]),
+        DuckVoice(label: "Eddy", sayName: "Eddy (English (US))", voiceId: "com.apple.eloquence.en-US.Eddy",
+                  previews: ["Tinny and robotic.", "Digital and buzzy.", "Speak and spell energy.", "Crunchy like a dial-up modem.", "Eight bit and proud."]),
+        DuckVoice(label: "Rocko", sayName: "Rocko (English (US))", voiceId: "com.apple.eloquence.en-US.Rocko",
+                  previews: ["Gritty and rough.", "A raspy machine.", "Sounds like gravel.", "Sandpaper smooth.", "Low and crunchy."]),
+        DuckVoice(label: "Shelley", sayName: "Shelley (English (US))", voiceId: "com.apple.eloquence.en-US.Shelley",
+                  previews: ["Bright and precise.", "Sharp and articulate.", "Crisp like a bell.", "Clear as a laser.", "Tight and focused."]),
+        DuckVoice(label: "Flo", sayName: "Flo (English (US))", voiceId: "com.apple.eloquence.en-US.Flo",
+                  previews: ["Smooth and even.", "Laid back and mellow.", "Easy on the ears.", "Relaxed and flowing.", "Chill and steady."]),
+        DuckVoice(label: "Nicky", sayName: "Nicky (Enhanced)", voiceId: "com.apple.ttsbundle.siri_Nicky_en-US_premium",
+                  previews: ["High fidelity.", "The polished one.", "Sounds almost human.", "Premium and refined.", "The HD upgrade."]),
+        DuckVoice(label: "Junior", sayName: "Junior", voiceId: "com.apple.speech.synthesis.voice.Junior",
+                  previews: ["Small and squeaky.", "The little voice.", "High pitched and light.", "Tiny but mighty.", "Like a chipmunk at work."]),
     ]
 
     // Special FX — musical, weird, wonderful
     static let specialFX: [DuckVoice] = [
-        DuckVoice(label: "Bad News", sayName: "Bad News", voiceId: "com.apple.speech.synthesis.voice.BadNews"),
-        DuckVoice(label: "Good News", sayName: "Good News", voiceId: "com.apple.speech.synthesis.voice.GoodNews"),
-        DuckVoice(label: "Cellos", sayName: "Cellos", voiceId: "com.apple.speech.synthesis.voice.Cellos"),
-        DuckVoice(label: "Organ", sayName: "Organ", voiceId: "com.apple.speech.synthesis.voice.Organ"),
-        DuckVoice(label: "Whisper", sayName: "Whisper", voiceId: "com.apple.speech.synthesis.voice.Whisper"),
-        DuckVoice(label: "Trinoids", sayName: "Trinoids", voiceId: "com.apple.speech.synthesis.voice.Trinoids"),
-        DuckVoice(label: "Zarvox", sayName: "Zarvox", voiceId: "com.apple.speech.synthesis.voice.Zarvox"),
-        DuckVoice(label: "Jester", sayName: "Jester", voiceId: "com.apple.speech.synthesis.voice.Hysterical"),
-        DuckVoice(label: "Bubbles", sayName: "Bubbles", voiceId: "com.apple.speech.synthesis.voice.Bubbles"),
+        DuckVoice(label: "Bad News", sayName: "Bad News", voiceId: "com.apple.speech.synthesis.voice.BadNews",
+                  previews: ["Everything sounds grim.", "The doom and gloom tone.", "Heavy and foreboding.", "Dark clouds rolling in.", "Ominous by default."]),
+        DuckVoice(label: "Good News", sayName: "Good News", voiceId: "com.apple.speech.synthesis.voice.GoodNews",
+                  previews: ["Bright and uplifting.", "The optimistic tone.", "Sunshine in audio form.", "Glass half full, always.", "Perpetually cheerful."]),
+        DuckVoice(label: "Cellos", sayName: "Cellos", voiceId: "com.apple.speech.synthesis.voice.Cellos",
+                  previews: ["Deep and resonant.", "Like an orchestra pit.", "Rich and dramatic.", "Strings attached.", "Vibrating with gravitas."]),
+        DuckVoice(label: "Organ", sayName: "Organ", voiceId: "com.apple.speech.synthesis.voice.Organ",
+                  previews: ["Grand and booming.", "Cathedral acoustics.", "Big and echoey.", "Pipe organ energy.", "Fills the whole room."]),
+        DuckVoice(label: "Whisper", sayName: "Whisper", voiceId: "com.apple.speech.synthesis.voice.Whisper",
+                  previews: ["Barely audible.", "The quiet one.", "Soft and hushed.", "Turn the volume way up.", "A gentle breeze of sound."]),
+        DuckVoice(label: "Trinoids", sayName: "Trinoids", voiceId: "com.apple.speech.synthesis.voice.Trinoids",
+                  previews: ["Alien and metallic.", "Pure machine.", "Cold and calculated.", "From another planet.", "Distinctly non-human."]),
+        DuckVoice(label: "Zarvox", sayName: "Zarvox", voiceId: "com.apple.speech.synthesis.voice.Zarvox",
+                  previews: ["Flat and synthetic.", "Maximum robot.", "Zero warmth, all circuit.", "The uncanny valley floor.", "Aggressively digital."]),
+        DuckVoice(label: "Jester", sayName: "Jester", voiceId: "com.apple.speech.synthesis.voice.Hysterical",
+                  previews: ["Chaotic and silly.", "Unhinged energy.", "The clown car of voices.", "Wildly unstable.", "Comedy at all costs."]),
+        DuckVoice(label: "Bubbles", sayName: "Bubbles", voiceId: "com.apple.speech.synthesis.voice.Bubbles",
+                  previews: ["Underwater gargling.", "Blub blub blub.", "Sounds like drowning.", "Submerged and bubbly.", "The deep end of the pool."]),
     ]
 
     // British — the UK variants
     static let british: [DuckVoice] = [
-        DuckVoice(label: "Eddy (UK)", sayName: "Eddy (English (UK))", voiceId: "com.apple.eloquence.en-GB.Eddy"),
-        DuckVoice(label: "Rocko (UK)", sayName: "Rocko (English (UK))", voiceId: "com.apple.eloquence.en-GB.Rocko"),
-        DuckVoice(label: "Shelley (UK)", sayName: "Shelley (English (UK))", voiceId: "com.apple.eloquence.en-GB.Shelley"),
-        DuckVoice(label: "Daniel (UK)", sayName: "Daniel", voiceId: "com.apple.voice.compact.en-GB.Daniel"),
+        DuckVoice(label: "Eddy (UK)", sayName: "Eddy (English (UK))", voiceId: "com.apple.eloquence.en-GB.Eddy",
+                  previews: ["Robotic with a British twist.", "Digital and posh.", "Tinny across the pond.", "Buzzy with a cuppa.", "Electronic and jolly."]),
+        DuckVoice(label: "Rocko (UK)", sayName: "Rocko (English (UK))", voiceId: "com.apple.eloquence.en-GB.Rocko",
+                  previews: ["Rough around the edges.", "Gravelly, but British.", "Gritty with manners.", "Sandpaper and tea.", "Coarse but polite."]),
+        DuckVoice(label: "Shelley (UK)", sayName: "Shelley (English (UK))", voiceId: "com.apple.eloquence.en-GB.Shelley",
+                  previews: ["Crisp and proper.", "Precise with an accent.", "Sharp and British.", "Neat and tidy.", "Buttoned up tight."]),
+        DuckVoice(label: "Daniel (UK)", sayName: "Daniel", voiceId: "com.apple.voice.compact.en-GB.Daniel",
+                  previews: ["The gentlemanly tone.", "Proper and polished.", "Calm British default.", "Measured and composed.", "Understated and clear."]),
     ]
 
     /// All voices in menu order.

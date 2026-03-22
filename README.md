@@ -1,6 +1,6 @@
 # Duck Duck Duck
 
-A companion for Claude Code that watches your coding sessions, evaluates both your prompts and Claude's responses, then expresses its judgment through voice, a liquid-glass desktop widget, and (optionally) physical hardware. Say "ducky" to give voice commands that get injected directly into Claude Code.
+A companion for Claude Code (on Mac) that watches your coding sessions, evaluates both your prompts and Claude's responses, then expresses its judgment through voice, a liquid-glass desktop widget, and (optionally) physical hardware. Say "ducky" to give voice commands that get injected directly into Claude Code.
 
 ## Install
 

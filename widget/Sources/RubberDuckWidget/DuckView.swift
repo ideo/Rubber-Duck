@@ -11,7 +11,6 @@ struct DuckView: View {
     @EnvironmentObject var speechService: SpeechService
     @EnvironmentObject var serialManager: SerialManager
 
-    @State private var isBlinking = false
     @State private var thinkingEyeX: CGFloat = 0
     @State private var thinkingEyeY: CGFloat = 0
 
@@ -48,9 +47,6 @@ struct DuckView: View {
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         .contentShape(Rectangle())
         .contextMenu { duckContextMenu }
-        .onAppear {
-            scheduleBlink()
-        }
         .onChange(of: evalService.evalCount) {
             coordinator.handleNewEval()
         }
@@ -79,10 +75,11 @@ struct DuckView: View {
             // Face — positioned from center (on top of glass)
             ZStack {
                 // Eyes — on the vertical center line
-                HStack(spacing: DuckTheme.eyeSpacing) {
-                    duckEye
-                    duckEye
-                }
+                DuckEyesView(
+                    permissionPending: evalService.permissionPending,
+                    eyeHeight: coordinator.expression.eyeHeight,
+                    sentiment: evalService.scores?.sentiment ?? 0
+                )
                 .offset(
                     x: coordinator.isThinking && !evalService.permissionPending
                         ? thinkingEyeX : 0,
@@ -139,38 +136,6 @@ struct DuckView: View {
         )
     }
 
-    // MARK: - Eyes
-
-    @ViewBuilder
-    private var duckEye: some View {
-        if evalService.permissionPending {
-            // Exclamation mark eyes during permission requests
-            Text("!")
-                .font(.system(size: DuckTheme.eyeSize * 1.8, weight: .black, design: .rounded))
-                .foregroundColor(DuckTheme.eyeColor)
-                .frame(width: DuckTheme.eyeSize, height: DuckTheme.eyeSize * 1.5)
-                .transition(.scale.combined(with: .opacity))
-        } else {
-            let eyeScale = isBlinking ? 0.1 : coordinator.expression.eyeHeight
-            Ellipse()
-                .fill(DuckTheme.eyeColor)
-                .frame(
-                    width: DuckTheme.eyeSize,
-                    height: DuckTheme.eyeSize * eyeScale
-                )
-                .frame(width: DuckTheme.eyeSize, height: DuckTheme.eyeSize * 1.5)
-                .animation(
-                    .spring(response: 0.1, dampingFraction: 0.9),
-                    value: isBlinking
-                )
-                .animation(
-                    .spring(response: 0.3, dampingFraction: 0.7),
-                    value: coordinator.expression.eyeHeight
-                )
-                .transition(.scale.combined(with: .opacity))
-        }
-    }
-
     // MARK: - Beak
 
     private var beakImage: Image {
@@ -212,24 +177,6 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        Button {
-            CLISession.launch()
-        } label: {
-            Label("Launch Claude Code", systemImage: "terminal.fill")
-        }
-
-        Menu {
-            Button {
-                CLISession.launchPlain("gemini")
-            } label: {
-                Label("Launch Gemini CLI", systemImage: "terminal.fill")
-            }
-        } label: {
-            Label("Experimental", systemImage: "flask")
-        }
-
-        Divider()
-
         // Mode selector — icon reflects current mode
         Menu {
             Button {
@@ -275,6 +222,84 @@ struct DuckView: View {
             )
         }
 
+        // Voice picker
+        Menu {
+            Button {
+                speechService.ttsVoice = DuckVoices.wildcardSayName
+                speechService.speak("Wildcard mode. I'll pick a voice each time.", skipChirpWait: true)
+            } label: {
+                let active = speechService.isWildcardMode
+                Label(active ? "✓ Wildcard (AI picks)" : "Wildcard (AI picks)", systemImage: "shuffle")
+            }
+
+            Divider()
+
+            ForEach(DuckVoices.main, id: \.sayName) { voice in
+                Button {
+                    speechService.ttsVoice = voice.sayName
+                    speechService.speak(voice.preview, skipChirpWait: true)
+                } label: {
+                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+                }
+            }
+
+            Divider()
+
+            ForEach(DuckVoices.classic, id: \.sayName) { voice in
+                Button {
+                    speechService.ttsVoice = voice.sayName
+                    speechService.speak(voice.preview, skipChirpWait: true)
+                } label: {
+                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+                }
+            }
+
+            Divider()
+
+            ForEach(DuckVoices.specialFX, id: \.sayName) { voice in
+                Button {
+                    speechService.ttsVoice = voice.sayName
+                    speechService.speak(voice.preview, skipChirpWait: true)
+                } label: {
+                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+                }
+            }
+
+            Divider()
+
+            ForEach(DuckVoices.british, id: \.sayName) { voice in
+                Button {
+                    speechService.ttsVoice = voice.sayName
+                    speechService.speak(voice.preview, skipChirpWait: true)
+                } label: {
+                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+                }
+            }
+        } label: {
+            let voiceLabel = speechService.isWildcardMode
+                ? "Wildcard"
+                : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
+            Label("Voice: \(voiceLabel)", systemImage: "waveform")
+        }
+
+        Divider()
+
+        Button {
+            CLISession.launch()
+        } label: {
+            Label("Launch Claude Code", systemImage: "terminal.fill")
+        }
+
+        Menu {
+            Button {
+                CLISession.launchPlain("gemini")
+            } label: {
+                Label("Launch Gemini CLI", systemImage: "terminal.fill")
+            }
+        } label: {
+            Label("Experimental", systemImage: "flask")
+        }
+
         Divider()
 
         Button {
@@ -285,18 +310,7 @@ struct DuckView: View {
         }
     }
 
-    // MARK: - Blink
-
-    private func scheduleBlink() {
-        let delay = Double.random(in: 2.5...6.0)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            isBlinking = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                isBlinking = false
-                scheduleBlink()
-            }
-        }
-    }
+    // Blink logic moved to DuckEyesView (isolated @State prevents menu flicker)
 
     // 6-position grid: 3 top row, 3 bottom row. Bottom-center is home.
     private static let eyePositions: [(x: CGFloat, y: CGFloat)] = [
@@ -312,6 +326,83 @@ struct DuckView: View {
         let delay = Double.random(in: 0.3...0.8)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             startThinkingAnimation()
+        }
+    }
+}
+
+// MARK: - Duck Eyes (isolated blink state)
+
+/// Both eyes in one struct so they share a single blink timer and stay in sync.
+/// Isolated from parent view to prevent context menu flicker on blink.
+/// On negative sentiment, eyes desync for a goofy confused look.
+private struct DuckEyesView: View {
+    var permissionPending: Bool
+    var eyeHeight: Double
+    var sentiment: Double
+
+    @State private var leftBlinking = false
+    @State private var rightBlinking = false
+
+    /// Whether eyes blink together or independently.
+    private var desynced: Bool { sentiment < -0.2 }
+
+    var body: some View {
+        HStack(spacing: DuckTheme.eyeSpacing) {
+            eye(isBlinking: leftBlinking)
+            eye(isBlinking: rightBlinking)
+        }
+        .onAppear { scheduleBlink() }
+    }
+
+    @ViewBuilder
+    private func eye(isBlinking: Bool) -> some View {
+        if permissionPending {
+            Text("!")
+                .font(.system(size: DuckTheme.eyeSize * 1.8, weight: .black, design: .rounded))
+                .foregroundColor(DuckTheme.eyeColor)
+                .frame(width: DuckTheme.eyeSize, height: DuckTheme.eyeSize * 1.5)
+                .transition(.scale.combined(with: .opacity))
+        } else {
+            let scale = isBlinking ? 0.1 : eyeHeight
+            Ellipse()
+                .fill(DuckTheme.eyeColor)
+                .frame(
+                    width: DuckTheme.eyeSize,
+                    height: DuckTheme.eyeSize * scale
+                )
+                .frame(width: DuckTheme.eyeSize, height: DuckTheme.eyeSize * 1.5)
+                .animation(.spring(response: 0.1, dampingFraction: 0.9), value: isBlinking)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: eyeHeight)
+                .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    private func scheduleBlink() {
+        let delay = Double.random(in: 2.5...6.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            // Both eyes blink together
+            leftBlinking = true
+            rightBlinking = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                leftBlinking = false
+                rightBlinking = false
+
+                if desynced {
+                    // Extra wink on one eye for the confused look
+                    let extraDelay = Double.random(in: 0.3...0.8)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + extraDelay) {
+                        let useLeft = Bool.random()
+                        if useLeft { leftBlinking = true } else { rightBlinking = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                            leftBlinking = false
+                            rightBlinking = false
+                            scheduleBlink()
+                        }
+                    }
+                } else {
+                    scheduleBlink()
+                }
+            }
         }
     }
 }

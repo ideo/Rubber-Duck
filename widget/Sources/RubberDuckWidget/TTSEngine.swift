@@ -50,6 +50,15 @@ class TTSEngine {
 
     /// Speak text through the configured output device.
     /// Mutes the TTSGate while speaking to prevent mic feedback.
+    /// Strip markdown artifacts that `say` reads literally (e.g. *bold*, **strong**, _italic_).
+    private func stripMarkdown(_ text: String) -> String {
+        text.replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: "#", with: "")
+    }
+
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
         log("[tts] \(text)")
@@ -57,6 +66,7 @@ class TTSEngine {
         // Stop any current speech to prevent pileup
         stop()
 
+        let cleaned = stripMarkdown(text)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
 
@@ -64,9 +74,9 @@ class TTSEngine {
         // Note: `say -a` uses its OWN device IDs (not CoreAudio AudioDeviceID),
         // but it also accepts device names — use the name for reliability.
         if let name = outputDeviceName {
-            task.arguments = ["-v", voice, "-a", name, text]
+            task.arguments = ["-v", voice, "-a", name, cleaned]
         } else {
-            task.arguments = ["-v", voice, text]
+            task.arguments = ["-v", voice, cleaned]
         }
 
         task.standardOutput = FileHandle.nullDevice
