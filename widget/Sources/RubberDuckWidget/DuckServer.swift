@@ -441,38 +441,26 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
 
     switch toolName {
     case "Bash":
-        guard let command = dict["command"] as? String else { return "Run a command" }
-        let base = command.trimmingCharacters(in: .whitespaces)
-            .components(separatedBy: .whitespaces).first ?? ""
-        switch base {
-        case "git":     return "Run git"
-        case "npm", "npx": return "Run \(base)"
-        case "make":    return "Run make"
-        case "swift":   return "Run swift"
-        case "curl", "wget": return "Make a network request"
-        case "rm":      return "Delete files"
-        case "mkdir":   return "Create a directory"
-        case "pip", "pip3", "brew", "cargo", "yarn", "pnpm", "bun":
-            return "Run \(base)"
-        case "ls", "find", "tree": return "List files"
-        case "cat", "head", "tail", "less": return "Read a file"
-        case "cd":      return "Run a command"
-        case "cp", "mv": return "Move files"
-        case "chmod", "chown": return "Change file permissions"
-        case "docker":  return "Run docker"
-        case "xcodebuild": return "Build with Xcode"
-        default:        return "Run a command"
+        // Claude Code provides a description field — use it directly when available
+        if let desc = dict["description"] as? String, !desc.isEmpty {
+            // Cap at ~8 words for TTS
+            let words = desc.components(separatedBy: .whitespaces)
+            let truncated = words.prefix(8).joined(separator: " ")
+            return truncated
         }
+        guard let command = dict["command"] as? String else { return "Run a command" }
+        return summarizeBashCommand(command)
 
     case "Edit":
         if let path = dict["file_path"] as? String {
-            let basename = (path as NSString).lastPathComponent
-            let name = (basename as NSString).deletingPathExtension
-            return "Edit \(name)"
+            return "Edit \(fileLabel(path))"
         }
         return "Edit a file"
 
     case "Write":
+        if let path = dict["file_path"] as? String {
+            return "Write \(fileLabel(path))"
+        }
         return "Write a new file"
 
     case "WebFetch":
@@ -483,11 +471,23 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
 
     case "Read":
         if let path = dict["file_path"] as? String {
-            let basename = (path as NSString).lastPathComponent
-            let name = (basename as NSString).deletingPathExtension
-            return "Read \(name)"
+            return "Read \(fileLabel(path))"
         }
         return "Read a file"
+
+    // Claude Code internal tools — still require voice confirmation, but friendlier prompts
+    case "ExitPlanMode":
+        return "Claude wants to exit plan mode"
+    case "EnterPlanMode":
+        return "Claude wants to enter plan mode"
+    case "AskUserQuestion":
+        return "Claude has a question"
+    case "TodoWrite":
+        return "Claude wants to update tasks"
+    case "NotebookEdit":
+        return "Edit a notebook"
+    case "Agent":
+        return "Claude wants to launch a sub-agent"
 
     default:
         // MCP tools: mcp__server-name__tool_name → "Use a connector"
@@ -499,6 +499,67 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
             return "Use a tool"
         }
         return toolName
+    }
+}
+
+/// Extract a short, speakable label from a file path (e.g. "DuckView" from ".../DuckView.swift").
+private func fileLabel(_ path: String) -> String {
+    let basename = (path as NSString).lastPathComponent
+    return (basename as NSString).deletingPathExtension
+}
+
+/// Parse a Bash command string to extract the first meaningful command for TTS.
+/// Skips cd, source, export, and chains (&&, ||, ;) to find the real action.
+private func summarizeBashCommand(_ command: String) -> String {
+    // Split on shell operators to find meaningful commands
+    let segments = command
+        .replacingOccurrences(of: "&&", with: "\n")
+        .replacingOccurrences(of: "||", with: "\n")
+        .replacingOccurrences(of: ";", with: "\n")
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+
+    // Find the first non-trivial command (skip cd, source, export, set, eval)
+    let trivial: Set<String> = ["cd", "source", "export", "set", "eval", "pushd", "popd", "shopt", "setopt", "unset"]
+    let meaningful = segments.first { line in
+        let base = line.components(separatedBy: .whitespaces).first ?? ""
+        return !trivial.contains(base)
+    } ?? segments.last ?? command
+
+    let words = meaningful.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+    let base = words.first ?? ""
+
+    switch base {
+    case "git":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run git" : "Run git \(sub)"
+    case "npm", "npx":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run \(base)" : "Run \(base) \(sub)"
+    case "make":
+        let target = words.count > 1 && !words[1].hasPrefix("-") ? words[1] : ""
+        return target.isEmpty ? "Run make" : "Run make \(target)"
+    case "swift":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run swift" : "Run swift \(sub)"
+    case "curl", "wget": return "Make a network request"
+    case "rm":      return "Delete files"
+    case "mkdir":   return "Create a directory"
+    case "pip", "pip3", "brew", "cargo", "yarn", "pnpm", "bun":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run \(base)" : "Run \(base) \(sub)"
+    case "ls", "find", "tree": return "List files"
+    case "cat", "head", "tail", "less": return "Read a file"
+    case "cp", "mv": return "Move files"
+    case "chmod", "chown": return "Change file permissions"
+    case "docker":
+        let sub = words.count > 1 ? words[1] : ""
+        return sub.isEmpty ? "Run docker" : "Run docker \(sub)"
+    case "xcodebuild": return "Build with Xcode"
+    case "kill", "killall", "pkill": return "Stop a process"
+    case "echo":    return "Run a command"
+    default:        return "Run a command"
     }
 }
 

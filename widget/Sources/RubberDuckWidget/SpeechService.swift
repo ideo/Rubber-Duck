@@ -110,6 +110,7 @@ class SpeechService: ObservableObject {
 
     private var wakeWordProcessor = WakeWordProcessor()
     private var permissionGate = PermissionVoiceGate()
+    private let permissionClassifier = PermissionClassifier()
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
     // Track which path is active
@@ -318,9 +319,35 @@ class SpeechService: ObservableObject {
 
     func askPermission(toolName: String, summary: String = "", options: [String] = []) {
         let label = summary.isEmpty ? toolName : summary
-        let prompt = "\(label). Allow?"
-        permissionGate.startWaiting(optionCount: options.count, prompt: prompt)
-        speak(prompt)
+
+        // One-sentence prompt: "Edit DuckView. Allow, always allow, or deny?"
+        let shortPrompt: String
+        let fullPrompt: String
+
+        if options.count == 1 {
+            // Single option → "Allow, always allow, or deny?"
+            shortPrompt = "\(label). Allow, always allow, or deny?"
+            fullPrompt = "\(label). Allow, always allow to \(options[0]), or deny?"
+        } else if options.count == 2 {
+            shortPrompt = "\(label). Allow, always allow, or deny?"
+            fullPrompt = "\(label). Allow, always allow to \(options[0]), or say second to \(options[1]), or deny?"
+        } else if options.count > 2 {
+            shortPrompt = "\(label). Allow or deny? Say repeat for options."
+            let numbered = options.enumerated().map { "\($0.offset + 1): \($0.element)" }.joined(separator: ". ")
+            fullPrompt = "\(label). Your options are: \(numbered). Or just allow or deny."
+        } else {
+            // No options
+            shortPrompt = "\(label). Allow or deny?"
+            fullPrompt = shortPrompt
+        }
+
+        permissionGate.startWaiting(
+            optionCount: options.count,
+            optionLabels: options,
+            prompt: shortPrompt,
+            fullPrompt: fullPrompt
+        )
+        speak(shortPrompt)
         restartAfterTTS()  // Ensure STT is fresh after the prompt finishes
     }
 
@@ -429,24 +456,29 @@ class SpeechService: ObservableObject {
         // Permission mode takes priority
         if permissionGate.isWaiting {
             let decision = permissionGate.process(transcript)
-            switch decision {
-            case .allow:
-                speak(["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!)
-                onPermissionResponse?(0)
-                restartAfterTTS()
-            case .deny:
-                speak(["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!)
-                onPermissionResponse?(-1)
-                restartAfterTTS()
-            case .selectOption(let index):
-                speak(["Got it, option \(index).", "Going with \(index).", "Option \(index) it is."].randomElement()!)
-                onPermissionResponse?(index)
-                restartAfterTTS()
-            case .repeatPrompt:
-                speak(permissionGate.lastPrompt)
-                restartAfterTTS()
-            case .noMatch:
-                break
+            if case .noMatch = decision {
+                // Final transcript with no keyword match → try Foundation Models classifier
+                if isFinal && PermissionClassifier.isAvailable {
+                    let labels = permissionGate.optionLabels
+                    Task { [weak self] in
+                        guard let self else { return }
+                        let classified = await self.permissionClassifier.classify(
+                            transcript: transcript,
+                            optionLabels: labels
+                        )
+                        await MainActor.run {
+                            guard self.permissionGate.isWaiting else { return }
+                            guard let decision = classified else {
+                                self.speak("Sorry, I didn't catch that. Say yes or no.")
+                                self.restartAfterTTS()
+                                return
+                            }
+                            self.handlePermissionDecision(decision)
+                        }
+                    }
+                }
+            } else {
+                handlePermissionDecision(decision)
             }
             return
         }
@@ -499,6 +531,34 @@ class SpeechService: ObservableObject {
             wakeWordProcessor.reset()
             speak("Quack! See you later.")
             restartAfterTTS()
+        }
+    }
+
+    /// Handle a resolved permission decision (from word matching or LLM classifier).
+    private func handlePermissionDecision(_ decision: PermissionVoiceGate.Decision) {
+        switch decision {
+        case .allow:
+            speak(["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!)
+            onPermissionResponse?(0)
+            restartAfterTTS()
+        case .deny:
+            speak(["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!)
+            onPermissionResponse?(-1)
+            restartAfterTTS()
+        case .selectOption(let index):
+            if index > 0 && index <= permissionGate.optionLabels.count {
+                let label = permissionGate.optionLabels[index - 1]
+                speak("Got it. \(label.capitalized(with: nil)).")
+            } else {
+                speak(["Got it.", "Done."].randomElement()!)
+            }
+            onPermissionResponse?(index)
+            restartAfterTTS()
+        case .repeatPrompt:
+            speak(permissionGate.fullPrompt)
+            restartAfterTTS()
+        case .noMatch:
+            break  // Should not reach here
         }
     }
 
