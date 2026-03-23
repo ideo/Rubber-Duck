@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-before-model.sh",
+            "command": "./plugin-gemini/hooks/on-before-model.sh",
             "timeout": 10000
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-after-agent.sh",
+            "command": "./plugin-gemini/hooks/on-after-agent.sh",
             "timeout": 10000
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./gemini/hooks/on-notification.sh",
+            "command": "./plugin-gemini/hooks/on-notification.sh",
             "timeout": 5000
           }
         ]

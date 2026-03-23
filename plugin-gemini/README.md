@@ -9,7 +9,7 @@ Your rubber duck companion watches Gemini CLI sessions and reacts with opinions,
 Copy the hooks directory somewhere permanent:
 
 ```bash
-cp -r gemini/hooks ~/.gemini/duck-hooks
+cp -r plugin-gemini/hooks ~/.gemini/duck-hooks
 chmod +x ~/.gemini/duck-hooks/*.sh
 ```
 

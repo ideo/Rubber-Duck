@@ -115,7 +115,8 @@ In Foundation Models mode (the default), the entire experience — eval scoring,
 ```
 widget/          SwiftUI macOS app — the duck's brain
 plugin/          Claude Code plugin — hooks that connect to the widget
-firmware/        Arduino firmware for hardware duck (Teensy 4.0, ESP32-S3)
+plugin-gemini/   Gemini CLI extension — experimental
+firmware/        Arduino firmware for hardware duck (ESP32-S3, Teensy 4.0)
 scripts/         Shell scripts (tmux launcher, hook helpers)
 ```
 

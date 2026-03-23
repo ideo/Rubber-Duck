@@ -8,8 +8,8 @@ widget/Playground/.swiftpm/
 duck-eval-test.txt
 *.wav
 
-# Local settings (personal permissions, not for sharing)
-.claude/settings.local.json
+# Claude Code local config
+.claude/
 
 # Editor config
 .vscode/
