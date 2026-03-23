@@ -1,5 +1,8 @@
 # Duck Duck Duck
 
+[![Software License: MIT](https://img.shields.io/badge/software-MIT-blue.svg)](LICENSE)
+[![Hardware License: CERN-OHL-P-2.0](https://img.shields.io/badge/hardware-CERN--OHL--P--2.0-brightgreen.svg)](firmware/LICENSE)
+
 A companion for Claude Code on Mac. It watches your coding sessions, scores every prompt and response, speaks opinionated reactions, and handles permissions by voice. Optionally connects to a [physical duck](https://duck-duck-duck.web.app/) for hardware reactions.
 
 🔒 [**Default intelligence is fully on-device and private.**](#data--privacy) No cloud audio. Your data is not used for training.
