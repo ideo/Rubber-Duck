@@ -34,6 +34,16 @@ enum EvalPromptBuilder {
             contextLine = "Claude's last message (for context): \(String(claudeContext.prefix(1000)))\n"
         }
 
+        // For very short user messages, reframe so the model evaluates the decision, not the text
+        if source == "user" && text.count < 30 && !claudeContext.isEmpty {
+            return """
+                Source: \(source)
+                Claude said: \(String(claudeContext.prefix(500)))
+                The user replied: \(truncated)
+                Evaluate the user's decision, not their word count.
+                """
+        }
+
         return """
             Source: \(source)
             \(contextLine)\

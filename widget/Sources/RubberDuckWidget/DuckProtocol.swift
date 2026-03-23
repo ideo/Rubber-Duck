@@ -39,26 +39,30 @@ enum PermissionStatus: String, Codable {
     case timeout
 }
 
-/// Voice output mode — controls which eval text the duck speaks.
+/// Duck mode — controls reactions, speech, and mic behavior.
+/// Mic is baked into each mode (no separate toggle).
 enum DuckMode: String, CaseIterable {
-    case permissionsOnly  // Silent watchdog — only voice-confirmed permissions (default)
-    case critic           // Speak opinionated reaction (UI: "Sidekick Mode")
-    case relay            // Speak factual summary
+    case companion        // Opinions + voice permissions + wake word
+    case permissionsOnly  // Voice permissions only, no opinions
+    case companionNoMic   // Opinions + click-only permissions, no mic
+    case relay            // Walkie-talkie with Claude CLI
 
     /// Human-readable label for menus and TTS.
     var label: String {
         switch self {
+        case .companion: return "Companion"
         case .permissionsOnly: return "Permissions Only"
-        case .critic: return "Companion Mode"
-        case .relay: return "Relay Mode"
+        case .companionNoMic: return "Companion (No Mic)"
+        case .relay: return "Relay"
         }
     }
 
     /// SF Symbol name for this mode.
     var iconName: String {
         switch self {
+        case .companion: return "figure.2.left.holdinghands"
         case .permissionsOnly: return "lock.shield"
-        case .critic: return "figure.2.left.holdinghands"
+        case .companionNoMic: return "figure.2.left.holdinghands"
         case .relay: return "flask.fill"
         }
     }
@@ -66,18 +70,45 @@ enum DuckMode: String, CaseIterable {
     /// Short subtitle for menu items.
     var subtitle: String {
         switch self {
-        case .permissionsOnly: return "Silent watchdog — voice permissions only"
-        case .critic: return "Experimental — opinions and alerts only"
-        case .relay: return "Experimental — walkie-talkie with Claude CLI"
+        case .companion: return "Opinions, permissions, voice"
+        case .permissionsOnly: return "Permissions, voice, no opinions"
+        case .companionNoMic: return "Opinions, click-only permissions"
+        case .relay: return "Talk to Claude CLI"
         }
     }
 
-    /// TTS-friendly label (no "Mode" suffix).
+    /// TTS-friendly label.
     var spokenLabel: String {
         switch self {
+        case .companion: return "Companion mode"
         case .permissionsOnly: return "Permissions only"
-        case .critic: return "Companion mode"
+        case .companionNoMic: return "Companion mode, mic off"
         case .relay: return "Relay mode"
+        }
+    }
+
+    /// Whether this mode uses the microphone.
+    var micEnabled: Bool {
+        switch self {
+        case .companion, .permissionsOnly, .relay: return true
+        case .companionNoMic: return false
+        }
+    }
+
+    /// Whether this mode speaks eval reactions.
+    var speaksReactions: Bool {
+        switch self {
+        case .companion, .companionNoMic, .relay: return true
+        case .permissionsOnly: return false
+        }
+    }
+
+    /// The listen mode this duck mode requires.
+    var requiredListenMode: ListenMode {
+        switch self {
+        case .companion, .relay: return .active
+        case .permissionsOnly: return .permissionsOnly
+        case .companionNoMic: return .off
         }
     }
 }

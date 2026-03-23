@@ -27,10 +27,8 @@ class DuckCoordinator: ObservableObject {
         self.speechService = speechService
         self.serialManager = serialManager
 
-        // Restore permissions-only side effects if that mode was persisted
-        if mode == .permissionsOnly {
-            speechService.listenMode = .permissionsOnly
-        }
+        // Restore mic behavior for persisted mode
+        speechService.listenMode = mode.requiredListenMode
     }
 
     // MARK: - Event Handlers
@@ -92,7 +90,7 @@ class DuckCoordinator: ObservableObject {
         // Relay mode: only speak Claude's output, not the user's (you know what you said)
         let textToSpeak: String
         switch mode {
-        case .critic:
+        case .companion, .companionNoMic:
             textToSpeak = evalService.reaction
         case .relay:
             textToSpeak = isUserEval ? "" : evalService.summary
@@ -114,24 +112,28 @@ class DuckCoordinator: ObservableObject {
         }
     }
 
-    /// Cycle through modes: permissionsOnly → critic → relay → permissionsOnly.
+    /// Cycle through modes.
     func toggleMode() {
-        switch mode {
-        case .permissionsOnly: setMode(.critic)
-        case .critic: setMode(.relay)
-        case .relay: setMode(.permissionsOnly)
+        let allModes = DuckMode.allCases
+        if let idx = allModes.firstIndex(of: mode) {
+            let next = allModes[(idx + 1) % allModes.count]
+            setMode(next)
+        } else {
+            setMode(.companion)
         }
     }
 
-    /// Set a specific mode. Speaks confirmation if the mode actually changed.
+    /// Set a specific mode. Mic behavior is baked in — no separate toggle.
     func setMode(_ newMode: DuckMode) {
         guard newMode != mode else { return }
         mode = newMode
         DuckConfig.duckMode = newMode
 
-        // In permissions-only, force mic to permissionsOnly listen mode + reset face to neutral
-        if mode == .permissionsOnly {
-            speechService.listenMode = .permissionsOnly
+        // Auto-set mic based on mode
+        speechService.listenMode = newMode.requiredListenMode
+
+        // Reset face to neutral in non-reaction modes
+        if !newMode.speaksReactions {
             withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
                 expression = DuckExpression()
             }
@@ -164,6 +166,33 @@ class DuckCoordinator: ObservableObject {
     /// Stop the Jeopardy thinking melody.
     func stopMelody() {
         melodyEngine.stop()
+    }
+
+    /// Spoken setup guide — walks the user through getting started.
+    func runSetupGuide() {
+        let steps: [String]
+        if evalService.isConnected {
+            // Plugin is working, guide them on modes
+            steps = [
+                "You're all set up!",
+                "Right-click me to switch modes.",
+                "Companion mode watches and reacts to your work.",
+                "Permissions mode handles allow and deny by voice.",
+                "Say ducky to talk to me when wake word is on.",
+            ]
+        } else {
+            // No plugin yet
+            steps = [
+                "Hey! I'm Duck Duck Duck.",
+                "I work with Claude Code and Claude Desktop.",
+                "First, install the plugin. Check the menu bar icon for the install button.",
+                "Then start a Claude session. I'll watch and react to everything.",
+                "Right-click me anytime for settings and modes.",
+            ]
+        }
+        // Speak each step with pauses
+        let combined = steps.joined(separator: " ... ")
+        speechService.speak(combined)
     }
 
     /// Called when a new permission request arrives.

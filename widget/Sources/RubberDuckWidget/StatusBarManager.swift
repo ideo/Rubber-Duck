@@ -69,21 +69,21 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // --- Volume slider ---
         menu.addItem(volumeSliderItem())
 
-        // --- Turn On/Off ---
+        // --- Pause / Resume ---
         if AppDelegate.isDuckActive {
-            let offItem = NSMenuItem(title: "Turn Off Duck-Duck-Duck", action: #selector(turnOffDuck), keyEquivalent: "")
-            offItem.target = self
+            let pauseItem = NSMenuItem(title: "Pause Duck, Duck, Duck", action: #selector(turnOffDuck), keyEquivalent: "")
+            pauseItem.target = self
             if let icon = svgMenuIcon("no-duck-symbol") {
-                offItem.image = icon
+                pauseItem.image = icon
             }
-            menu.addItem(offItem)
+            menu.addItem(pauseItem)
         } else {
-            let onItem = NSMenuItem(title: "Turn On Duck-Duck-Duck", action: #selector(turnOnDuck), keyEquivalent: "")
-            onItem.target = self
+            let resumeItem = NSMenuItem(title: "Resume Duck, Duck, Duck", action: #selector(turnOnDuck), keyEquivalent: "")
+            resumeItem.target = self
             if let icon = svgMenuIcon("duck-symbol") {
-                onItem.image = icon
+                resumeItem.image = icon
             }
-            menu.addItem(onItem)
+            menu.addItem(resumeItem)
         }
 
         menu.addItem(.separator())
@@ -95,8 +95,9 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let modeMenu = NSMenu()
 
         let modeActions: [(DuckMode, Selector)] = [
+            (.companion, #selector(setModeCompanion)),
             (.permissionsOnly, #selector(setModePermissions)),
-            (.critic, #selector(setModeCritic)),
+            (.companionNoMic, #selector(setModeCompanionNoMic)),
             (.relay, #selector(setModeRelay)),
         ]
         for (mode, action) in modeActions {
@@ -182,33 +183,54 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         voiceItem.submenu = voiceMenu
         menu.addItem(voiceItem)
 
-        // --- Mic submenu ---
-        let currentListenMode = speechService.listenMode
-        let micItem = NSMenuItem(title: "Mic: \(currentListenMode.label)", action: nil, keyEquivalent: "")
-        micItem.image = NSImage(systemSymbolName: currentListenMode.iconName, accessibilityDescription: currentListenMode.label)
-        let micMenu = NSMenu()
+        menu.addItem(.separator())
 
-        for mode in ListenMode.allCases {
-            let listenItem = NSMenuItem(title: mode.label, action: #selector(setListenMode(_:)), keyEquivalent: "")
-            listenItem.target = self
-            listenItem.tag = mode.rawValue
-            listenItem.state = currentListenMode == mode ? .on : .off
-            listenItem.image = NSImage(systemSymbolName: mode.iconName, accessibilityDescription: mode.label)
-            if mode == .active {
-                listenItem.subtitle = "Use wake word \"Ducky\""
+        // --- Status ---
+        let currentListenMode = speechService.listenMode
+
+        // Hardware / mic device — Ducky first, then mic status below
+        if serialManager.isConnected {
+            let duckItem = disabledItem("Ducky connected")
+            duckItem.image = NSImage(systemSymbolName: "duck.fill", accessibilityDescription: "Ducky")
+            let micSubtext: String
+            switch currentListenMode {
+            case .active: micSubtext = "Listening for wake word \"Ducky\""
+            case .permissionsOnly: micSubtext = "Listening for permissions"
+            case .off: micSubtext = "Mic off"
             }
-            micMenu.addItem(listenItem)
+            duckItem.subtitle = micSubtext
+            menu.addItem(duckItem)
+        } else if currentListenMode != .off {
+            let micName = speechService.selectedMicName.isEmpty ? "Default microphone" : speechService.selectedMicName
+            let item = disabledItem(micName)
+            item.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Microphone")
+            let micSubtext: String
+            switch currentListenMode {
+            case .active: micSubtext = "Listening for wake word \"Ducky\""
+            case .permissionsOnly: micSubtext = "Listening for permissions"
+            case .off: micSubtext = ""
+            }
+            item.subtitle = micSubtext
+            menu.addItem(item)
         }
 
-        // Mic device info at bottom of submenu
-        let micName = speechService.selectedMicName.isEmpty ? "None" : speechService.selectedMicName
-        micMenu.addItem(.separator())
-        let micDeviceItem = NSMenuItem(title: micName, action: nil, keyEquivalent: "")
-        micDeviceItem.isEnabled = false
-        micMenu.addItem(micDeviceItem)
+        if duckServer.pluginConnected {
+            menu.addItem(disabledItem("Plugin connected"))
+        }
 
-        micItem.submenu = micMenu
-        menu.addItem(micItem)
+        menu.addItem(.separator())
+
+        // --- Setup ---
+        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
+        claudeSession.target = self
+        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        menu.addItem(claudeSession)
+
+        let pluginTitle = duckServer.pluginConnected ? "Update Claude Plugin" : "Install Claude Plugin"
+        let pluginItem = NSMenuItem(title: pluginTitle, action: #selector(installPlugin), keyEquivalent: "")
+        pluginItem.target = self
+        pluginItem.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Plugin")
+        menu.addItem(pluginItem)
 
         // --- Startup selector ---
         let isLoginEnabled = SMAppService.mainApp.status == .enabled
@@ -233,36 +255,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         startupItem.submenu = startupMenu
         menu.addItem(startupItem)
 
-        menu.addItem(.separator())
-
-        // --- Status ---
-        let deviceLabel: String
-        if serialManager.isConnected {
-            let board = serialManager.serialTransport.connectedBoard ?? "Unknown"
-            deviceLabel = "\(board) · \(serialManager.portName)"
-        } else {
-            deviceLabel = "No hardware connected"
-        }
-        menu.addItem(disabledItem(deviceLabel))
-
-        if duckServer.pluginConnected {
-            menu.addItem(disabledItem("Plugin connected"))
-        }
-
-        menu.addItem(.separator())
-
-        // --- Setup ---
-        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
-        claudeSession.target = self
-        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
-        menu.addItem(claudeSession)
-
-        let pluginTitle = duckServer.pluginConnected ? "Update Claude Plugin" : "Install Claude Plugin"
-        let pluginItem = NSMenuItem(title: pluginTitle, action: #selector(installPlugin), keyEquivalent: "")
-        pluginItem.target = self
-        pluginItem.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Plugin")
-        menu.addItem(pluginItem)
-
         // --- Experimental ---
         let experimentalItem = NSMenuItem(title: "Experimental", action: nil, keyEquivalent: "")
         experimentalItem.image = NSImage(systemSymbolName: "flask", accessibilityDescription: "Experimental")
@@ -285,7 +277,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Duck-Duck-Duck", action: #selector(quitApp), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "Quit Duck, Duck, Duck", action: #selector(quitApp), keyEquivalent: "")
         quitItem.target = self
         quitItem.image = NSImage(systemSymbolName: "xmark.square.fill", accessibilityDescription: "Quit")
         menu.addItem(quitItem)
@@ -334,7 +326,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
 
         let vol = DuckConfig.volume
-        let icon = NSImageView(frame: NSRect(x: 18, y: 5, width: 20, height: 18))
+        let icon = NSImageView(frame: NSRect(x: 14, y: 5, width: 20, height: 18))
         icon.image = Self.speakerImage(for: vol)
         icon.imageScaling = .scaleNone
         icon.imageAlignment = .alignCenter
@@ -342,7 +334,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         icon.tag = Self.volumeIconTag
         container.addSubview(icon)
 
-        let slider = NSSlider(frame: NSRect(x: 43, y: 5, width: 165, height: 20))
+        let slider = NSSlider(frame: NSRect(x: 39, y: 5, width: 165, height: 20))
         slider.minValue = 0
         slider.maxValue = 1
         slider.floatValue = vol
@@ -353,7 +345,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         container.addSubview(slider)
 
         let label = NSTextField(labelWithString: "\(Int(vol * 100))%")
-        label.frame = NSRect(x: 212, y: 6, width: 36, height: 16)
+        label.frame = NSRect(x: 208, y: 6, width: 36, height: 16)
         label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         label.textColor = .secondaryLabelColor
         label.alignment = .right
@@ -421,8 +413,12 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         speechService.listenMode = mode
     }
 
-    @objc private func setModeCritic() {
-        coordinator.setMode(.critic)
+    @objc private func setModeCompanion() {
+        coordinator.setMode(.companion)
+    }
+
+    @objc private func setModeCompanionNoMic() {
+        coordinator.setMode(.companionNoMic)
     }
 
     @objc private func setModeRelay() {
@@ -535,13 +531,18 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 enum PluginInstaller {
     private static let installCommand = "claude plugin marketplace add ideo/Rubber-Duck && claude plugin install duck-duck-duck"
 
+    /// Callback for voice feedback during install. Set by the app on launch.
+    @MainActor static var onSpeak: ((String) -> Void)?
+
     /// Install the plugin. Tries automatic install first, falls back to clipboard if sandboxed.
     static func install() {
         // Try automatic install via CLI (works in dev, fails in sandbox)
         if let claude = findClaude() {
+            Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
         } else {
             Task { @MainActor in
+                onSpeak?("Claude CLI not found. I'll copy the install command for you.")
                 clipboardInstall()
             }
         }
@@ -612,6 +613,7 @@ enum PluginInstaller {
             print("[plugin] Marketplace add: ok=\(mpOk) output=\(mpOut)")
             if !mpOk {
                 Task { @MainActor in
+                    onSpeak?("Something went wrong with the install.")
                     showResult(success: false, detail: "Marketplace add failed:\n\(mpOut)")
                 }
                 return
@@ -623,8 +625,10 @@ enum PluginInstaller {
             print("[plugin] Plugin install: ok=\(installOk) output=\(installOut)")
             Task { @MainActor in
                 if installOk {
+                    onSpeak?("Plugin installed. Start a Claude session and I'll be watching.")
                     showResult(success: true, detail: "Start a new Claude Code session to activate the hooks.")
                 } else {
+                    onSpeak?("Something went wrong with the install.")
                     showResult(success: false, detail: "Plugin install failed:\n\(installOut)")
                 }
             }
