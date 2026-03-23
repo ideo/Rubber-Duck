@@ -1,81 +1,69 @@
-# Rubber Duck — TODO
+# Duck Duck Duck — TODO
 
-## ✅ Done
+## 🔥 Priority: Onboarding & Distribution
 
-- [x] **PermissionRequest hook** — voice-gated permissions (say "yes" to approve)
-- [x] **Unified speech engine** (`service/speech.py`) — swappable STT/TTS backend
-- [x] **Voice → Claude Code bridge** — say "ducky [command]" → tmux send-keys
-- [x] **tmux session launcher** (`scripts/duck-session`)
-- [x] **USB Audio firmware** — Teensy mic (A0) → USB Audio → Mac, TTS playback via I2S
-- [x] **macOS floating widget** — SwiftUI yellow cube with expression engine
-- [x] **Mac `say` TTS** — Boing voice for duck reactions
-- [x] **Plugin script structure** (`scripts/`) — portable hooks
-- [x] **I2S chirp engine** — sawtooth → bandpass filter, sentiment-driven quacks
-- [x] **Double-chirp patterns** — whistle (very positive) and uh-uh (very negative)
-- [x] **Whistle-servo coupling** — head bobs synced to chirp pitch hills
-- [x] **Expression decay** — poses spring back to center after 5s hold
-- [x] **Idle heartbeat** — gentle ±5° random drift when duck is at rest
-- [x] **Demo button presets** — 6 emotions (Impressed→Bored) cycled by button press
-- [x] **Permission nag system** — "uh-oh" chirp with 3-tier backoff (urgent→lazy→rare)
-- [x] **Widget ↔ Teensy permission wiring** — P,1/P,0 serial commands for nag lifecycle
-- [x] **Critic/Relay voice modes** — toggle via Teensy button or widget menu
+- [ ] **First-run onboarding flow** — duck guides new user from install to first reaction. Get Started menu item exists but needs polish. Speech bubble fallback for no-audio setups.
+- [ ] **Bundle plugin in DMG** — offline install without GitHub access. Not sandbox-safe but fine for GitHub release tier.
+- [ ] **Public repo** — required for marketplace install (`claude plugin marketplace add`). Currently private.
+- [ ] **Plugin install voice feedback** — duck speaks "installing" and "plugin installed" (partially done, "installed" works)
+- [ ] **Onboarding test script** — repeatable walkthrough doc at `docs/ONBOARDING-TEST-REPORT.md`
 
-## ⚠️ TBD: Test & Verify
+## 🧠 Foundation Models Tuning
 
-- [ ] **Hot-swap Teensy UAC board into ESP32 slot** — Widget currently auto-detects board type via identity handshake (DUCK,TEENSY40 vs DUCK,ESP32S3) and switches audio path accordingly. Need to verify: plugging in a Teensy after the widget has been running with ESP32 correctly switches from serial TTS to UAC audio path (say command + USB audio device). Test: unplug ESP32, plug in Teensy, confirm chirps play via I2S, TTS routes to `say -a`, mic switches to Teensy USB audio input.
-- [ ] **Hot-swap ESP32 into Teensy slot** — Reverse: widget running with Teensy, swap to ESP32. Verify serial TTS engine activates, chirp-complete handshake works, mic switches to serial PDM path.
-- [ ] **Rapid voice switching during active eval** — Changing voices mid-TTS can cause audio mode desync if a speak() call is in flight when the voice changes. The startup "freakout" may be related.
+- [ ] **Scoring accuracy** — 3B model inflates scores on trivial inputs ("phase 1" gets r=100), can't detect over-engineering (request vs response mismatch beyond 3B reasoning)
+- [ ] **Reaction tone** — occasional cheerleading on positive vibe, rare voice/reaction mismatch (cheerful voice + negative reaction). Playground at `widget/Playground/Sources/LLMPlayground/EvalV4Playground.swift`
+- [ ] **Whisper voice tuning** — works but LLM rarely picks "secretive" on its own
+- [ ] **Emoji in reactions** — 3B sometimes outputs emoji which `say` reads literally. TTS sanitizer strips markdown but not emoji yet.
 
-## 🔮 Next: Realtime API Migration
+## 🎙️ Voice & Permissions
 
-Replace Google STT + macOS `say` with a unified Realtime API backend:
-- Implement `RealtimeBackend` in `speech.py` conforming to existing interface
-- Bidirectional streaming: speak naturally, duck responds in real-time
-- Tool use: duck takes actions (approve permissions, relay to Claude, control hardware)
-- The duck becomes a conversational intermediary with its own agency
-- Single config change swaps the backend
+- [ ] **Foundation Models permission classifier** — built and wired in, needs live testing with ambiguous voice input ("uh, I guess so" instead of "yes")
+- [ ] **Compaction hooks** — pre/post compact with Jeopardy thinking melody. Coded but untested (hard to trigger on demand)
+- [ ] **StopFailure hook** — coded, untested. Needs actual API error to fire. LLM should simplify error message.
 
-## 🔮 Next: ESP32-S3 Standalone
+## 📊 Observability
 
-ESP32-S3 variant that connects to Realtime API directly over WiFi:
-- No Mac needed — the duck IS the device
-- Built-in mic + speaker + WiFi
-- Serial still works for servo/LED/piezo control
-- Could run alongside Teensy or replace it entirely
+- [ ] **Eval history view** — no way to review what the duck said. Dashboard (`localhost:3333`) shows live state only.
+- [ ] **Log reliability** — logs inconsistent across `make run` vs DMG vs sandbox. Timestamps and eval reactions not always captured.
+- [ ] **How To LLM Playground doc** — write up for future sessions so we stop forgetting how Canvas works
 
-## Speech / Audio Output
+## 🎨 Widget Polish
 
-### Option A: Talkie Library (on-device LPC synthesis)
-- 1980s Speak & Spell style speech running directly on Teensy
-- ~1000 word vocabulary (sp_GOOD, sp_BAD, sp_DANGER, etc.)
-- Output through piezo or small speaker on PWM pin (pin 9)
-- Lo-fi, robotic, charming — fits the rubber duck character
-- Libraries: [PaulStoffregen/Talkie](https://github.com/PaulStoffregen/Talkie) or [ArminJo/Talkie](https://github.com/ArminJo/Talkie)
-- Could map eval dimensions to word sequences: "GOOD CODE" / "DANGER" / "ERROR"
+- [ ] **Speech bubble** — text fallback for when audio isn't available. Shows what the duck would have said.
+- [ ] **Tooltip showing reaction text on hover**
+- [ ] **Localization** — add more languages to String Catalog
+- [ ] **Custom duck face expressions** — more eye/beak states
 
-### Option C: Bluetooth audio from Mac → device
-- Pipe Mac TTS audio over Bluetooth to a speaker on the duck
-- Requires: BT receiver module + amplifier + speaker
-- Most immersive result but more hardware complexity
-- Alternative: USB audio bidirectional (Teensy receives audio from Mac)
+## 🔌 Hardware
 
-## Three.js Viewer Refinement
-- Improve beak geometry on servo duck
-- Improve PCB details on LED duck
-- Tune reducer mappings for more expressive animation
-- Add sound to Three.js LED duck to match hardware chirps
-- Add permission state visualization
+- [ ] **Hot-swap Teensy ↔ ESP32** — widget auto-detects board type but swapping mid-session untested
+- [ ] **Rapid voice switching during active eval** — changing voices mid-TTS can cause audio desync
 
-## Widget Refinement
-- Tooltip showing reaction text on hover
-- Right-click context menu (settings, quit, toggle TTS)
-- Menubar icon alternative mode
-- Localization: add more languages to String Catalog
-- Custom duck face expressions (more eye/beak states)
+## 🔮 Future
 
-## Hardware
-- Test Talkie library on Teensy 4.0 with piezo
-- Consider upgrading piezo to small speaker + amp for better audio
-- Test external 5V servo power with full eval loop
-- Test USB Audio quality from Teensy mic
-- Explore adding Bluetooth module for audio streaming
+- [ ] **Realtime API migration** — replace STT/TTS with unified streaming backend. Duck becomes conversational intermediary.
+- [ ] **ESP32-S3 standalone** — WiFi-connected duck, no Mac needed
+- [ ] **Duck-as-agent-teammate** — via agent teams inbox (needs rethink)
+- [ ] **Three.js viewer refinement** — beak geometry, PCB details, sound, permission visualization
+
+## ✅ Recently Shipped
+
+- [x] **V5 two-pass eval** — scores then reaction with sentiment context. Eliminates typo comments.
+- [x] **Score-gated voice selection V2** — math narrows voice pool, LLM picks from tone labels (grave, cheerful, etc.)
+- [x] **Permission improvements** — natural language voice matching, smarter tool summaries, spoken option descriptions
+- [x] **Permission classifier** — Foundation Models fallback for ambiguous voice input
+- [x] **4-mode system** — Companion, Permissions Only, Companion (No Mic), Relay (Experimental)
+- [x] **Menu/UX overhaul** — Pause/Quit split, Ducky connected status, mic status, volume 65% default
+- [x] **Short message context reframing** — "yes" evaluated as decision, not word
+- [x] **New hooks** — SessionEnd (18 farewell variations), PreCompact/PostCompact (Jeopardy melody), StopFailure
+- [x] **Skip empty permissions** — MCP connectors with pre-authorized tools no longer nag
+- [x] **Voice previews** — personality phrases per voice in picker menu
+- [x] **Markdown TTS strip** — no more "asterisk personality asterisk"
+- [x] **Synchronized eye blink** — both eyes blink together (desync on negative eval only)
+- [x] **Whisper voice fix** — LLM always called now, can pick secretive
+- [x] **No more "quack"** — removed "rubber duck" from reaction prompt
+- [x] **Mic entitlements fix** — DMG builds now request mic permission on launch
+- [x] **Permissions-only mode** — silent watchdog, voice-confirmed permissions
+- [x] **Mode persistence** — survives app restart via UserDefaults
+- [x] **Plugin system** — hooks load in CLI and Desktop, marketplace install works
+- [x] **Sandbox testing** — core experience works, tmux/CLI launcher blocked (expected)
