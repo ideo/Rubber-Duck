@@ -174,13 +174,6 @@ P,1 / P,0                     → permission pending / resolved
 
 </details>
 
-<details>
-<summary>Gemini CLI support (experimental)</summary>
-
-The duck can also watch [Gemini CLI](https://github.com/google-gemini/gemini-cli) sessions. Install via **Experimental → Install Gemini Extension** in the menu bar. Observe-only — scores and speaks but cannot relay permission decisions.
-
-</details>
-
 ## Development
 
 ```bash
@@ -203,6 +196,13 @@ Each output target has its own reducer mapping eval dimensions to what it can ex
 | risk | rotation angle | oscillation/wiggle |
 | thinking | eye darting + Jeopardy hum | — |
 | permission | exclamation mark eyes | alert chirp |
+
+<details>
+<summary>Gemini CLI support (experimental)</summary>
+
+The duck can also watch [Gemini CLI](https://github.com/google-gemini/gemini-cli) sessions. Install via **Experimental → Install Gemini Extension** in the menu bar. Observe-only — scores and speaks but cannot relay permission decisions.
+
+</details>
 
 ## License
 
