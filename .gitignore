@@ -7,3 +7,9 @@ widget/Playground/.swiftpm/
 .release/
 duck-eval-test.txt
 *.wav
+
+# Local settings (personal permissions, not for sharing)
+.claude/settings.local.json
+
+# Editor config
+.vscode/
