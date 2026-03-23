@@ -214,14 +214,18 @@ enum DuckConfig {
 
     // MARK: - Duck Mode
 
-    /// Persisted duck mode. Defaults to `.critic`.
+    /// Persisted duck mode. Defaults to `.companion`.
     static var duckMode: DuckMode {
         get {
             if let raw = UserDefaults.standard.string(forKey: "duck_mode"),
                let mode = DuckMode(rawValue: raw) {
                 return mode
             }
-            return .critic
+            // Migrate old "critic" to "companion"
+            if UserDefaults.standard.string(forKey: "duck_mode") == "critic" {
+                return .companion
+            }
+            return .companion
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "duck_mode")
@@ -262,7 +266,7 @@ enum DuckConfig {
     static var volume: Float {
         get {
             let val = UserDefaults.standard.float(forKey: "duck_volume")
-            return val == 0 && !UserDefaults.standard.bool(forKey: "duck_volume_set") ? 0.8 : val
+            return val == 0 && !UserDefaults.standard.bool(forKey: "duck_volume_set") ? 0.65 : val
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "duck_volume")

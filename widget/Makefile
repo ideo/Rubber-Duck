@@ -64,7 +64,7 @@ dist: bundle
 	@echo "✅ Copied to $(DIST_APP)"
 
 sign: dist
-	@codesign --force --deep --options runtime --sign "$(SIGN_IDENTITY)" $(DIST_APP)
+	@codesign --force --deep --options runtime --entitlements RubberDuck.entitlements --sign "$(SIGN_IDENTITY)" $(DIST_APP)
 	@echo "✅ Signed with Developer ID"
 
 notarize: sign

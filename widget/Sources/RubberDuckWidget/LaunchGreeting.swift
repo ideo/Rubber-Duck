@@ -15,7 +15,7 @@ enum LaunchGreeting {
     }()
 
     /// Pick a launch greeting based on time of day, recency, and mode.
-    static func pick(mode: DuckMode = .critic) -> String {
+    static func pick(mode: DuckMode = .companion) -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         let minutesSince = minutesSinceLastLaunch()
         recordLaunch()
@@ -25,24 +25,20 @@ enum LaunchGreeting {
             return permissionsGreeting(hour: hour, minutesSince: minutesSince)
         }
 
-        let isCritic = mode == .critic
+        let isCompanion = mode == .companion || mode == .companionNoMic
 
-        // First ever launch
+        // First ever launch — introduce + guide to plugin install
         if minutesSince == nil {
-            return isCritic
-                ? ["Oh. A new one. Let's see what they've got.",
-                   "First launch. No pressure.",
-                   "Fresh install smell. Interesting."].randomElement()!
-                : ["First time! Let's see what you've got.",
-                   "Hey there. I'm the duck.",
-                   "New duck, who dis?"].randomElement()!
+            return isCompanion
+                ? "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
+                : "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
         }
 
         let mins = minutesSince!
 
         // Back within 5 minutes
         if mins < 5 {
-            return isCritic
+            return isCompanion
                 ? ["They're back already. That was fast.",
                    "Couldn't stay away, huh.",
                    "Quick reboot. Picking up where we left off."].randomElement()!
@@ -54,7 +50,7 @@ enum LaunchGreeting {
 
         // Back within an hour
         if mins < 60 {
-            return isCritic
+            return isCompanion
                 ? ["Round two. Let's see if they learned anything.",
                    "Back again. Here we go.",
                    "Alright, what are they up to now."].randomElement()!
@@ -66,13 +62,13 @@ enum LaunchGreeting {
 
         // Been hours
         if mins < 1440 {
-            return timeOfDayGreeting(hour, isCritic: isCritic)
+            return timeOfDayGreeting(hour, isCompanion: isCompanion)
         }
 
         // Been days
         let days = mins / 1440
         if days == 1 {
-            return isCritic
+            return isCompanion
                 ? ["A whole day without me. They survived somehow.",
                    "Yesterday was quiet. Too quiet.",
                    "They're back. Took them long enough."].randomElement()!
@@ -80,7 +76,7 @@ enum LaunchGreeting {
                    "Yesterday feels like forever ago.",
                    "Back for more?"].randomElement()!
         }
-        return isCritic
+        return isCompanion
             ? ["Oh. They remember I exist. \(days) days later.",
                "It's been \(days) days. I was starting to wonder.",
                "The human returns. Eventually."].randomElement()!
@@ -91,7 +87,7 @@ enum LaunchGreeting {
     }
 
     /// Pick a session-connect greeting (when /health is pinged by a Claude session).
-    static func sessionConnect(mode: DuckMode = .critic) -> String {
+    static func sessionConnect(mode: DuckMode = .companion) -> String {
         if mode == .permissionsOnly {
             return ["Session connected. I'll keep watch.",
                     "Plugged in. I'll speak up if something needs your attention.",
@@ -99,8 +95,8 @@ enum LaunchGreeting {
                     "Connected. You do your thing, I've got permissions.",
                     "On it. I'll let you know when something comes up."].randomElement()!
         }
-        let isCritic = mode == .critic
-        return isCritic
+        let isCompanion = mode == .companion || mode == .companionNoMic
+        return isCompanion
             ? ["Session's up. Let's see what they're made of.",
                "Alright, I'm watching.",
                "New session. The pressure is on.",
@@ -128,13 +124,9 @@ enum LaunchGreeting {
         default:       time = "Late night. "
         }
 
-        // First ever launch
+        // First ever launch — guide to plugin install
         if minutesSince == nil {
-            return ["\(time)I'll keep an eye out.",
-                    "Hey. I'm on permissions duty.",
-                    "\(time)I'll speak up when you need me.",
-                    "I'm your lookout. Let's go.",
-                    "\(time)Here to keep things moving."].randomElement()!
+            return "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
         }
 
         let mins = minutesSince!
@@ -183,10 +175,10 @@ enum LaunchGreeting {
                 "Missed you. I'll keep watch."].randomElement()!
     }
 
-    private static func timeOfDayGreeting(_ hour: Int, isCritic: Bool) -> String {
+    private static func timeOfDayGreeting(_ hour: Int, isCompanion: Bool) -> String {
         switch hour {
         case 0..<6:
-            return isCritic
+            return isCompanion
                 ? ["They're coding at this hour. Questionable judgment.",
                    "Middle of the night. This should be interesting.",
                    "Nothing good happens after midnight. And yet here they are."].randomElement()!
@@ -194,7 +186,7 @@ enum LaunchGreeting {
                    "It's late. This better be good.",
                    "Nothing good happens after midnight. Let's go."].randomElement()!
         case 6..<12:
-            return isCritic
+            return isCompanion
                 ? ["Morning session. They seem motivated. We'll see how long that lasts.",
                    "Early bird. Let's see if the code matches the energy.",
                    "Fresh morning, fresh mistakes probably."].randomElement()!
@@ -202,7 +194,7 @@ enum LaunchGreeting {
                    "Fresh start. Don't waste it.",
                    "Coffee ready? Let's go."].randomElement()!
         case 12..<17:
-            return isCritic
+            return isCompanion
                 ? ["Post-lunch coding. Bold strategy.",
                    "Afternoon. The focus tends to drift around now.",
                    "Let's see what the afternoon brings."].randomElement()!
@@ -210,7 +202,7 @@ enum LaunchGreeting {
                    "Post-lunch coding. Bold.",
                    "Alright, what's the plan?"].randomElement()!
         case 17..<21:
-            return isCritic
+            return isCompanion
                 ? ["Evening session. They're committed, I'll give them that.",
                    "After hours. Either dedicated or procrastinating.",
                    "Still at it. Interesting."].randomElement()!
@@ -218,7 +210,7 @@ enum LaunchGreeting {
                    "After hours, huh?",
                    "Winding down or ramping up?"].randomElement()!
         default:
-            return isCritic
+            return isCompanion
                 ? ["Late night coding. The bugs come out at night.",
                    "They should be sleeping. But here we are.",
                    "Night owl. The code quality tends to match the hour."].randomElement()!

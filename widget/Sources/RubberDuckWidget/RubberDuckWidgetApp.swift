@@ -149,6 +149,9 @@ struct RubberDuckWidgetApp: App {
             coordinator?.toggleMode()
         }
 
+        // Wire plugin installer voice feedback
+        PluginInstaller.onSpeak = { [weak speech] text in speech?.speak(text) }
+
         // Store service refs so AppDelegate can turn off the companion
         AppDelegate.speechService = speech
         AppDelegate.coordinator = coordinator
@@ -170,7 +173,7 @@ struct RubberDuckWidgetApp: App {
 
         // TTS greeting when a Claude session connects via /health
         server.onSessionConnect = { [weak speech, weak coordinator] in
-            let mode = coordinator?.mode ?? .critic
+            let mode = coordinator?.mode ?? .companion
             speech?.speak(LaunchGreeting.sessionConnect(mode: mode))
         }
 

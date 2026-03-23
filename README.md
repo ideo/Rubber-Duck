@@ -43,41 +43,35 @@ claude plugin install duck-duck-duck
 ## Architecture
 
 ```
-                     You (speaking)
-                          | voice
-                          v
-               .--- Widget (SwiftUI) --------------------.
-               |  * Apple Speech STT                     |
-               |  * TTS (say / AVSpeechSynthesizer)      |
-               |  * Wildcard voice casting (AI picks)    |
-               |  * SerialManager + AudioBackend         |
-               |  * Embedded HTTP+WS Server (:3333)      |
-               '---+-------+-------+----------+----------'
-                   |       |       |          |
-          voice/   |   WebSocket   | serial   | serial + binary audio
-       permission  |       |       | (Teensy) | (ESP32)
-                   v       v       v          v
-Claude Code    Dashboard/   Teensy 4.0    ESP32-C3/S3
-  (tmux)       Viewer       servo+I2S     servo+I2S+mic
-  |-- hooks -----> |        USB Audio     serial PCM stream
-  |  UserPrompt    |            |              |
-  |  Stop          |            v              v
-  |  Permission    |        MAX98357       MAX98357
-  '<-- tmux -------'        Speaker        Speaker
-    (voice input)
+       You (speaking)                Claude Code / Desktop
+            |                              |
+            | mic                          | hooks (UserPrompt, Stop, Permission)
+            v                              v
+    .------------- Duck Duck Duck Widget (SwiftUI) --------------.
+    |                                                             |
+    |   Eval Engine          Voice               UI              |
+    |   Foundation Models    Apple Speech STT     Liquid glass    |
+    |   (or Haiku/Gemini)    macOS TTS            duck face       |
+    |                        Wildcard voices      expressions     |
+    |                        Permission gate      menu bar        |
+    |                                                             |
+    |   HTTP+WS Server (:3333)          Serial (optional)        |
+    '--------+--------------------+-----------+------------------'
+             |                    |           |
+             v                    v           v
+         Dashboard            Voice →     Physical duck
+         localhost:3333       Claude CLI  servo + speaker
+                              (tmux)      (USB hardware)
 ```
 
-### Data Flow
+### How it works
 
-1. **Hooks** fire on Claude Code events (user prompt, response, permission request) and POST to the widget's embedded server on `:3333`
-2. **LocalEvaluator** (default) scores text on-device via Apple Foundation Models, or **ClaudeEvaluator** scores via Claude Haiku API — both return scores + reaction + summary
-3. **Widget** receives scores in-process via `LocalEvalTransport`, animates the duck face, speaks reactions via TTS, sends scores to hardware via serial
-4. **WebSocketBroadcaster** fans out results to any connected dashboard/viewer clients
-5. **Hardware** reacts physically: servo tilts based on sentiment, I2S chirps play through speaker (ascending = positive, descending = negative, buzzy = risky)
-6. **Voice input**: say "ducky [command]" — widget transcribes, TmuxBridge injects into Claude Code via `tmux send-keys`
-7. **Voice permissions**: when Claude needs approval, the duck summarizes the action and asks ("Run git. Allow?"). Say "yes", "no", "first", "second", etc.
-8. **TTS output**: routes to hardware via two paths — Teensy USB Audio (`say -a`) or ESP32 serial PCM stream (AVSpeechSynthesizer → 16kHz resampling → binary frames)
-9. **Wildcard voice mode**: AI picks the best voice per reaction from 11 voices (Superstar, Bad News, Cellos, Whisper, etc.) — the eval response includes a voice key alongside scores
+1. **Hooks** fire on Claude Code events (prompt, response, permission) and POST to the widget on `:3333`
+2. **Eval engine** scores the text on-device via Apple Foundation Models (default, free, sub-second) — returns scores + a spoken reaction
+3. **Widget** animates the duck face, speaks the reaction via TTS, and optionally sends scores to physical hardware via USB serial
+4. **Voice permissions**: when Claude needs approval, the duck summarizes the action and asks. Say "yes", "always allow", "deny", etc. Foundation Models classifies ambiguous responses.
+5. **Voice commands**: say "ducky [command]" to inject text into Claude Code via tmux
+6. **Wildcard voice**: score-gated AI picks the best voice per reaction from 10 voices (normal, grave, cheerful, dramatic, whisper, etc.)
 
 ## Hardware
 

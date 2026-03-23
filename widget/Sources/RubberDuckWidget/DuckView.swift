@@ -177,49 +177,17 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        // Mode selector — icon reflects current mode
+        // Mode selector — mic behavior is baked into each mode
         Menu {
-            Button {
-                coordinator.setMode(.permissionsOnly)
-            } label: {
-                Label("Permissions Only", systemImage: "lock.shield")
-            }
-            Button {
-                coordinator.setMode(.critic)
-            } label: {
-                Label(DuckMode.critic.label, systemImage: DuckMode.critic.iconName)
-            }
-            Button {
-                coordinator.setMode(.relay)
-            } label: {
-                Label(DuckMode.relay.label, systemImage: DuckMode.relay.iconName)
+            ForEach(DuckMode.allCases, id: \.rawValue) { mode in
+                Button {
+                    coordinator.setMode(mode)
+                } label: {
+                    Label(mode.label, systemImage: mode.iconName)
+                }
             }
         } label: {
             Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)
-        }
-
-        // Voice
-        Menu {
-            Button {
-                speechService.listenMode = .off
-            } label: {
-                Label("Off", systemImage: "microphone.slash.fill")
-            }
-            Button {
-                speechService.listenMode = .permissionsOnly
-            } label: {
-                Label("Permissions Only", systemImage: "microphone.badge.xmark")
-            }
-            Button {
-                speechService.listenMode = .active
-            } label: {
-                Label("Wake Word (\"Ducky\")", systemImage: "microphone.fill")
-            }
-        } label: {
-            Label(
-                "Voice: \(speechService.listenMode.label)",
-                systemImage: speechService.listenMode.iconName
-            )
         }
 
         // Voice picker
@@ -284,20 +252,25 @@ struct DuckView: View {
 
         Divider()
 
+        // Get Started — always available, guides setup
+        Button {
+            coordinator.runSetupGuide()
+        } label: {
+            Label("Get Started", systemImage: "sparkles")
+        }
+
+        if !duckServer.pluginConnected {
+            Button {
+                PluginInstaller.install()
+            } label: {
+                Label("Install Claude Plugin", systemImage: "puzzlepiece.extension.fill")
+            }
+        }
+
         Button {
             CLISession.launch()
         } label: {
             Label("Launch Claude Code", systemImage: "terminal.fill")
-        }
-
-        Menu {
-            Button {
-                CLISession.launchPlain("gemini")
-            } label: {
-                Label("Launch Gemini CLI", systemImage: "terminal.fill")
-            }
-        } label: {
-            Label("Experimental", systemImage: "flask")
         }
 
         Divider()
@@ -306,7 +279,7 @@ struct DuckView: View {
             duckServer.stop()
             NSApp.terminate(nil)
         } label: {
-            Label("Quit Duck-Duck-Duck", systemImage: "xmark.square.fill")
+            Label("Quit Duck, Duck, Duck", systemImage: "xmark.square.fill")
         }
     }
 
