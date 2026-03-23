@@ -95,8 +95,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let modeMenu = NSMenu()
 
         let modeActions: [(DuckMode, Selector)] = [
-            (.companion, #selector(setModeCompanion)),
             (.permissionsOnly, #selector(setModePermissions)),
+            (.companion, #selector(setModeCompanion)),
             (.companionNoMic, #selector(setModeCompanionNoMic)),
             (.relay, #selector(setModeRelay)),
         ]
@@ -162,24 +162,25 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // --- Voice submenu ---
         let isWildcard = speechService.isWildcardMode
         let isSilentVoice = speechService.isSilent
-        let voiceLabel = isWildcard ? "Wildcard" : isSilentVoice ? "Silent" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
+        let voiceLabel = isSilentVoice ? "Silent" : isWildcard ? "Wildcard" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
         voiceItem.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice")
         let voiceMenu = NSMenu()
 
+        let isSilent = speechService.isSilent
+        let silentItem = NSMenuItem(title: "Silent Voice", action: #selector(selectSilent), keyEquivalent: "")
+        silentItem.target = self
+        silentItem.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "Speech bubble only")
+        silentItem.subtitle = "Subtitles and quacks, no voice"
+        silentItem.state = isSilent ? .on : .off
+        voiceMenu.addItem(silentItem)
+
         let wildcardItem = NSMenuItem(title: "Wildcard", action: #selector(selectWildcard), keyEquivalent: "")
         wildcardItem.target = self
         wildcardItem.image = NSImage(systemSymbolName: "shuffle", accessibilityDescription: "Shuffle voices")
+        wildcardItem.subtitle = "AI picks a voice to match the mood"
         wildcardItem.state = isWildcard ? .on : .off
         voiceMenu.addItem(wildcardItem)
-
-        let isSilent = speechService.isSilent
-        let silentItem = NSMenuItem(title: "Silent", action: #selector(selectSilent), keyEquivalent: "")
-        silentItem.target = self
-        silentItem.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "Speech bubble only")
-        silentItem.subtitle = "Speech bubble only — no audio"
-        silentItem.state = isSilent ? .on : .off
-        voiceMenu.addItem(silentItem)
         voiceMenu.addItem(.separator())
 
         addVoiceItems(to: voiceMenu, voices: DuckVoices.main)

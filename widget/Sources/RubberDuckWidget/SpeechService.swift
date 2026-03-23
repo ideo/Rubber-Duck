@@ -47,6 +47,7 @@ class SpeechService: ObservableObject {
     // Published state
     @Published var isListening: Bool = false
     @Published var lastHeard: String = ""
+    @Published var isWakeActive: Bool = false
     @Published var micPermissionGranted: Bool = false
     @Published var speechPermissionGranted: Bool = false
     @Published var selectedMicName: String = ""
@@ -110,6 +111,12 @@ class SpeechService: ObservableObject {
     private var activeTTS: any TTSBackend
 
     private var wakeWordProcessor = WakeWordProcessor()
+    private var hasAcknowledgedWake = false
+
+    /// Conversation mode — after help answer, duck stays hot for follow-ups.
+    /// No wake word needed while this is true. Resets after timeout.
+    @Published var isInConversation = false
+    private var conversationTimer: Task<Void, Never>?
     private var permissionGate = PermissionVoiceGate()
     private let permissionClassifier = PermissionClassifier()
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
@@ -517,6 +524,31 @@ class SpeechService: ObservableObject {
 
         // Wake word + command processing (only in active mode)
         guard listenMode == .active else { return }
+
+        // Conversation mode — hot mic, no wake word needed
+        if isInConversation {
+            let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            lastHeard = trimmed
+            // Reset conversation timeout — they're still talking
+            conversationTimer?.cancel()
+
+            if isFinal {
+                voiceInputTimer?.cancel()
+                sendVoiceCommand(trimmed)
+            } else {
+                // Debounce: 2s of silence → treat partial as final
+                voiceInputTimer?.cancel()
+                voiceInputTimer = Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    if !Task.isCancelled && self.isInConversation {
+                        self.sendVoiceCommand(trimmed)
+                    }
+                }
+            }
+            return
+        }
+
         let result = wakeWordProcessor.process(transcript, isFinal: isFinal)
         switch result {
         case .nothing:
@@ -524,16 +556,26 @@ class SpeechService: ObservableObject {
 
         case .wakeWordOnly:
             lastHeard = ""
+            isWakeActive = true
             onWakeWord?()
             log("[speech] Wake word detected!")
 
-            // 3s timeout — if no command text, reset
+            // Immediate acknowledgment — duck perks up (skip chirp for speed)
+            speak(["Yeah?", "Hmm?", "Yep?", "What's up?"].randomElement()!, skipChirpWait: true)
+
+            // Tell hardware to perk up (servo tilt)
+            serialTransport?.sendCommand("W,1")
+
+            // 5s timeout — if no command text, reset (longer now that we acknowledged)
             voiceInputTimer?.cancel()
             voiceInputTimer = Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if !Task.isCancelled && self.wakeWordProcessor.isAwake && self.wakeWordProcessor.pendingText.isEmpty {
                     self.log("[speech] No command after wake word, restarting...")
-                    self.speak(["Hmm?", "Yeah?", "What's up?", "I'm here."].randomElement()!)
+                    self.speak("Never mind.")
+                    self.isWakeActive = false
+                    self.hasAcknowledgedWake = false
+                    self.serialTransport?.sendCommand("W,0")
                     self.wakeWordProcessor.reset()
                     self.lastHeard = ""
                     self.activeSTT.resetRestartAttempts()
@@ -544,6 +586,13 @@ class SpeechService: ObservableObject {
         case .command(let text):
             lastHeard = text
             voiceInputTimer?.cancel()
+
+            // First command after wake — visual acknowledge
+            if !hasAcknowledgedWake {
+                hasAcknowledgedWake = true
+                isWakeActive = true
+                serialTransport?.sendCommand("W,1")
+            }
 
             if isFinal {
                 sendVoiceCommand(text)
@@ -597,8 +646,13 @@ class SpeechService: ObservableObject {
     private func sendVoiceCommand(_ text: String) {
         // Kill current recognition FIRST to prevent double-send
         wakeWordProcessor.reset()
+        hasAcknowledgedWake = false
+        isWakeActive = false
         voiceInputTimer?.cancel()
         stopListening()
+
+        // Reset hardware attention state
+        serialTransport?.sendCommand("W,0")
 
         log("[speech] Sending: \(text)")
         speak(["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!)
@@ -613,7 +667,34 @@ class SpeechService: ObservableObject {
         restartAfterTTS()
     }
 
-    private func restartAfterTTS() {
+    // MARK: - Conversation Mode
+
+    /// Enter conversation mode — hot mic, no wake word needed for follow-ups.
+    func enterConversation() {
+        isInConversation = true
+        lastHeard = ""
+        conversationTimer?.cancel()
+        conversationTimer = Task {
+            // Stay in conversation for 8s after TTS finishes
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if !Task.isCancelled {
+                self.exitConversation()
+            }
+        }
+        log("[speech] Entered conversation mode (8s timeout)")
+    }
+
+    /// Exit conversation mode — back to wake word listening.
+    func exitConversation() {
+        guard isInConversation else { return }
+        isInConversation = false
+        conversationTimer?.cancel()
+        conversationTimer = nil
+        wakeWordProcessor.reset()
+        log("[speech] Exited conversation mode")
+    }
+
+    func restartAfterTTS(thenEnterConversation: Bool = false) {
         Task {
             // Wait for the active TTS engine to finish
             while activeTTS.isMuted {
@@ -621,6 +702,9 @@ class SpeechService: ObservableObject {
             }
             activeSTT.resetRestartAttempts()
             self.startListening()
+            if thenEnterConversation {
+                self.enterConversation()
+            }
         }
     }
 

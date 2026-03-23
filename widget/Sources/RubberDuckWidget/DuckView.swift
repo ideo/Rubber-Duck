@@ -37,7 +37,12 @@ struct DuckView: View {
 
             // Status indicators (top edge of duck body)
             HStack(spacing: 4) {
-                if serialManager.isConnected {
+                if speechService.isWakeActive || speechService.isInConversation {
+                    Circle()
+                        .fill(Color.red.opacity(0.9))
+                        .frame(width: 6, height: 6)
+                        .transition(.scale.combined(with: .opacity))
+                } else if serialManager.isConnected {
                     Circle()
                         .fill(Color.blue.opacity(0.7))
                         .frame(width: 6, height: 6)
@@ -48,6 +53,7 @@ struct DuckView: View {
                         .frame(width: 6, height: 6)
                 }
             }
+            .animation(.easeInOut(duration: 0.15), value: speechService.isWakeActive || speechService.isInConversation)
             .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)

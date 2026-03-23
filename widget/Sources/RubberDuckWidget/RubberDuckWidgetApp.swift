@@ -110,9 +110,29 @@ struct RubberDuckWidgetApp: App {
         // Request mic permission on launch
         speech.requestPermissions()
 
-        // Voice input → send to service → tmux → Claude Code
-        speech.onVoiceInput = { [weak eval] text in
-            eval?.sendVoiceInput(text)
+        // Voice input → help service (duck questions) or relay to Claude
+        let helpService = DuckHelpService()
+        speech.onVoiceInput = { [weak eval, weak speech, weak coordinator] text in
+            guard let speech else { return }
+            // Relay mode → always send to Claude via tmux
+            let isRelay = coordinator?.mode == .relay
+            if isRelay && eval?.isConnected == true {
+                eval?.sendVoiceInput(text)
+                return
+            }
+
+            // Everything else → duck handles it (help, chat, anything)
+            Task {
+                await MainActor.run {
+                    speech.speak(["Hmm...", "Let me think...", "One sec..."].randomElement()!, skipChirpWait: true)
+                }
+                let answer = await helpService.ask(text)
+                await MainActor.run {
+                    speech.speak(answer ?? "Not sure about that one.")
+                    // Enter conversation after TTS finishes
+                    speech.restartAfterTTS(thenEnterConversation: true)
+                }
+            }
         }
 
         // Permission response → send to service → unblock hook → tell Teensy

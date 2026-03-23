@@ -166,6 +166,17 @@ void parseTextMessage(char *msg) {
     return;
   }
 
+  // TW = test whistle chirp
+  if (source == 'T' && msg[1] == 'W') {
+    #if ENABLE_AUDIO
+    EvalScores testScores = {0.9, 0.9, 0.8, 0.9, -0.3, 'C', true};
+    ChirpTarget ct = chirpReducer(testScores);
+    playChirp(ct);
+    Serial.println("[duck] Test: whistle chirp");
+    #endif
+    return;
+  }
+
   if (source == 'D') {
     triggerDemoPreset();
     return;
@@ -180,13 +191,18 @@ void parseTextMessage(char *msg) {
     return;
   }
 
+  // --- Wake word attention ---
+  // W,1 = perk up (servo tilt, listening)
+  // W,0 = return to rest
   if (source == 'W') {
-    #if ENABLE_AUDIO
-    // Whistle test — high positive sentiment
-    EvalScores testScores = {0.9, 0.9, 0.8, 0.9, -0.3, 'C', true};
-    ChirpTarget ct = chirpReducer(testScores);
-    playChirp(ct);
-    Serial.println("[duck] Test: whistle chirp");
+    #if ENABLE_SERVO
+    if (msg[1] == ',' && msg[2] == '1') {
+      servoWriteAngle(SERVO_CENTER + 15);  // Tilt head — "I'm listening"
+      Serial.println("[duck] Wake: perked up");
+    } else {
+      snapToCenter();                       // Back to rest
+      Serial.println("[duck] Wake: resting");
+    }
     #endif
     return;
   }

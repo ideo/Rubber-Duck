@@ -50,13 +50,19 @@ class TTSEngine {
 
     /// Speak text through the configured output device.
     /// Mutes the TTSGate while speaking to prevent mic feedback.
-    /// Strip markdown artifacts that `say` reads literally (e.g. *bold*, **strong**, _italic_).
+    /// Strip markdown and emoji that `say` reads literally.
     private func stripMarkdown(_ text: String) -> String {
-        text.replacingOccurrences(of: "**", with: "")
+        var cleaned = text
+            .replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: "*", with: "")
             .replacingOccurrences(of: "_", with: "")
             .replacingOccurrences(of: "`", with: "")
             .replacingOccurrences(of: "#", with: "")
+        // Strip emoji — keep only characters that are letters, numbers, punctuation, or whitespace
+        cleaned = String(cleaned.unicodeScalars.filter { scalar in
+            scalar.properties.isEmoji == false || scalar.value < 0x80
+        })
+        return cleaned
     }
 
     func speak(_ text: String) {

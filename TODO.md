@@ -28,7 +28,6 @@
 
 ## 🎨 Widget Polish
 
-- [ ] **Speech bubble** — text fallback for when audio isn't available. Shows what the duck would have said.
 - [ ] **Tooltip showing reaction text on hover**
 - [ ] **Localization** — add more languages to String Catalog
 - [ ] **Custom duck face expressions** — more eye/beak states
@@ -48,6 +47,7 @@
 - [ ] **ESP32-S3 standalone** — WiFi-connected duck, no Mac needed
 - [ ] **Multi-session awareness** — duck currently treats all sessions as one stream. With multiple Claude sessions open (CLI + Desktop, or parallel sessions), it needs to distinguish which session said what. May need session IDs in hook payloads, per-session eval history, and UI to indicate source. Not trivial.
 - [ ] **Duck-as-agent-teammate** — via agent teams inbox (needs rethink)
+- [ ] **Music detection + dancing** — duck listens to ambient audio, detects rhythm, moves servo/LED in time with music. Minecraft principle: rare, random, not every time. If it happens it happens. Delight through surprise.
 - [ ] **Three.js viewer refinement** — beak geometry, PCB details, sound, permission visualization
 
 ## ✅ Recently Shipped
@@ -75,6 +75,8 @@
 - [x] **Markdown/emoji TTS strip** — no more "asterisk personality asterisk"
 - [x] **Whisper voice fix** — LLM always called, can pick secretive
 - [x] **No more "quack"** — removed "rubber duck" from reaction prompt
+- [x] **Speech bubble** — popover below duck face, shows when Silent voice or volume 0. Reading time scales with text.
+- [x] **Silent voice mode** — no TTS, speech bubble only. "Subtitles and quacks, no voice."
 - [x] **Mic entitlements fix** — DMG builds request mic permission on launch
 - [x] **Permissions-only mode** — silent watchdog, voice-confirmed permissions
 - [x] **Mode persistence** — survives app restart via UserDefaults

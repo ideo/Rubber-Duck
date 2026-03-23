@@ -36,7 +36,17 @@ class SerialTTSEngine {
 
         stop()
 
-        let utterance = AVSpeechUtterance(string: text)
+        var cleaned = text
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: "#", with: "")
+        // Strip emoji
+        cleaned = String(cleaned.unicodeScalars.filter { scalar in
+            scalar.properties.isEmoji == false || scalar.value < 0x80
+        })
+        let utterance = AVSpeechUtterance(string: cleaned)
 
         // Look up the exact AVSpeechSynthesisVoice identifier from DuckVoices.
         if let voiceId = DuckVoices.voiceId(for: voice),
