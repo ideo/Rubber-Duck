@@ -18,7 +18,7 @@ Three board variants. Same serial protocol, same widget, different audio paths.
 
 ## Teensy 4.0
 
-Firmware: `firmware/rubber_duck/`
+Firmware: `firmware/rubber_duck_teensy40/`
 
 The original. Mac sees it as a USB Audio device — `say -a "Teensy MIDI_Audio"` routes TTS directly, and the analog mic on A0 appears as a USB microphone. No widget involvement for audio.
 

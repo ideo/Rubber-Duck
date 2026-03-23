@@ -37,7 +37,7 @@ You (Claude Code) — this session
 - `widget/Sources/RubberDuckWidget/DuckTheme.swift` — design tokens (colors, sizes, animation constants)
 - `widget/assets/duckIcon.icon` — Apple Icon Composer icon bundle (compiled via actool in Makefile)
 - `scripts/` — hook scripts that connect Claude Code to the eval service
-- `firmware/rubber_duck/` — Teensy 4.0 firmware for servo/LED/piezo
+- `firmware/rubber_duck_teensy40/` — Teensy 4.0 firmware for servo/LED/piezo
 - `widget/Sources/RubberDuckWidget/Resources/dashboard.html` — browser dashboard at localhost:3333
 - `widget/Sources/RubberDuckWidget/Resources/viewer.html` — Three.js 3D viewer at localhost:3333/viewer
 

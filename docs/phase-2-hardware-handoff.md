@@ -9,7 +9,7 @@ The firmware has evolved significantly from Phase 1. The servo duck now has a fu
 ## Firmware architecture
 
 ```
-firmware/rubber_duck/
+firmware/rubber_duck_teensy40/
 ├── rubber_duck.ino      # Main loop, button handling, permission state machine
 ├── Config.h             # All config values, data structures, externs
 ├── SerialProtocol.ino   # CSV serial parser (evals, commands, audio, servo)
@@ -160,7 +160,7 @@ The widget (SwiftUI) owns serial communication via `SerialManager`:
 ```bash
 # Flash firmware
 # Open Arduino IDE, select Teensy 4.0, USB Type: Serial + MIDI + Audio
-open firmware/rubber_duck/rubber_duck.ino
+open firmware/rubber_duck_teensy40/rubber_duck.ino
 
 # Run widget (builds + launches, auto-starts eval service)
 cd widget && make run

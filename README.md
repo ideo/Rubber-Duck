@@ -160,9 +160,9 @@ Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.web.app/) or build yo
 <summary>Supported boards and serial protocol</summary>
 
 **Boards:**
-- **ESP32-S3** — primary board. Serial audio streaming (TTS + mic over serial binary frames), servo, speaker, I2S DAC. Firmware: `firmware/rubber_duck_c3/`
-- **Teensy 4.0** — DIY option. USB Audio Class (mic + TTS routed as a USB audio interface), servo, I2S DAC. Firmware: `firmware/rubber_duck/`
-- **ESP32-C3** — LED bar variant. Firmware: `firmware/rubber_duck_esp32/`
+- **ESP32-S3** — primary board. Serial audio streaming (TTS + mic over serial binary frames), servo, speaker, I2S DAC. Firmware: `firmware/rubber_duck_s3/`
+- **Teensy 4.0** — DIY option. USB Audio Class (mic + TTS routed as a USB audio interface), servo, I2S DAC. Firmware: `firmware/rubber_duck_teensy40/`
+- **ESP32-S3 LED** — LED bar variant. Firmware: `firmware/rubber_duck_s3_led/`
 
 **Serial protocol** (newline-terminated, all boards):
 ```
