@@ -29,9 +29,7 @@ enum LaunchGreeting {
 
         // First ever launch — introduce + guide to plugin install
         if minutesSince == nil {
-            return isCompanion
-                ? "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
-                : "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
+            return "Hey! I'm your duck. Right-click me to install the Claude plugin and get started."
         }
 
         let mins = minutesSince!

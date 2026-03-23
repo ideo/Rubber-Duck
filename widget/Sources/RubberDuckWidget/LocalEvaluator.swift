@@ -77,37 +77,38 @@ private let toneToVoice: [String: String] = [
     "cold": "zarvox",
 ]
 
-/// Score-gate the voice pool. Returns tone labels the LLM can pick from.
-private func candidateTones(rigor: Int, craft: Int, novelty: Int, ambition: Int, risk: Int) -> [String] {
+/// Normalize raw -100...100 scores to -1.0...1.0 and compute sentiment.
+private func normalizeScores(rigor: Int, craft: Int, novelty: Int, ambition: Int, risk: Int) -> (r: Double, c: Double, n: Double, a: Double, k: Double, sentiment: Double) {
     let r = Double(rigor) / 100.0
     let c = Double(craft) / 100.0
     let n = Double(novelty) / 100.0
     let a = Double(ambition) / 100.0
     let k = Double(risk) / 100.0
     let sentiment = r * 0.3 + c * 0.25 + n * 0.2 + a * 0.15 - k * 0.1
+    return (r, c, n, a, k, sentiment)
+}
+
+/// Score-gate the voice pool. Returns tone labels the LLM can pick from.
+private func candidateTones(rigor: Int, craft: Int, novelty: Int, ambition: Int, risk: Int) -> [String] {
+    let s = normalizeScores(rigor: rigor, craft: craft, novelty: novelty, ambition: ambition, risk: risk)
 
     var tones = ["normal"]
-    if sentiment > 0.6 { tones.append("cheerful") }
-    if sentiment < -0.4 { tones.append("gloomy") }
-    if k > 0.7 { tones.append("grave") }
-    if a > 0.7 { tones.append("grand") }
-    if n > 0.6 && abs(a) > 0.5 { tones.append("dramatic") }
-    if a > 0.8 && k > 0.8 { tones.append("overwhelmed") }
+    if s.sentiment > 0.6 { tones.append("cheerful") }
+    if s.sentiment < -0.4 { tones.append("gloomy") }
+    if s.k > 0.7 { tones.append("grave") }
+    if s.a > 0.7 { tones.append("grand") }
+    if s.n > 0.6 && abs(s.a) > 0.5 { tones.append("dramatic") }
+    if s.a > 0.8 && s.k > 0.8 { tones.append("overwhelmed") }
     tones.append("secretive")  // Always available — whisper works alongside any mood
-    if c < -0.3 && n < -0.3 { tones.append("robotic"); tones.append("cold") }
+    if s.c < -0.3 && s.n < -0.3 { tones.append("robotic"); tones.append("cold") }
     return tones
 }
 
 /// Compute sentiment label from raw scores.
 private func sentimentLabel(rigor: Int, craft: Int, novelty: Int, ambition: Int, risk: Int) -> String {
-    let r = Double(rigor) / 100.0
-    let c = Double(craft) / 100.0
-    let n = Double(novelty) / 100.0
-    let a = Double(ambition) / 100.0
-    let k = Double(risk) / 100.0
-    let sentiment = r * 0.3 + c * 0.25 + n * 0.2 + a * 0.15 - k * 0.1
-    if sentiment > 0.3 { return "positive" }
-    if sentiment < -0.3 { return "negative" }
+    let s = normalizeScores(rigor: rigor, craft: craft, novelty: novelty, ambition: ambition, risk: risk)
+    if s.sentiment > 0.3 { return "positive" }
+    if s.sentiment < -0.3 { return "negative" }
     return "neutral"
 }
 

@@ -552,33 +552,11 @@ enum PluginInstaller {
 
     private static func findClaude() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
+        return findTool("claude", extraPaths: [
             "\(home)/.local/bin/claude",
             "\(home)/.claude/local/bin/claude",
             "/usr/local/bin/claude",
-        ]
-        for path in candidates {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return path
-            }
-        }
-        // Fall back to `which claude`
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["which", "claude"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !path.isEmpty && proc.terminationStatus == 0 {
-                return path
-            }
-        } catch {}
-        return nil
+        ])
     }
 
     private static func run(_ claudePath: String, args: [String]) -> (Bool, String) {
@@ -659,48 +637,57 @@ enum PluginInstaller {
 
     @MainActor
     private static func showResult(success: Bool, detail: String) {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = success ? "Plugin Installed" : "Install Failed"
-        alert.informativeText = detail
-        alert.alertStyle = success ? .informational : .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        showInstallResult(title: "Plugin Installed", success: success, detail: detail)
     }
+}
+
+// MARK: - Shared Install Helpers
+
+/// Find a CLI tool by checking common paths then falling back to `which`.
+func findTool(_ name: String, extraPaths: [String] = []) -> String? {
+    for path in extraPaths {
+        if FileManager.default.isExecutableFile(atPath: path) { return path }
+    }
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    proc.arguments = ["which", name]
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = FileHandle.nullDevice
+    do {
+        try proc.run()
+        proc.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !path.isEmpty && proc.terminationStatus == 0 { return path }
+    } catch {}
+    return nil
+}
+
+/// Show a simple result alert.
+@MainActor
+func showInstallResult(title: String, success: Bool, detail: String) {
+    NSApp.activate()
+    let alert = NSAlert()
+    alert.messageText = success ? title : "Install Failed"
+    alert.informativeText = detail
+    alert.alertStyle = success ? .informational : .warning
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
 }
 
 // MARK: - Gemini Extension Installer
 
 enum GeminiExtensionInstaller {
     private static let installCommand = "gemini extensions install ideo/Rubber-Duck"
+    private static let experimentalNote = "Experimental — Gemini CLI hooks provide eval scoring and permission notifications, but cannot relay decisions back. You'll need to approve permissions manually in the terminal."
 
     static func install() {
-        if let gemini = findGemini() {
+        if let gemini = findTool("gemini") {
             automaticInstall(gemini: gemini)
         } else {
-            Task { @MainActor in
-                clipboardInstall()
-            }
+            Task { @MainActor in clipboardInstall() }
         }
-    }
-
-    private static func findGemini() -> String? {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["which", "gemini"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !path.isEmpty && proc.terminationStatus == 0 {
-                return path
-            }
-        } catch {}
-        return nil
     }
 
     private static func automaticInstall(gemini: String) {
@@ -720,13 +707,14 @@ enum GeminiExtensionInstaller {
                 let ok = proc.terminationStatus == 0
                 print("[gemini-ext] Install: ok=\(ok) output=\(output)")
                 Task { @MainActor in
-                    showResult(success: ok, detail: ok
-                        ? "Experimental — Gemini CLI hooks provide eval scoring and permission notifications, but cannot relay decisions back. You'll need to approve permissions manually in the terminal.\n\nStart a new Gemini CLI session to activate."
-                        : "Extension install failed:\n\(output)")
+                    showInstallResult(
+                        title: "Extension Installed",
+                        success: ok,
+                        detail: ok ? "\(experimentalNote)\n\nStart a new Gemini CLI session to activate." : "Extension install failed:\n\(output)")
                 }
             } catch {
                 Task { @MainActor in
-                    showResult(success: false, detail: error.localizedDescription)
+                    showInstallResult(title: "Extension Installed", success: false, detail: error.localizedDescription)
                 }
             }
         }
@@ -737,7 +725,7 @@ enum GeminiExtensionInstaller {
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "Install Gemini Extension"
-        alert.informativeText = "Experimental — Gemini CLI hooks provide eval scoring and permission notifications, but cannot relay decisions back. Approve permissions manually in the terminal.\n\nPaste the following command in Terminal:\n\n\(installCommand)\n\nIt has been copied to your clipboard."
+        alert.informativeText = "\(experimentalNote)\n\nPaste the following command in Terminal:\n\n\(installCommand)\n\nIt has been copied to your clipboard."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open Terminal")
         alert.addButton(withTitle: "Copy Only")
@@ -750,17 +738,6 @@ enum GeminiExtensionInstaller {
         if response == .alertFirstButtonReturn {
             NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
         }
-    }
-
-    @MainActor
-    private static func showResult(success: Bool, detail: String) {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = success ? "Extension Installed" : "Install Failed"
-        alert.informativeText = detail
-        alert.alertStyle = success ? .informational : .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
     }
 }
 

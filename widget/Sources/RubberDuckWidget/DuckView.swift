@@ -202,45 +202,15 @@ struct DuckView: View {
 
             Divider()
 
-            ForEach(DuckVoices.main, id: \.sayName) { voice in
-                Button {
-                    speechService.ttsVoice = voice.sayName
-                    speechService.speak(voice.preview, skipChirpWait: true)
-                } label: {
-                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
-                }
-            }
-
-            Divider()
-
-            ForEach(DuckVoices.classic, id: \.sayName) { voice in
-                Button {
-                    speechService.ttsVoice = voice.sayName
-                    speechService.speak(voice.preview, skipChirpWait: true)
-                } label: {
-                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
-                }
-            }
-
-            Divider()
-
-            ForEach(DuckVoices.specialFX, id: \.sayName) { voice in
-                Button {
-                    speechService.ttsVoice = voice.sayName
-                    speechService.speak(voice.preview, skipChirpWait: true)
-                } label: {
-                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
-                }
-            }
-
-            Divider()
-
-            ForEach(DuckVoices.british, id: \.sayName) { voice in
-                Button {
-                    speechService.ttsVoice = voice.sayName
-                    speechService.speak(voice.preview, skipChirpWait: true)
-                } label: {
-                    Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+            ForEach([DuckVoices.main, DuckVoices.classic, DuckVoices.specialFX, DuckVoices.british].indices, id: \.self) { groupIdx in
+                if groupIdx > 0 { Divider() }
+                ForEach([DuckVoices.main, DuckVoices.classic, DuckVoices.specialFX, DuckVoices.british][groupIdx], id: \.sayName) { voice in
+                    Button {
+                        speechService.ttsVoice = voice.sayName
+                        speechService.speak(voice.preview, skipChirpWait: true)
+                    } label: {
+                        Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
+                    }
                 }
             }
         } label: {
