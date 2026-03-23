@@ -46,6 +46,7 @@
 - [ ] **Repo rename** — `ideo/Rubber-Duck` → `ideo/duck-duck-duck` (blocked: name taken by marketing site). See `docs/REPO-RENAME.md` for full checklist.
 - [ ] **Realtime API migration** — replace STT/TTS with unified streaming backend. Duck becomes conversational intermediary.
 - [ ] **ESP32-S3 standalone** — WiFi-connected duck, no Mac needed
+- [ ] **Multi-session awareness** — duck currently treats all sessions as one stream. With multiple Claude sessions open (CLI + Desktop, or parallel sessions), it needs to distinguish which session said what. May need session IDs in hook payloads, per-session eval history, and UI to indicate source. Not trivial.
 - [ ] **Duck-as-agent-teammate** — via agent teams inbox (needs rethink)
 - [ ] **Three.js viewer refinement** — beak geometry, PCB details, sound, permission visualization
 

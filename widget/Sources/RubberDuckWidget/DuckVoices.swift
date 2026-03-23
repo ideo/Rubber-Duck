@@ -107,6 +107,16 @@ enum DuckVoices {
         sayNameMap[sayName]
     }
 
+    // MARK: - Silent Mode
+
+    /// Sentinel value stored in UserDefaults when Silent is active (speech bubble only, no TTS).
+    static let silentSayName = "__silent__"
+
+    /// Check if Silent mode is persisted.
+    static var isSilentPersisted: Bool {
+        UserDefaults.standard.string(forKey: "duck_tts_voice") == silentSayName
+    }
+
     // MARK: - Wildcard Mode
 
     /// Sentinel value stored in UserDefaults when Wildcard is active.
@@ -162,7 +172,9 @@ enum DuckVoices {
     /// Resolve a persisted sayName to a real engine voice name.
     /// Translates the wildcard sentinel to Superstar; passes everything else through.
     static func resolvedSayName(for sayName: String) -> String {
-        sayName == wildcardSayName ? wildcardDefault.sayName : sayName
+        if sayName == wildcardSayName { return wildcardDefault.sayName }
+        if sayName == silentSayName { return silentSayName }
+        return sayName
     }
 
     /// Voice descriptions for the AI prompt (Haiku eval).

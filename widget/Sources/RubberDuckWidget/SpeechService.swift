@@ -51,6 +51,7 @@ class SpeechService: ObservableObject {
     @Published var speechPermissionGranted: Bool = false
     @Published var selectedMicName: String = ""
     @Published var lastError: String = ""
+    @Published var currentUtterance: String = ""
 
     // Listen mode (persisted)
     @Published var listenMode: ListenMode = {
@@ -119,6 +120,7 @@ class SpeechService: ObservableObject {
     // Timers
     private var voiceInputTimer: Task<Void, Never>?
     private var deviceCheckTask: Task<Void, Never>?
+    private var utteranceClearTimer: Task<Void, Never>?
 
 
     init() {
@@ -314,12 +316,31 @@ class SpeechService: ObservableObject {
         isListening = false
     }
 
+    /// Whether the current voice is Silent (speech bubble only, no TTS).
+    var isSilent: Bool { ttsVoice == DuckVoices.silentSayName }
+
     func speak(_ text: String, skipChirpWait: Bool = false) {
-        activeTTS.speak(text, skipChirpWait: skipChirpWait)
+        currentUtterance = text
+        utteranceClearTimer?.cancel()
+        utteranceClearTimer = Task {
+            // Reading time: 2s base notice time + ~50ms per character (~200 WPM).
+            // Matches comfortable reading pace with time to notice the bubble.
+            let duration = 2.0 + Double(text.count) * 0.05
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            if !Task.isCancelled {
+                await MainActor.run { self.currentUtterance = "" }
+            }
+        }
+        // Skip TTS when Silent — bubble-only mode
+        if !isSilent {
+            activeTTS.speak(text, skipChirpWait: skipChirpWait)
+        }
     }
 
     func stopSpeaking() {
         activeTTS.stop()
+        utteranceClearTimer?.cancel()
+        currentUtterance = ""
     }
 
     /// Set master volume (0.0–1.0). Propagates to both TTS engines.

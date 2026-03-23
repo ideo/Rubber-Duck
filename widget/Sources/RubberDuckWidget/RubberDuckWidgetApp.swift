@@ -64,7 +64,7 @@ struct RubberDuckWidgetApp: App {
                 .environmentObject(evalService)
                 .environmentObject(speechService)
                 .environmentObject(serialManager)
-                .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
+                .frame(width: DuckTheme.widgetSize - 8)
                 .background(WindowDragArea())
                 .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
         }

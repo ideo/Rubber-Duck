@@ -161,7 +161,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         // --- Voice submenu ---
         let isWildcard = speechService.isWildcardMode
-        let voiceLabel = isWildcard ? "Wildcard" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
+        let isSilentVoice = speechService.isSilent
+        let voiceLabel = isWildcard ? "Wildcard" : isSilentVoice ? "Silent" : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
         let voiceItem = NSMenuItem(title: "Voice: \(voiceLabel)", action: nil, keyEquivalent: "")
         voiceItem.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice")
         let voiceMenu = NSMenu()
@@ -171,6 +172,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         wildcardItem.image = NSImage(systemSymbolName: "shuffle", accessibilityDescription: "Shuffle voices")
         wildcardItem.state = isWildcard ? .on : .off
         voiceMenu.addItem(wildcardItem)
+
+        let isSilent = speechService.isSilent
+        let silentItem = NSMenuItem(title: "Silent", action: #selector(selectSilent), keyEquivalent: "")
+        silentItem.target = self
+        silentItem.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "Speech bubble only")
+        silentItem.subtitle = "Speech bubble only — no audio"
+        silentItem.state = isSilent ? .on : .off
+        voiceMenu.addItem(silentItem)
         voiceMenu.addItem(.separator())
 
         addVoiceItems(to: voiceMenu, voices: DuckVoices.main)
@@ -454,6 +463,12 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // Preview in Superstar (the default wildcard voice)
         speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
         speechService.speak("Wildcard mode.", skipChirpWait: true)
+    }
+
+    @objc private func selectSilent() {
+        speechService.ttsVoice = DuckVoices.silentSayName
+        // This triggers the speech bubble since isSilent is now true
+        speechService.speak("Silent mode. I'll use speech bubbles instead.")
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {

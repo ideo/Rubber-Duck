@@ -14,6 +14,12 @@ struct DuckView: View {
     @State private var thinkingEyeX: CGFloat = 0
     @State private var thinkingEyeY: CGFloat = 0
 
+    /// Show the speech bubble when: Silent voice selected, OR volume is 0, AND there's text to show.
+    private var speechBubbleVisible: Bool {
+        guard !speechService.currentUtterance.isEmpty else { return false }
+        return speechService.isSilent || DuckConfig.volume <= 0
+    }
+
     var body: some View {
         ZStack {
             // Duck body (liquid glass — no rotation/scale; transforms break glass refraction)
@@ -45,6 +51,10 @@ struct DuckView: View {
             .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
+        .popover(isPresented: .constant(speechBubbleVisible), arrowEdge: .bottom) {
+            SpeechBubbleView(text: speechService.currentUtterance)
+                .padding(4)
+        }
         .contentShape(Rectangle())
         .contextMenu { duckContextMenu }
         .onChange(of: evalService.evalCount) {
@@ -347,6 +357,28 @@ private struct DuckEyesView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Speech Bubble
+
+/// Shows the duck's current utterance as a visual transcript above the face.
+/// Appears when the duck speaks, fades when speech ends.
+private struct SpeechBubbleView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.center)
+            .lineLimit(5)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: 200)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .allowsHitTesting(false)
     }
 }
 
