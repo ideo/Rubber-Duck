@@ -43,10 +43,10 @@ claude plugin install duck-duck-duck
 ## Architecture
 
 ```
-       You (speaking)                Claude Code / Desktop
-            |                              |
-            | mic                          | hooks (UserPrompt, Stop, Permission)
-            v                              v
+                          Claude Code / Desktop
+                                 |
+                                 | hooks (UserPrompt, Stop, Permission)
+                                 v
     .------------- Duck Duck Duck Widget (SwiftUI) --------------.
     |                                                             |
     |   Eval Engine          Voice               UI              |
@@ -55,13 +55,15 @@ claude plugin install duck-duck-duck
     |                        Wildcard voices      expressions     |
     |                        Permission gate      menu bar        |
     |                                                             |
-    |   HTTP+WS Server (:3333)          Serial (optional)        |
+    |   HTTP+WS Server (:3333)          Serial (USB)             |
     '--------+--------------------+-----------+------------------'
              |                    |           |
-             v                    v           v
+             v                    v           ^  v
          Dashboard            Voice →     Physical duck
-         localhost:3333       Claude CLI  servo + speaker
-                              (tmux)      (USB hardware)
+         localhost:3333       Claude CLI  mic + servo + speaker
+                              (tmux)           |
+                                               ^
+                                          You (speaking)
 ```
 
 ### How it works
