@@ -542,8 +542,8 @@ enum PluginInstaller {
             automaticInstall(claude: claude)
         } else {
             Task { @MainActor in
-                onSpeak?("Claude CLI not found. I'll copy the install command for you.")
-                clipboardInstall()
+                onSpeak?("Claude Code isn't installed yet. I'll show you how.")
+                showClaudeNotFound()
             }
         }
     }
@@ -577,15 +577,54 @@ enum PluginInstaller {
         }
     }
 
+    /// Find the bundled plugin folder — inside app bundle Resources, or next to the .app during dev.
+    private static func findBundledPlugin() -> String? {
+        // Check inside app bundle (survives drag to Applications)
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundledPlugin = (resourcePath as NSString).appendingPathComponent("plugin")
+            if FileManager.default.fileExists(atPath: (bundledPlugin as NSString).appendingPathComponent(".claude-plugin/plugin.json")) {
+                return bundledPlugin
+            }
+        }
+        // Fallback: check next to the running app (dev layout)
+        let appDir = (Bundle.main.bundlePath as NSString).deletingLastPathComponent
+        let siblingPlugin = (appDir as NSString).appendingPathComponent("plugin")
+        if FileManager.default.fileExists(atPath: (siblingPlugin as NSString).appendingPathComponent(".claude-plugin/plugin.json")) {
+            return siblingPlugin
+        }
+        return nil
+    }
+
     private static func automaticInstall(claude: String) {
         print("[plugin] Found claude at \(claude)")
         DispatchQueue.global(qos: .userInitiated).async {
             // 1. Remove old install (ignore failures — may not exist)
             print("[plugin] Cleaning previous install...")
             _ = run(claude, args: ["plugin", "uninstall", "duck-duck-duck"])
-            _ = run(claude, args: ["plugin", "marketplace", "remove", "duck-duck-duck-marketplace"])
 
-            // 2. Add marketplace (fresh pull from GitHub)
+            // 2. Try bundled plugin first (works offline, no GitHub needed)
+            if let bundledPath = findBundledPlugin() {
+                print("[plugin] Found bundled plugin at \(bundledPath)")
+                // Add bundled folder as a local marketplace, then install from it
+                _ = run(claude, args: ["plugin", "marketplace", "remove", "duck-duck-duck-marketplace"])
+                let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", bundledPath])
+                print("[plugin] Bundled marketplace add: ok=\(mpOk) output=\(mpOut)")
+                if mpOk {
+                    let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
+                    print("[plugin] Bundled install: ok=\(installOk) output=\(installOut)")
+                    if installOk {
+                        Task { @MainActor in
+                            onSpeak?("Plugin installed. Start a Claude session and I'll be watching.")
+                            showResult(success: true, detail: "Installed from bundled plugin. Start a new Claude Code session to activate the hooks.")
+                        }
+                        return
+                    }
+                }
+                print("[plugin] Bundled install failed, falling back to GitHub marketplace...")
+            }
+
+            // 3. Fall back to GitHub marketplace (requires repo access)
+            _ = run(claude, args: ["plugin", "marketplace", "remove", "duck-duck-duck-marketplace"])
             print("[plugin] Adding marketplace...")
             let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", "ideo/Rubber-Duck"])
             print("[plugin] Marketplace add: ok=\(mpOk) output=\(mpOut)")
@@ -597,7 +636,6 @@ enum PluginInstaller {
                 return
             }
 
-            // 3. Install plugin
             print("[plugin] Installing plugin...")
             let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
             print("[plugin] Plugin install: ok=\(installOk) output=\(installOut)")
@@ -613,21 +651,44 @@ enum PluginInstaller {
         }
     }
 
+    // MARK: - Claude not found
+
+    @MainActor
+    private static func showClaudeNotFound() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Claude Code Required"
+        alert.informativeText = "Duck Duck Duck needs Claude Code (CLI) to work.\n\nInstall it from claude.com/download, then come back and click Install Plugin again."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Download Page")
+        alert.addButton(withTitle: "I Have It (Copy Command)")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Open Claude Code download page
+            if let url = URL(string: "https://claude.com/download") {
+                NSWorkspace.shared.open(url)
+            }
+        } else if response == .alertSecondButtonReturn {
+            // Fallback: copy command to clipboard for manual install
+            clipboardInstall()
+        }
+    }
+
     // MARK: - Clipboard install (sandboxed fallback)
 
     @MainActor
     private static func clipboardInstall() {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = "Install Claude Plugin"
-        alert.informativeText = "Paste the following command in Terminal:\n\n\(installCommand)\n\nIt has been copied to your clipboard."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Open Terminal")
-        alert.addButton(withTitle: "Copy Only")
-        alert.addButton(withTitle: "Cancel")
-
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(installCommand, forType: .string)
+
+        let alert = NSAlert()
+        alert.messageText = "Install Command Copied"
+        alert.informativeText = "Paste this in Terminal:\n\n\(installCommand)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Terminal")
+        alert.addButton(withTitle: "OK")
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {

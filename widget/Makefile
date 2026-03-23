@@ -35,6 +35,7 @@ bundle: build icon
 	@cp $(ICON_OUT)/duckIcon.icns $(RESOURCES_DIR)/
 	@cp $(ICON_OUT)/Assets.car $(RESOURCES_DIR)/
 	@cp -R $(BUILD_DIR)/$(EXECUTABLE)_$(EXECUTABLE).bundle $(RESOURCES_DIR)/
+	@cp -R ../plugin $(RESOURCES_DIR)/plugin
 	@codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ Built $(APP_BUNDLE)"
 

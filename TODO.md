@@ -42,6 +42,8 @@
 
 ## 🔮 Future
 
+- [ ] **Sparkle auto-updater** — push app updates without manual DMG drag. SPM dependency (`sparkle-project/Sparkle`). Needs appcast.xml hosted on GitHub Pages or releases, EdDSA signing key. First external dependency.
+- [ ] **Firmware OTA updates** — push firmware to hardware duck from the widget, no Arduino IDE needed. ESP32-S3: native OTA over serial or WiFi. Teensy 4.0: `teensy_loader_cli` or raw HID protocol. Widget downloads binary from GitHub releases, pushes to device.
 - [ ] **Realtime API migration** — replace STT/TTS with unified streaming backend. Duck becomes conversational intermediary.
 - [ ] **ESP32-S3 standalone** — WiFi-connected duck, no Mac needed
 - [ ] **Duck-as-agent-teammate** — via agent teams inbox (needs rethink)
