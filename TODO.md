@@ -11,6 +11,7 @@
 ## 🧠 Foundation Models Tuning
 
 - [ ] **Scoring accuracy** — 3B model inflates scores on trivial inputs ("phase 1" gets r=100), can't detect over-engineering (request vs response mismatch beyond 3B reasoning)
+- [ ] **Short affirming replies** — "yep", "yes", "sure" get dismissive reactions ("meh") instead of evaluating the decision being affirmed. Context reframing helps but doesn't always fire (claudeContext may be empty)
 - [ ] **Reaction tone** — occasional cheerleading on positive vibe, rare voice/reaction mismatch (cheerful voice + negative reaction). Playground at `widget/Playground/Sources/LLMPlayground/EvalV4Playground.swift`
 - [ ] **Whisper voice tuning** — works but LLM rarely picks "secretive" on its own
 - [ ] **Emoji in reactions** — 3B sometimes outputs emoji which `say` reads literally. TTS sanitizer strips markdown but not emoji yet.
