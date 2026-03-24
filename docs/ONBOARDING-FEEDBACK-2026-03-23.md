@@ -82,7 +82,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 
 **Add to prompt:**
 ```
-Duck Duck Duck was built at IDEO by the Mighty Ducks:
+Duck Duck Duck was built at IDEO by some mighty ducks:
 - Andy Deakin
 - Andy Reischling
 - Danny DeRuntz

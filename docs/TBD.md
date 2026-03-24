@@ -11,6 +11,28 @@
 
 ---
 
+## "Can you hear me" mishandled
+
+When users say "ducky, can you hear me" as a mic check, the duck answers as if it's a capabilities question ("I run everything locally, I can't hear you"). It should recognize this as a literal mic test and respond accordingly — "Yep, I hear you!" or "Loud and clear."
+
+**Fixes needed:**
+- Detect "can you hear me" / "do you hear me" / "are you listening" as mic-check phrases
+- Short-circuit before the LLM — return a hardcoded affirmative (like the backstory stages)
+- Add mic/audio info to the helpdesk prompt so if someone asks about hearing/microphone/audio capabilities, the duck knows it DOES use a mic in Companion and Relay modes
+- Current system prompt says nothing about the mic — it should mention: Companion mode listens for wake word, Relay mode listens for commands, Permissions Only listens for yes/no, No Mic mode doesn't listen at all
+
+---
+
+## Voice command popover — needs polish
+
+The popover showing mic input text (anchored to the red listening dot) works but needs improvement:
+- **Responsiveness** — doesn't resize smoothly as STT text streams in. Fixed width feels static.
+- **Placement** — `arrowEdge: .top` works but macOS may flip it depending on screen position. Need to test edge cases (dock at bottom, widget near top of screen, etc.)
+- **Red dot persistence** — dot sometimes disappears between conversation turns (conversation mode timeout clearing wake state)
+- Consider: should it be a popover at all, or a custom overlay we fully control?
+
+---
+
 ## 3. Onboarding + Help (unified)
 
 The duck IS the onboarding. It walks you through setup, answers questions, and that first interaction is also the demo of what it does. Help and onboarding are the same system.
@@ -66,23 +88,17 @@ The duck IS the onboarding. It walks you through setup, answers questions, and t
 - `DuckCoordinator.swift` — `isAnsweringHelp` state for thinking animation
 - `DuckView.swift` — speech bubble overlay (NEW)
 
-## 4. Foundation Models eval prompt tuning
+## 4. Foundation Models tuning — response length + conversation flow
 
-The 3B on-device model has personality issues:
-- **Typo obsession** — fixates on typos in user prompts. "phase 1" → "really, a typo." Short casual messages get roasted for no reason.
-- **Meaner than Haiku** — Foundation reactions skew harsher than Claude Haiku on the same input. The duck should be snarky but not hostile.
-- **User prompts aren't code** — user messages to Claude are conversational, not code. The eval prompt treats everything like a code review. Short human messages ("ok", "yes do that", "phase 1") shouldn't trigger craft/rigor scoring as if they're sloppy code.
+~~Typo obsession~~ ✅ Fixed — casual messages no longer get roasted.
+~~Meaner than Haiku~~ ✅ Fixed — tone rebalanced.
 
-### Possible fixes
-- Separate prompt paths for user prompts vs Claude responses — user prompts scored more leniently
-- Add "short casual messages are normal and fine" to the system prompt
-- Adjust reaction tone: "snarky but ultimately supportive" not "mean"
-- More Playground iteration with real user prompt examples (not just code scenarios)
-- Compare Foundation vs Haiku side-by-side on same inputs to calibrate
+### Open tuning
+~~Response length~~ ✅ Fixed — eval prompt capped to one sentence, needs continued testing.
+~~Wildcard slow voice fallback~~ ✅ Fixed — `slowVoiceCharacterLimit = 140`, slow voices (Good News, Jester, Cellos, etc.) swap to Superstar above threshold.
 
-### Testing
-- `widget/Playground/Sources/LLMPlayground/` — add a "User Prompts" batch with casual/short messages
-- Compare reaction tone across eval engines
+- **Help vs free chat flow** — the 3B model sometimes gets stuck in help mode when the user is just chatting. Needs clearer routing between structured help answers and casual conversation.
+- **Easter eggs** — Moby Duck backstory gate (3-attempt unlock → bedtime story reading), "can you hear me" mic check. Need testing across varied phrasing to make sure gates open reliably and don't block normal questions.
 
 ## ~~5. Wildcard voice — tuning~~ ✅ DONE
 Score-gated V2 shipped. See `docs/VOICE-SELECTION-V2.md`.

@@ -65,6 +65,24 @@ class TTSEngine {
         return cleaned
     }
 
+    // MARK: - Pronunciation fixes
+
+    /// Words that macOS `say` mangles. Maps plain text to `say` phoneme markup.
+    /// Add entries here whenever TTS mispronounces a word.
+    private static let pronunciations: [(word: String, phoneme: String)] = [
+        ("Ahab", "[[inpt PHON]]EY1hAEb[[inpt TEXT]]"),
+        ("Claude", "[[inpt PHON]]klAOd[[inpt TEXT]]"),
+    ]
+
+    /// Replace known mispronounced words with phoneme markup before passing to `say`.
+    private func applyPronunciations(_ text: String) -> String {
+        var result = text
+        for entry in Self.pronunciations {
+            result = result.replacingOccurrences(of: entry.word, with: entry.phoneme, options: .caseInsensitive)
+        }
+        return result
+    }
+
     func speak(_ text: String) {
         guard !text.isEmpty else { return }
         log("[tts] \(text)")
@@ -72,7 +90,7 @@ class TTSEngine {
         // Stop any current speech to prevent pileup
         stop()
 
-        let cleaned = stripMarkdown(text)
+        let cleaned = applyPronunciations(stripMarkdown(text))
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
 

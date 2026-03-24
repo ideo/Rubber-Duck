@@ -399,9 +399,9 @@ private struct VoiceCommandBubbleView: View {
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.primary)
             .multilineTextAlignment(.leading)
-            .lineLimit(4)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(maxWidth: 280)
             .padding(8)
-            .frame(idealWidth: 200)
     }
 }
 

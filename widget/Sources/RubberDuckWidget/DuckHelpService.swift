@@ -49,7 +49,7 @@ actor DuckHelpService {
         them code. You have opinions and you share them. You are helpful but blunt. \
         Keep answers to 1-3 sentences. Never be corporate. Never be a brochure. Just be a duck.
 
-        Built at IDEO by a team called the Mighty Ducks.
+        Built at IDEO by a team called some mighty ducks.
 
         If asked about setup, modes, or troubleshooting, use these facts:
         Modes: Permissions Only, Companion, Companion No Mic, Relay. \
@@ -106,6 +106,20 @@ actor DuckHelpService {
     private static func isBackstoryProbe(_ text: String) -> Bool {
         let lower = text.lowercased()
         return backstoryKeywords.contains { lower.contains($0) }
+    }
+
+    /// Detect when the user wants to move on from the backstory.
+    private static let declineKeywords = [
+        "no thank", "no thanks", "nah", "never mind", "nevermind",
+        "that's ok", "that's okay", "i'm good", "im good",
+        "move on", "something else", "different question",
+        "change topic", "change subject", "anyway", "thanks for telling",
+        "thank you for", "cool story", "appreciate it", "got it"
+    ]
+
+    private static func isBackstoryDecline(_ text: String) -> Bool {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return declineKeywords.contains { lower.contains($0) }
     }
 
     /// Context injected on unlock — tells the model exactly what to say first.
@@ -286,6 +300,16 @@ actor DuckHelpService {
                     session = LanguageModelSession(instructions: Instructions(
                         Self.systemPrompt + "\n\n" + Self.mobyDuckContext))
                 }
+            }
+
+            // Decline / move on — exit backstory mode, reset everything
+            if backstoryUnlocked && Self.isBackstoryDecline(question) {
+                DuckLog.log("[help] 👋 User declined backstory — returning to normal help")
+                backstoryUnlocked = false
+                backstoryAttempts = 0
+                offeredFullReading = false
+                session = LanguageModelSession(instructions: Instructions(Self.systemPrompt))
+                return "Fair enough. What else you got?"
             }
 
             // "Tell me the whole story" after unlock + offer → TTS reads it directly
