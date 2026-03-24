@@ -89,7 +89,18 @@ dmg: notarize
 	@xcrun stapler staple $(DIST_DMG)
 	@echo "✅ DMG ready → $(DIST_DMG)"
 
-release: dmg
-	@echo "Ready to release $(DIST_DMG)"
-	@echo "Run: gh release create vX.Y $(DIST_DMG) --title 'Duck Duck Duck vX.Y' --notes 'Release notes'"
+release: dmg plugin-zip
+	@echo "Ready to release $(DIST_DMG) + $(PLUGIN_ZIP)"
+	@echo "Run: gh release create vX.Y $(DIST_DMG) $(PLUGIN_ZIP) --title 'Duck Duck Duck vX.Y' --notes 'Release notes'"
+
+# --- Plugin zip for Claude Desktop upload ---
+
+PLUGIN_ZIP = $(DIST_DIR)/duck-duck-duck-plugin.zip
+
+plugin-zip:
+	@mkdir -p $(DIST_DIR)
+	@rm -f $(PLUGIN_ZIP)
+	@cd ../plugin && zip -r $(CURDIR)/$(PLUGIN_ZIP) .claude-plugin hooks -x "*.DS_Store"
+	@echo "✅ Plugin zip → $(PLUGIN_ZIP)"
+	@echo "   Upload via Claude Desktop → Settings → Plugins → Upload local plugin"
 

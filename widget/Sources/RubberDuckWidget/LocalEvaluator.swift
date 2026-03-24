@@ -45,10 +45,10 @@ struct LocalEvalScores {
 // Pass 2: Reaction only — given the vibe, write a gut reaction.
 @Generable
 struct LocalEvalReaction {
-    @Guide(description: "Quick gut reaction")
+    @Guide(description: "Inner monologue gut reaction in max 10 words. Never more than one sentence.")
     var reaction: String
 
-    @Guide(description: "One blunt sentence describing what happened")
+    @Guide(description: "One short blunt sentence relaying what happened to the developer. Max 15 words. Never more than one sentence.")
     var summary: String
 }
 
@@ -169,7 +169,9 @@ actor LocalEvaluator {
             The overall vibe is \(vibe). Your reaction MUST match this vibe. \
             Speak as: \(perspective). \
             DO NOT comment on typos, spelling, or grammar. ONLY react to substance. \
-            Be opinionated but fair.
+            Be opinionated but fair. \
+            CRITICAL: Both reaction and summary must be ONE sentence max. \
+            This is spoken aloud — keep it short. Never a paragraph.
             """
         let reactionSession = LanguageModelSession(instructions: Instructions(reactionPrompt))
         let reactionResult = try await reactionSession.respond(

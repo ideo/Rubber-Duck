@@ -128,9 +128,15 @@ struct RubberDuckWidgetApp: App {
                 }
                 let answer = await helpService.ask(text)
                 await MainActor.run {
-                    speech.speak(answer ?? "Not sure about that one.")
-                    // Enter conversation after TTS finishes
-                    speech.restartAfterTTS(thenEnterConversation: true)
+                    speech.isWakeActive = false
+                    if answer == DuckHelpService.fullStoryReadingSentinel {
+                        // Read the full Moby Duck story via TTS — no LLM, just reading aloud
+                        speech.speak("Alright. Settle in. ... " + DuckHelpService.fullStoryText)
+                        speech.restartAfterTTS(thenEnterConversation: false)
+                    } else {
+                        speech.speak(answer ?? "Not sure about that one.")
+                        speech.restartAfterTTS(thenEnterConversation: true)
+                    }
                 }
             }
         }

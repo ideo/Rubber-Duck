@@ -673,22 +673,111 @@ enum PluginInstaller {
     private static func showClaudeNotFound() {
         NSApp.activate()
         let alert = NSAlert()
-        alert.messageText = "Claude Code Required"
-        alert.informativeText = "Duck Duck Duck needs Claude Code (CLI) to work.\n\nInstall it from claude.com/download, then come back and click Install Plugin again."
+        alert.messageText = "Claude Code Not Found"
+        alert.informativeText = """
+            Duck Duck Duck works with Claude Code (CLI) or Claude Desktop.
+
+            If you have Claude Desktop, you can install the plugin as a zip file — \
+            go to Settings → Plugins → Upload local plugin.
+
+            If you need Claude Code (CLI), grab it from claude.com/download.
+            """
         alert.alertStyle = .informational
+        alert.addButton(withTitle: "Export Plugin Zip")
         alert.addButton(withTitle: "Open Download Page")
-        alert.addButton(withTitle: "I Have It (Copy Command)")
+        alert.addButton(withTitle: "I Have CLI (Copy Command)")
         alert.addButton(withTitle: "Cancel")
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            // Open Claude Code download page
-            if let url = URL(string: "https://claude.com/download") {
-                NSWorkspace.shared.open(url)
-            }
+            exportPluginZip()
         } else if response == .alertSecondButtonReturn {
-            // Fallback: copy command to clipboard for manual install
+            showCLIInstallHelper()
+        } else if response == .alertThirdButtonReturn {
             clipboardInstall()
+        }
+    }
+
+    // MARK: - CLI install helper
+
+    private static let cliInstallCommand = """
+        curl -fsSL https://claude.ai/install.sh | bash && \
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && \
+        source ~/.zshrc
+        """
+
+    @MainActor
+    private static func showCLIInstallHelper() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cliInstallCommand, forType: .string)
+
+        let alert = NSAlert()
+        alert.messageText = "Install Claude Code (CLI)"
+        alert.informativeText = """
+            Paste this in Terminal — it installs Claude Code and sets up your PATH:
+
+            curl -fsSL https://claude.ai/install.sh | bash
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+            source ~/.zshrc
+
+            The command has been copied to your clipboard.
+
+            After installing, come back and click Install Plugin again.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Terminal")
+        alert.addButton(withTitle: "OK")
+
+        onSpeak?("I copied the install command. Paste it in Terminal.")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+        }
+    }
+
+    // MARK: - Plugin zip export (for Claude Desktop upload)
+
+    @MainActor
+    private static func exportPluginZip() {
+        guard let pluginDir = findBundledPlugin() else {
+            onSpeak?("Couldn't find the bundled plugin. That's weird.")
+            let alert = NSAlert()
+            alert.messageText = "Plugin Not Found"
+            alert.informativeText = "Couldn't find the bundled plugin directory inside the app."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "duck-duck-duck-plugin.zip"
+        panel.allowedContentTypes = [.zip]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let destURL = panel.url else { return }
+
+        // Build zip from the plugin directory
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        proc.arguments = ["-c", "-k", "--keepParent", pluginDir, destURL.path]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                onSpeak?("Plugin zip saved. Drag it into Claude Desktop's plugin uploader.")
+                // Reveal in Finder
+                NSWorkspace.shared.activateFileViewerSelecting([destURL])
+            } else {
+                onSpeak?("Something went wrong creating the zip.")
+            }
+        } catch {
+            print("[plugin] Zip export error: \(error)")
+            onSpeak?("Something went wrong creating the zip.")
         }
     }
 

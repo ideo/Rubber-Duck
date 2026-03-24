@@ -135,6 +135,21 @@ void parseMessage(char *msg) {
     return;
   }
 
+  // --- Wake word attention ---
+  // W,1 = big head cock (listening), W,0 = return to rest
+  if (source == 'W') {
+    #if ENABLE_SERVO_DUCK
+    if (msg[1] == ',' && msg[2] == '1') {
+      setServoAngleDirect(SERVO_CENTER + 45);  // Big head cock — "I'm listening"
+      Serial.println("[duck] Wake: perked up");
+    } else {
+      snapToCenter();                           // Back to rest
+      Serial.println("[duck] Wake: resting");
+    }
+    #endif
+    return;
+  }
+
   // CAL → enter calibration mode from serial
   if (strncmp(msg, "CAL", 3) == 0) {
     enterCalibration();

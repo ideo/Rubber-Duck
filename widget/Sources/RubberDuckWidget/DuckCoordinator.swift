@@ -101,7 +101,17 @@ class DuckCoordinator: ObservableObject {
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
             if speechService.isWildcardMode {
                 let voiceKey = evalService.scores?.voice
-                let picked = voiceKey.map { DuckVoices.wildcardVoice(for: $0) } ?? DuckVoices.wildcardDefault
+                var picked = voiceKey.map { DuckVoices.wildcardVoice(for: $0) } ?? DuckVoices.wildcardDefault
+
+                // Slow voices (musical/effect-heavy) sound terrible on long text.
+                // Swap to Superstar if text exceeds roughly one sentence.
+                if textToSpeak.count > DuckVoices.slowVoiceCharacterLimit,
+                   let wk = voiceKey.flatMap({ DuckVoices.WildcardKey(rawValue: $0) }),
+                   DuckVoices.slowWildcardKeys.contains(wk) {
+                    DuckLog.log("[wildcard] \(wk.rawValue) too slow for \(textToSpeak.count) chars, falling back to superstar")
+                    picked = DuckVoices.wildcardDefault
+                }
+
                 speechService.setVoiceTransient(picked.sayName)
                 speechService.speak(textToSpeak)
                 // Reset to default voice so permissions/greetings don't inherit the wildcard pick

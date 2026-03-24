@@ -25,16 +25,6 @@ struct DuckView: View {
             // Duck body (liquid glass — no rotation/scale; transforms break glass refraction)
             duckBody
 
-            // Voice command text — forehead, below status dots
-            if !speechService.lastHeard.isEmpty {
-                Text(speechService.lastHeard)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(DuckTheme.eyeColor)
-                    .lineLimit(1)
-                    .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 22)
-                    .transition(.opacity)
-            }
-
             // Status indicators (top edge of duck body)
             HStack(spacing: 4) {
                 if speechService.isWakeActive || speechService.isInConversation {
@@ -54,6 +44,9 @@ struct DuckView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.15), value: speechService.isWakeActive || speechService.isInConversation)
+            .popover(isPresented: .constant(!speechService.lastHeard.isEmpty), arrowEdge: .top) {
+                VoiceCommandBubbleView(text: speechService.lastHeard)
+            }
             .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
@@ -62,6 +55,12 @@ struct DuckView: View {
                 .padding(4)
         }
         .contentShape(Rectangle())
+        .onTapGesture {
+            // Tap the duck to stop speaking (interrupt story reading, etc.)
+            if !speechService.currentUtterance.isEmpty {
+                speechService.stopSpeaking()
+            }
+        }
         .contextMenu { duckContextMenu }
         .onChange(of: evalService.evalCount) {
             coordinator.handleNewEval()
@@ -385,6 +384,24 @@ private struct SpeechBubbleView: View {
             .frame(maxWidth: 200)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
             .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Voice Command Popover
+
+/// Shows voice command text in a popover beside the duck, updating live as STT streams in.
+/// Uses `.trailing` arrowEdge so it appears to the side, not covering the face.
+private struct VoiceCommandBubbleView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.leading)
+            .lineLimit(4)
+            .padding(8)
+            .frame(idealWidth: 200)
     }
 }
 

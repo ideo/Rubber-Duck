@@ -197,7 +197,7 @@ void parseTextMessage(char *msg) {
   if (source == 'W') {
     #if ENABLE_SERVO
     if (msg[1] == ',' && msg[2] == '1') {
-      servoWriteAngle(SERVO_CENTER + 15);  // Tilt head — "I'm listening"
+      servoWriteAngle(SERVO_CENTER + 45);  // Big head cock — "I'm listening"
       Serial.println("[duck] Wake: perked up");
     } else {
       snapToCenter();                       // Back to rest

@@ -130,6 +130,15 @@ enum DuckVoices {
     /// Default voice when Wildcard can't pick (or AI returns unknown key).
     static let wildcardDefault = superstar
 
+    /// Voices that are dramatically slow — musical, effect-heavy, or drawn-out.
+    /// When text exceeds one sentence, these get swapped for a fast voice.
+    static let slowWildcardKeys: Set<WildcardKey> = [
+        .goodNews, .badNews, .cellos, .organ, .jester
+    ]
+
+    /// Max character count before slow voices get swapped — roughly one sentence.
+    static let slowVoiceCharacterLimit = 140
+
     /// Type-safe voice keys for AI wildcard selection.
     /// Raw values match the keys in the eval prompt and JSON response.
     enum WildcardKey: String, CaseIterable {
