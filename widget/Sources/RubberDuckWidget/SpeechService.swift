@@ -688,6 +688,8 @@ class SpeechService: ObservableObject {
     func exitConversation() {
         guard isInConversation else { return }
         isInConversation = false
+        isWakeActive = false
+        lastHeard = ""
         conversationTimer?.cancel()
         conversationTimer = nil
         wakeWordProcessor.reset()
