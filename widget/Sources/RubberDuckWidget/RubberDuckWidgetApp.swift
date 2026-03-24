@@ -12,6 +12,7 @@
 
 import SwiftUI
 import ObjectiveC
+import ServiceManagement
 
 @main
 struct RubberDuckWidgetApp: App {
@@ -72,8 +73,11 @@ struct RubberDuckWidgetApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
         .commands {
+            CommandMenu("Setup") {
+                SetupMenuContent()
+            }
             CommandGroup(replacing: .help) {
-                HelpMenuButton()
+                HelpMenuContent()
             }
         }
 
@@ -83,6 +87,10 @@ struct RubberDuckWidgetApp: App {
         .windowStyle(.automatic)
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+
+        Settings {
+            PreferencesView()
+        }
     }
 
     // MARK: - Service Wiring
@@ -273,6 +281,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 window.alphaValue = 1
             }
             NSApp.activate()
+
+            // Strip default File/Edit/View/Window menus — they're useless for a widget
+            if let mainMenu = NSApp.mainMenu {
+                for title in ["File", "Edit", "View", "Window"] {
+                    if let item = mainMenu.items.first(where: { $0.title == title }) {
+                        mainMenu.removeItem(item)
+                    }
+                }
+            }
+
+            // Check for Claude after UI is ready
+            self.checkForClaude()
+        }
+    }
+
+    // MARK: - Claude detection on launch
+
+    private func checkForClaude() {
+        // Give the window a moment to render before showing alerts
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            let hasCLI = PluginInstaller.findClaude() != nil
+
+            let hasDesktop: Bool = {
+                if let urls = LSCopyApplicationURLsForBundleIdentifier(
+                    "com.anthropic.claudefordesktop" as CFString, nil
+                )?.takeRetainedValue() as? [URL] {
+                    return !urls.isEmpty
+                }
+                return false
+            }()
+
+            if !hasCLI && !hasDesktop {
+                DuckLog.log("[startup] No Claude CLI or Desktop found — showing install guide")
+                PluginInstaller.onSpeak?(
+                    "Hey! You'll need Claude installed for me to work. Let me help you set that up."
+                )
+                PluginInstaller.showClaudeNotFound()
+            } else {
+                DuckLog.log("[startup] Claude detected — CLI: \(hasCLI), Desktop: \(hasDesktop)")
+            }
         }
     }
 
@@ -362,15 +410,101 @@ class DraggableView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 }
 
+// MARK: - Setup Menu
+
+struct SetupMenuContent: View {
+    var body: some View {
+        if PluginInstaller.findClaude() == nil {
+            Button {
+                StatusBarManager.installClaudeCLIAction()
+            } label: {
+                Label("Install Claude Code...", systemImage: "arrow.down.circle.fill")
+            }
+        } else {
+            Button {} label: {
+                Label("Claude Code Installed", systemImage: "checkmark.circle.fill")
+            }
+            .disabled(true)
+        }
+
+        Button {
+            PluginInstaller.install()
+        } label: {
+            Label("Install / Update Plugin", systemImage: "puzzlepiece.extension.fill")
+        }
+
+        Button {
+            PluginInstaller.exportPluginZip()
+        } label: {
+            Label("Export Plugin Zip...", systemImage: "square.and.arrow.up")
+        }
+
+        Divider()
+
+        Toggle("Launch at Login", isOn: Binding(
+            get: { SMAppService.mainApp.status == .enabled },
+            set: { enabled in
+                do {
+                    if enabled {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+                } catch {
+                    print("[app] Launch at Login toggle failed: \(error)")
+                }
+            }
+        ))
+
+        Divider()
+
+        Toggle(isOn: Binding(
+            get: { DuckConfig.experimentalEnabled },
+            set: { DuckConfig.experimentalEnabled = $0 }
+        )) {
+            Label("Experimental Features", systemImage: "flask.fill")
+        }
+
+        if DuckConfig.experimentalEnabled {
+            Button {
+                GeminiExtensionInstaller.install()
+            } label: {
+                Label("Install Gemini Extension", systemImage: "puzzlepiece.extension.fill")
+            }
+            Button {
+                CLISession.launchPlain("gemini")
+            } label: {
+                Label("Launch Gemini CLI", systemImage: "terminal.fill")
+            }
+        }
+    }
+}
+
 // MARK: - Help Menu
 
-struct HelpMenuButton: View {
+struct HelpMenuContent: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Duck Duck Duck Help") {
+        Button {
+            AppDelegate.coordinator?.runSetupGuide()
+        } label: {
+            Label("Get Started", systemImage: "sparkles")
+        }
+
+        Button {
+            NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.servicePort)")!)
+        } label: {
+            Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent")
+        }
+
+        Divider()
+
+        Button {
             NSApp.activate()
             openWindow(id: "help")
+        } label: {
+            Label("User Manual", systemImage: "book.fill")
         }
     }
 }

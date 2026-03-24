@@ -56,6 +56,13 @@ enum DuckConfig {
         }
     }
 
+    // MARK: - Experimental Features
+
+    static var experimentalEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "experimentalEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "experimentalEnabled") }
+    }
+
     // MARK: - API Keys (Generic)
 
     /// Resolve an API key from env var → Application Support file.

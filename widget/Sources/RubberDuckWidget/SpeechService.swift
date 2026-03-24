@@ -53,6 +53,7 @@ class SpeechService: ObservableObject {
     @Published var selectedMicName: String = ""
     @Published var lastError: String = ""
     @Published var currentUtterance: String = ""
+    @Published var isSpeaking: Bool = false
 
     // Listen mode (persisted)
     @Published var listenMode: ListenMode = {
@@ -67,7 +68,7 @@ class SpeechService: ObservableObject {
 
     // Config
     var wakeWord: String = "ducky" { didSet { wakeWordProcessor.wakeWord = wakeWord } }
-    @Published var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckConfig.ttsVoice {
+    @Published var ttsVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckVoices.wildcardSayName {
         didSet {
             let engineVoice = DuckVoices.resolvedSayName(for: ttsVoice)
             tts.voice = engineVoice
@@ -326,6 +327,8 @@ class SpeechService: ObservableObject {
     /// Whether the current voice is Silent (speech bubble only, no TTS).
     var isSilent: Bool { ttsVoice == DuckVoices.silentSayName }
 
+    private var speakingPollTimer: Task<Void, Never>?
+
     func speak(_ text: String, skipChirpWait: Bool = false) {
         currentUtterance = text
         utteranceClearTimer?.cancel()
@@ -340,12 +343,26 @@ class SpeechService: ObservableObject {
         }
         // Skip TTS when Silent — bubble-only mode
         if !isSilent {
+            isSpeaking = true
             activeTTS.speak(text, skipChirpWait: skipChirpWait)
+            // Poll gate.muted to detect when say finishes
+            speakingPollTimer?.cancel()
+            speakingPollTimer = Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                    if !self.activeTTS.isMuted {
+                        await MainActor.run { self.isSpeaking = false }
+                        break
+                    }
+                }
+            }
         }
     }
 
     func stopSpeaking() {
         activeTTS.stop()
+        speakingPollTimer?.cancel()
+        isSpeaking = false
         utteranceClearTimer?.cancel()
         currentUtterance = ""
     }

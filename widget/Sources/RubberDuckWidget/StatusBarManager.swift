@@ -69,25 +69,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // --- Volume slider ---
         menu.addItem(volumeSliderItem())
 
-        // --- Pause / Resume ---
-        if AppDelegate.isDuckActive {
-            let pauseItem = NSMenuItem(title: "Pause Duck, Duck, Duck", action: #selector(turnOffDuck), keyEquivalent: "")
-            pauseItem.target = self
-            if let icon = svgMenuIcon("no-duck-symbol") {
-                pauseItem.image = icon
-            }
-            menu.addItem(pauseItem)
-        } else {
-            let resumeItem = NSMenuItem(title: "Resume Duck, Duck, Duck", action: #selector(turnOnDuck), keyEquivalent: "")
-            resumeItem.target = self
-            if let icon = svgMenuIcon("duck-symbol") {
-                resumeItem.image = icon
-            }
-            menu.addItem(resumeItem)
-        }
-
-        menu.addItem(.separator())
-
         // --- Mode submenu ---
         let currentMode = coordinator.mode
         let modeItem = NSMenuItem(title: currentMode.label, action: nil, keyEquivalent: "")
@@ -111,53 +92,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
-
-        // --- Intelligence submenu ---
-        let providerLabel: String = {
-            switch DuckConfig.evalProvider {
-            case .foundation: return "Foundation"
-            case .anthropic: return "Haiku"
-            case .gemini: return "Gemini"
-            }
-        }()
-        let intelligenceItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
-        intelligenceItem.image = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: "Intelligence")
-        let intelligenceMenu = NSMenu()
-
-        if duckServer.foundationModelsAvailable {
-            let foundationItem = NSMenuItem(title: "Foundation", action: #selector(setProviderFoundation), keyEquivalent: "")
-            foundationItem.target = self
-            foundationItem.state = DuckConfig.evalProvider == .foundation ? .on : .off
-            foundationItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Apple")
-            foundationItem.subtitle = "Free on-device LLM"
-            intelligenceMenu.addItem(foundationItem)
-        }
-
-        let anthropicItem = NSMenuItem(title: "Haiku", action: #selector(setProviderAnthropic), keyEquivalent: "")
-        anthropicItem.target = self
-        anthropicItem.state = DuckConfig.evalProvider == .anthropic ? .on : .off
-        anthropicItem.image = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Anthropic")
-        anthropicItem.subtitle = "Requires Claude API key"
-        intelligenceMenu.addItem(anthropicItem)
-
-        let geminiItem = NSMenuItem(title: "Gemini", action: #selector(setProviderGemini), keyEquivalent: "")
-        geminiItem.target = self
-        geminiItem.state = DuckConfig.evalProvider == .gemini ? .on : .off
-        geminiItem.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Google")
-        geminiItem.subtitle = "Requires Gemini API key"
-        intelligenceMenu.addItem(geminiItem)
-
-        let hasAnyKey = !DuckConfig.anthropicAPIKey.isEmpty || !DuckConfig.geminiAPIKey.isEmpty
-        if hasAnyKey {
-            intelligenceMenu.addItem(.separator())
-            let removeKeyItem = NSMenuItem(title: "Delete API Key(s)", action: #selector(removeAPIKey), keyEquivalent: "")
-            removeKeyItem.target = self
-            removeKeyItem.image = NSImage(systemSymbolName: "trash.fill", accessibilityDescription: "Remove")
-            intelligenceMenu.addItem(removeKeyItem)
-        }
-
-        intelligenceItem.submenu = intelligenceMenu
-        menu.addItem(intelligenceItem)
 
         // --- Voice submenu ---
         let isWildcard = speechService.isWildcardMode
@@ -195,95 +129,28 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // --- Status ---
-        let currentListenMode = speechService.listenMode
-
-        // Hardware / mic device — Ducky first, then mic status below
-        if serialManager.isConnected {
-            let duckItem = disabledItem("Ducky connected")
-            duckItem.image = NSImage(systemSymbolName: "duck.fill", accessibilityDescription: "Ducky")
-            let micSubtext: String
-            switch currentListenMode {
-            case .active: micSubtext = "Listening for wake word \"Ducky\""
-            case .permissionsOnly: micSubtext = "Listening for permissions"
-            case .off: micSubtext = "Mic off"
+        // --- Pause / Resume ---
+        if AppDelegate.isDuckActive {
+            let pauseItem = NSMenuItem(title: "Pause Duck, Duck, Duck", action: #selector(turnOffDuck), keyEquivalent: "")
+            pauseItem.target = self
+            if let icon = svgMenuIcon("no-duck-symbol") {
+                pauseItem.image = icon
             }
-            duckItem.subtitle = micSubtext
-            menu.addItem(duckItem)
-        } else if currentListenMode != .off {
-            let micName = speechService.selectedMicName.isEmpty ? "Default microphone" : speechService.selectedMicName
-            let item = disabledItem(micName)
-            item.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Microphone")
-            let micSubtext: String
-            switch currentListenMode {
-            case .active: micSubtext = "Listening for wake word \"Ducky\""
-            case .permissionsOnly: micSubtext = "Listening for permissions"
-            case .off: micSubtext = ""
+            menu.addItem(pauseItem)
+        } else {
+            let resumeItem = NSMenuItem(title: "Resume Duck, Duck, Duck", action: #selector(turnOnDuck), keyEquivalent: "")
+            resumeItem.target = self
+            if let icon = svgMenuIcon("duck-symbol") {
+                resumeItem.image = icon
             }
-            item.subtitle = micSubtext
-            menu.addItem(item)
+            menu.addItem(resumeItem)
         }
 
-        if duckServer.pluginConnected {
-            menu.addItem(disabledItem("Plugin connected"))
-        }
-
-        menu.addItem(.separator())
-
-        // --- Setup ---
+        // --- Launch sessions ---
         let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
         claudeSession.target = self
         claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
         menu.addItem(claudeSession)
-
-        let pluginTitle = duckServer.pluginConnected ? "Update Claude Plugin" : "Install Claude Plugin"
-        let pluginItem = NSMenuItem(title: pluginTitle, action: #selector(installPlugin), keyEquivalent: "")
-        pluginItem.target = self
-        pluginItem.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Plugin")
-        menu.addItem(pluginItem)
-
-        // --- Startup selector ---
-        let isLoginEnabled = SMAppService.mainApp.status == .enabled
-        let startupLabel = isLoginEnabled ? "Launch at Login" : "Manual"
-        let startupIcon = isLoginEnabled ? "play.fill" : "hand.point.up.fill"
-        let startupItem = NSMenuItem(title: startupLabel, action: nil, keyEquivalent: "")
-        startupItem.image = NSImage(systemSymbolName: startupIcon, accessibilityDescription: startupLabel)
-        let startupMenu = NSMenu()
-
-        let loginOption = NSMenuItem(title: "Launch at Login", action: #selector(setLaunchAtLogin), keyEquivalent: "")
-        loginOption.target = self
-        loginOption.state = isLoginEnabled ? .on : .off
-        loginOption.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Auto")
-        startupMenu.addItem(loginOption)
-
-        let manualOption = NSMenuItem(title: "Manual", action: #selector(setManualLaunch), keyEquivalent: "")
-        manualOption.target = self
-        manualOption.state = isLoginEnabled ? .off : .on
-        manualOption.image = NSImage(systemSymbolName: "hand.point.up.fill", accessibilityDescription: "Manual")
-        startupMenu.addItem(manualOption)
-
-        startupItem.submenu = startupMenu
-        menu.addItem(startupItem)
-
-        // --- Experimental ---
-        let experimentalItem = NSMenuItem(title: "Experimental", action: nil, keyEquivalent: "")
-        experimentalItem.image = NSImage(systemSymbolName: "flask", accessibilityDescription: "Experimental")
-        let experimentalMenu = NSMenu()
-
-        let geminiInstall = NSMenuItem(title: "Install Gemini Extension", action: #selector(installGeminiExtension), keyEquivalent: "")
-        geminiInstall.target = self
-        geminiInstall.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Extension")
-        geminiInstall.subtitle = "Experimental — eval scoring and alerts only"
-        experimentalMenu.addItem(geminiInstall)
-
-        let geminiLaunch = NSMenuItem(title: "Launch Gemini CLI", action: #selector(startGeminiSession), keyEquivalent: "")
-        geminiLaunch.target = self
-        geminiLaunch.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
-        geminiLaunch.subtitle = "Experimental — comments and notifications only"
-        experimentalMenu.addItem(geminiLaunch)
-
-        experimentalItem.submenu = experimentalMenu
-        menu.addItem(experimentalItem)
 
         menu.addItem(.separator())
 
@@ -404,6 +271,25 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func startClaudeSession() {
         CLISession.launch()
+    }
+
+    @objc private func installClaudeCLI() {
+        Self.installClaudeCLIAction()
+    }
+
+    /// Install Claude Code CLI via Terminal — callable from both NSMenu and SwiftUI.
+    @MainActor
+    static func installClaudeCLIAction() {
+        PluginInstaller.onSpeak?("Installing Claude Code. Watch the Terminal.")
+        let installCmd = """
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc 2>/dev/null; \
+            export PATH="$HOME/.local/bin:$PATH"; \
+            curl -fsSL https://claude.ai/install.sh | bash; \
+            echo ''; \
+            echo '✅ Claude Code installed! You can close this window.'; \
+            echo 'Go back to Duck Duck Duck and click Install Plugin.'
+            """
+        CLISession.launchPlain(installCmd)
     }
 
     @objc private func startGeminiSession() {
@@ -566,7 +452,7 @@ enum PluginInstaller {
 
     // MARK: - Automatic install (unsandboxed)
 
-    private static func findClaude() -> String? {
+    static func findClaude() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return findTool("claude", extraPaths: [
             "\(home)/.local/bin/claude",
@@ -670,7 +556,7 @@ enum PluginInstaller {
     // MARK: - Claude not found
 
     @MainActor
-    private static func showClaudeNotFound() {
+    static func showClaudeNotFound() {
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "Claude Code Not Found"
@@ -739,7 +625,7 @@ enum PluginInstaller {
     // MARK: - Plugin zip export (for Claude Desktop upload)
 
     @MainActor
-    private static func exportPluginZip() {
+    static func exportPluginZip() {
         guard let pluginDir = findBundledPlugin() else {
             onSpeak?("Couldn't find the bundled plugin. That's weird.")
             let alert = NSAlert()

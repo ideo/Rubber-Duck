@@ -13,6 +13,7 @@ struct DuckView: View {
 
     @State private var thinkingEyeX: CGFloat = 0
     @State private var thinkingEyeY: CGFloat = 0
+    @State private var beakFlutterTimer: Timer?
 
     /// Show the speech bubble when: Silent voice selected, OR volume is 0, AND there's text to show.
     private var speechBubbleVisible: Bool {
@@ -56,9 +57,19 @@ struct DuckView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            // Tap the duck to stop speaking (interrupt story reading, etc.)
             if !speechService.currentUtterance.isEmpty {
+                // Tap while speaking → stop speaking
                 speechService.stopSpeaking()
+            } else if NSApp.isActive {
+                // Already focused → toggle pause/resume
+                if AppDelegate.isDuckActive {
+                    AppDelegate.turnOff()
+                } else {
+                    AppDelegate.turnOn()
+                }
+            } else {
+                // Not focused → just bring to front (don't toggle)
+                NSApp.activate(ignoringOtherApps: true)
             }
         }
         .contextMenu { duckContextMenu }
@@ -79,6 +90,13 @@ struct DuckView: View {
             } else {
                 thinkingEyeX = 0
                 thinkingEyeY = 0
+            }
+        }
+        .onChange(of: speechService.isSpeaking) {
+            if speechService.isSpeaking {
+                startBeakFlutter()
+            } else {
+                stopBeakFlutter()
             }
         }
     }
@@ -164,17 +182,18 @@ struct DuckView: View {
 
     private var duckBeak: some View {
         ZStack {
-            // Beak PNG — 60% of body width
+            // Beak PNG — 60% of body width (no animation — stays static)
             beakImage
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 67, height: 34)
+                .animation(nil, value: coordinator.expression.beakOpen)
 
             // Mouth gap (visible when speaking/reacting)
             Ellipse()
                 .fill(Color(red: 0.15, green: 0.05, blue: 0.02))
-                .frame(width: 20, height: 3 + coordinator.expression.beakOpen * 8)
-                .offset(y: 4 + coordinator.expression.beakOpen * 3)
+                .frame(width: 20, height: 4 + coordinator.expression.beakOpen * 8)
+                .offset(x: -1, y: -1 + coordinator.expression.beakOpen * 3)
                 .opacity(coordinator.expression.beakOpen > 0.05 ? 1 : 0)
                 .animation(.spring(response: 0.2), value: coordinator.expression.beakOpen)
 
@@ -192,7 +211,7 @@ struct DuckView: View {
 
     @ViewBuilder
     private var duckContextMenu: some View {
-        // Mode selector — mic behavior is baked into each mode
+        // Mode selector
         Menu {
             ForEach(DuckMode.allCases, id: \.rawValue) { mode in
                 Button {
@@ -237,21 +256,6 @@ struct DuckView: View {
 
         Divider()
 
-        // Get Started — always available, guides setup
-        Button {
-            coordinator.runSetupGuide()
-        } label: {
-            Label("Get Started", systemImage: "sparkles")
-        }
-
-        if !duckServer.pluginConnected {
-            Button {
-                PluginInstaller.install()
-            } label: {
-                Label("Install Claude Plugin", systemImage: "puzzlepiece.extension.fill")
-            }
-        }
-
         Button {
             CLISession.launch()
         } label: {
@@ -275,6 +279,26 @@ struct DuckView: View {
         (-4, -3), (0, -3), (4, -3),   // top row
         (-4,  0), (0,  0), (4,  0),   // bottom row (center = home)
     ]
+
+    private func startBeakFlutter() {
+        beakFlutterTimer?.invalidate()
+        beakFlutterTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak coordinator] _ in
+            DispatchQueue.main.async {
+                let open = CGFloat.random(in: 0.2...0.8)
+                withAnimation(.spring(response: 0.1)) {
+                    coordinator?.expression.beakOpen = open
+                }
+            }
+        }
+    }
+
+    private func stopBeakFlutter() {
+        beakFlutterTimer?.invalidate()
+        beakFlutterTimer = nil
+        withAnimation(.spring(response: 0.2)) {
+            coordinator.expression.beakOpen = 0.0
+        }
+    }
 
     private func startThinkingAnimation() {
         guard coordinator.isThinking else { return }
