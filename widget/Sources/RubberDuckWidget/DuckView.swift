@@ -56,22 +56,6 @@ struct DuckView: View {
                 .padding(4)
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            if !speechService.currentUtterance.isEmpty {
-                // Tap while speaking → stop speaking
-                speechService.stopSpeaking()
-            } else if NSApp.isActive {
-                // Already focused → toggle pause/resume
-                if AppDelegate.isDuckActive {
-                    AppDelegate.turnOff()
-                } else {
-                    AppDelegate.turnOn()
-                }
-            } else {
-                // Not focused → just bring to front (don't toggle)
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        }
         .contextMenu { duckContextMenu }
         .onChange(of: evalService.evalCount) {
             coordinator.handleNewEval()
@@ -128,19 +112,7 @@ struct DuckView: View {
                 duckBeak
                     .offset(y: 20)
 
-                // Cheek blush (visible when happy — flanking the beak)
-                if let s = evalService.scores, s.soundness > 0.3 {
-                    HStack(spacing: 72) {
-                        Ellipse()
-                            .fill(DuckTheme.cheekColor)
-                            .frame(width: 14, height: 10)
-                        Ellipse()
-                            .fill(DuckTheme.cheekColor)
-                            .frame(width: 14, height: 10)
-                    }
-                    .offset(y: 18)
-                    .opacity(Double(s.soundness) * 0.5)
-                }
+
             }
             .allowsHitTesting(false)
 

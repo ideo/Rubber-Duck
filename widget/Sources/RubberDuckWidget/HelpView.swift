@@ -47,17 +47,37 @@ struct HelpView: View {
 
                 section("Modes", """
                 **Permissions Only** — Silent watchdog. He only speaks up when Claude \
-                needs permission to do something. The strong, silent type.
+                needs permission to do something. Listens for "yes" or "no" — that's it. \
+                The strong, silent type.
 
                 **Companion** — The full experience. Opinions, permissions, voice control. \
+                Listens for the wake word "ducky" so you can talk to him. \
                 The ride-or-die supporter of your dreams, or a duck with nothing but \
                 sharp wisecracks. Depends on the day.
 
-                **Companion (No Mic)** — Same opinions, no listening. For when you want \
-                to be judged but not heard.
+                **Companion (No Mic)** — Same opinions, no listening. No microphone access \
+                at all. For when you want to be judged but not heard.
 
                 **Relay** — Say "ducky" followed by a command and it goes straight into \
                 Claude Code. Hands-free coding. Requires tmux — see below.
+                """)
+
+                section("Microphone & Audio", """
+                Yes, he can hear you. He uses your Mac's built-in mic to listen for \
+                voice commands — all processed locally on your Mac. Nothing leaves the device.
+
+                **What he listens for depends on the mode:**
+                • Companion: the wake word "ducky", then your question or command
+                • Relay: "ducky" followed by commands for Claude Code
+                • Permissions Only: "yes" or "no" when Claude asks permission
+                • No Mic: nothing. Mic is completely off.
+
+                **Not hearing you?** System Settings → Privacy & Security → Microphone → \
+                make sure Duck Duck Duck is enabled. Also check that your Mac's input \
+                volume isn't muted.
+
+                **Physical duck?** Audio routes through the Teensy hardware via USB. \
+                Unplug the cable and it falls back to your Mac's mic and speakers.
                 """)
 
                 section("How Scoring Works", """

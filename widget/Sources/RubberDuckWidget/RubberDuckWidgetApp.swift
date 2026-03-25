@@ -90,6 +90,7 @@ struct RubberDuckWidgetApp: App {
 
         Settings {
             PreferencesView()
+                .environmentObject(speechService)
         }
     }
 
@@ -141,6 +142,8 @@ struct RubberDuckWidgetApp: App {
                         // Read the full Moby Duck story via TTS — no LLM, just reading aloud
                         speech.speak("Alright. Settle in. ... " + DuckHelpService.fullStoryText)
                         speech.restartAfterTTS(thenEnterConversation: false)
+                        // Story told — fully reset backstory so next question goes back to normal help
+                        Task { await helpService.resetBackstoryCompletely() }
                     } else {
                         speech.speak(answer ?? "Not sure about that one.")
                         speech.restartAfterTTS(thenEnterConversation: true)
@@ -240,7 +243,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
 
+    func applicationDidResignActive(_ notification: Notification) {
+        // When another app takes focus (e.g. after Settings closes),
+        // re-activate after a beat so the duck window stays saturated.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if let duck = Self.duckWindow, duck.isVisible {
+                NSApp.activate()
+                duck.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Strip useless default menus (View, Edit) — no SwiftUI API for this.
+        // Delayed because SwiftUI rebuilds menus after applicationDidFinishLaunching.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if let mainMenu = NSApp.mainMenu {
+                let removeNames: Set<String> = ["View", "Edit"]
+                for item in mainMenu.items where removeNames.contains(item.title) {
+                    mainMenu.removeItem(item)
+                }
+            }
+        }
+
         // Disable state restoration — it recreates windows without our properties
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame main")
         UserDefaults.standard.removeObject(forKey: "NSWindowAutosaveFrames")
@@ -413,6 +438,8 @@ class DraggableView: NSView {
 // MARK: - Setup Menu
 
 struct SetupMenuContent: View {
+    @AppStorage("experimentalEnabled") private var experimentalEnabled = false
+
     var body: some View {
         if PluginInstaller.findClaude() == nil {
             Button {
@@ -458,14 +485,11 @@ struct SetupMenuContent: View {
 
         Divider()
 
-        Toggle(isOn: Binding(
-            get: { DuckConfig.experimentalEnabled },
-            set: { DuckConfig.experimentalEnabled = $0 }
-        )) {
+        Toggle(isOn: $experimentalEnabled) {
             Label("Experimental Features", systemImage: "flask.fill")
         }
 
-        if DuckConfig.experimentalEnabled {
+        if experimentalEnabled {
             Button {
                 GeminiExtensionInstaller.install()
             } label: {

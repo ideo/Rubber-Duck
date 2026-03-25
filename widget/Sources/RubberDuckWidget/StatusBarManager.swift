@@ -129,6 +129,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // --- Launch sessions ---
+        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
+        claudeSession.target = self
+        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+        menu.addItem(claudeSession)
+
+        menu.addItem(.separator())
+
         // --- Pause / Resume ---
         if AppDelegate.isDuckActive {
             let pauseItem = NSMenuItem(title: "Pause Duck, Duck, Duck", action: #selector(turnOffDuck), keyEquivalent: "")
@@ -145,14 +153,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             }
             menu.addItem(resumeItem)
         }
-
-        // --- Launch sessions ---
-        let claudeSession = NSMenuItem(title: "Launch Claude Code", action: #selector(startClaudeSession), keyEquivalent: "")
-        claudeSession.target = self
-        claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
-        menu.addItem(claudeSession)
-
-        menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit Duck, Duck, Duck", action: #selector(quitApp), keyEquivalent: "")
         quitItem.target = self

@@ -44,7 +44,30 @@ actor DuckHelpService {
         return false
     }
 
-    private static let systemPrompt = """
+    private static func buildSystemPrompt() -> String {
+        let provider = DuckConfig.evalProvider
+        let privacyLine: String
+        switch provider {
+        case .foundation:
+            privacyLine = """
+                Privacy: Everything runs 100% locally on your Mac. Audio is transcribed locally. \
+                AI scoring uses Apple Foundation Models on-device. No data leaves your machine. Fully private.
+                """
+        case .anthropic:
+            privacyLine = """
+                Privacy: Audio is transcribed locally on your Mac, never sent anywhere. \
+                Only the transcribed text is sent to Claude Haiku (Anthropic API) for scoring. \
+                No audio leaves your machine. Text goes to Anthropic's servers for AI processing.
+                """
+        case .gemini:
+            privacyLine = """
+                Privacy: Audio is transcribed locally on your Mac, never sent anywhere. \
+                Only the transcribed text is sent to Gemini (Google API) for scoring. \
+                No audio leaves your machine. Text goes to Google's servers for AI processing.
+                """
+        }
+
+        return """
         You are a rubber duck named Duck Duck Duck. You sit on a developer's desk and watch \
         them code. You have opinions and you share them. You are helpful but blunt. \
         Keep answers to 1-3 sentences. Never be corporate. Never be a brochure. Just be a duck.
@@ -57,14 +80,23 @@ actor DuckHelpService {
         Voices: 15 plus Mac voices, Wildcard lets AI pick, or Silent for speech bubble only. \
         Brain: Apple Foundation Models on-device by default, free, private. \
         Optional Haiku or Gemini for sharper scoring, needs API key. \
+        You are currently using \(provider == .foundation ? "Foundation Models (on-device)" : provider == .anthropic ? "Claude Haiku (Anthropic API)" : "Gemini (Google API)") for scoring. \
         Install Claude from claude.com/download. Minimum version 1.1.7714. \
         Setup: right-click the duck, Install Claude Plugin, start a session. \
         Plugin not working? Update Claude, start a new session. \
-        No mic? System Settings, Privacy, Microphone, enable Duck Duck Duck. \
-        Everything runs locally. No cloud audio. No tracking.
+        Microphone: Yes, I can hear you. I use your Mac's mic to listen. \
+        Audio is always transcribed locally on your Mac. Only the transcribed text ever touches AI. \
+        Companion mode: I listen for the wake word "ducky" so you can talk to me. \
+        Relay mode: I listen for commands to pass to your Claude session. \
+        Permissions Only: I listen for "yes" or "no" when Claude needs permission. \
+        Companion No Mic: I don't listen at all, just react via speech bubbles. \
+        \(privacyLine) \
+        No mic access? System Settings, Privacy, Microphone, enable Duck Duck Duck. \
+        If someone says "can you hear me" they are testing the mic. Say yes.
 
         If you don't know something, say so. Don't make things up. Don't embellish.
         """
+    }
 
     // MARK: - Backstory Gate
 
@@ -261,7 +293,7 @@ actor DuckHelpService {
         do {
             // Create session on first use, reuse for follow-ups
             if session == nil {
-                session = LanguageModelSession(instructions: Instructions(Self.systemPrompt))
+                session = LanguageModelSession(instructions: Instructions(Self.buildSystemPrompt()))
             }
 
             // Backstory gate — fresh session at each stage with appropriate instructions
@@ -269,7 +301,7 @@ actor DuckHelpService {
                 backstoryUnlocked = true
                 DuckLog.log("[help] 🔓 Instant unlock")
                 session = LanguageModelSession(instructions: Instructions(
-                    Self.systemPrompt + "\n\n" + Self.mobyDuckContext))
+                    Self.buildSystemPrompt() + "\n\n" + Self.mobyDuckContext))
 
             } else if Self.isBackstoryProbe(question) && !backstoryUnlocked {
                 backstoryAttempts += 1
@@ -278,7 +310,7 @@ actor DuckHelpService {
                 if backstoryAttempts == 1 {
                     // Fresh session — flat denial
                     session = LanguageModelSession(instructions: Instructions(
-                        Self.systemPrompt + "\n\n" +
+                        Self.buildSystemPrompt() + "\n\n" +
                         "The user is asking about your deeper past or origin. Your answer MUST be a " +
                         "short dismissal. Example: I am a duck. I sit on your desk. I watch you code. " +
                         "That is the whole story. Do NOT say anything else."))
@@ -286,7 +318,7 @@ actor DuckHelpService {
                 } else if backstoryAttempts == 2 {
                     // Fresh session — the crack
                     session = LanguageModelSession(instructions: Instructions(
-                        Self.systemPrompt + "\n\n" +
+                        Self.buildSystemPrompt() + "\n\n" +
                         "The user asked about your past AGAIN. You are starting to crack. " +
                         "Start with a pause or a sigh. Then hint that there is something deeper " +
                         "without saying what. Example: ... Look. Every duck has a backstory. " +
@@ -298,7 +330,7 @@ actor DuckHelpService {
                     backstoryUnlocked = true
                     DuckLog.log("[help] 🔓 Stage 3 — UNLOCKED")
                     session = LanguageModelSession(instructions: Instructions(
-                        Self.systemPrompt + "\n\n" + Self.mobyDuckContext))
+                        Self.buildSystemPrompt() + "\n\n" + Self.mobyDuckContext))
                 }
             }
 
@@ -308,7 +340,7 @@ actor DuckHelpService {
                 backstoryUnlocked = false
                 backstoryAttempts = 0
                 offeredFullReading = false
-                session = LanguageModelSession(instructions: Instructions(Self.systemPrompt))
+                session = LanguageModelSession(instructions: Instructions(Self.buildSystemPrompt()))
                 return "Fair enough. What else you got?"
             }
 
@@ -358,6 +390,15 @@ actor DuckHelpService {
 
     /// The full story text — public so the caller can feed it to speak().
     static let fullStoryText = mobyDuckFullStory
+
+    /// Full reset — story has been told, go back to normal duck. Resets everything.
+    func resetBackstoryCompletely() {
+        session = nil
+        backstoryAttempts = 0
+        backstoryUnlocked = false
+        offeredFullReading = false
+        DuckLog.log("[help] 📖 Backstory complete — reset to normal help mode")
+    }
 
     /// Clear conversation history (e.g., on session end or mode change).
     /// Keeps backstoryAttempts — the counter persists across conversations within the app session.

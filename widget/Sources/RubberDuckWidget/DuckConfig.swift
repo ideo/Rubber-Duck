@@ -63,13 +63,15 @@ enum DuckConfig {
         set { UserDefaults.standard.set(newValue, forKey: "experimentalEnabled") }
     }
 
-    // MARK: - API Keys (Generic)
+    // MARK: - API Keys (File-based in Application Support)
 
-    /// Resolve an API key from env var → Application Support file.
-    private static func resolveKey(envVar: String, filename: String) -> String? {
+    /// Resolve an API key: env var → file in sandbox container.
+    private static func resolveKey(envVar: String, filename: String, keychainAccount: String) -> String? {
+        // 1. Environment variable (dev override)
         if let envKey = ProcessInfo.processInfo.environment[envVar], !envKey.isEmpty {
             return envKey
         }
+        // 2. File in Application Support
         let keyFile = storageDir.appendingPathComponent(filename)
         if let fileKey = try? String(contentsOf: keyFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !fileKey.isEmpty {
@@ -78,22 +80,28 @@ enum DuckConfig {
         return nil
     }
 
-    /// Save an API key to Application Support.
-    private static func saveKey(_ key: String, filename: String, label: String) {
+    /// Save an API key to a file in Application Support.
+    private static func saveKey(_ key: String, keychainAccount: String, label: String) {
+        let filenames: [String: String] = ["Anthropic": "api_key", "Gemini": "gemini_api_key"]
+        guard let filename = filenames[label] else { return }
         let keyFile = storageDir.appendingPathComponent(filename)
         do {
             try key.write(to: keyFile, atomically: true, encoding: .utf8)
-            print("[config] \(label) API key saved to \(keyFile.path)")
+            // Set file permissions to owner-only (0600)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyFile.path)
+            DuckLog.log("[config] \(label) API key saved to file")
         } catch {
-            print("[config] Failed to save \(label) API key: \(error)")
+            DuckLog.log("[config] Failed to save \(label) API key: \(error)")
         }
     }
 
-    /// Remove a saved API key.
-    private static func removeKey(filename: String, label: String) {
+    /// Remove an API key file.
+    private static func removeKey(keychainAccount: String, label: String) {
+        let filenames: [String: String] = ["Anthropic": "api_key", "Gemini": "gemini_api_key"]
+        guard let filename = filenames[label] else { return }
         let keyFile = storageDir.appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: keyFile)
-        print("[config] \(label) API key removed")
+        DuckLog.log("[config] \(label) API key removed")
     }
 
     /// Ensure an API key is available, prompting if needed. Returns true if ready.
@@ -138,16 +146,16 @@ enum DuckConfig {
     // MARK: - Anthropic API
 
     static var anthropicAPIKey: String = {
-        resolveKey(envVar: "ANTHROPIC_API_KEY", filename: "api_key") ?? ""
+        resolveKey(envVar: "ANTHROPIC_API_KEY", filename: "api_key", keychainAccount: "anthropic_api_key") ?? ""
     }()
 
     static func saveAPIKey(_ key: String) {
-        saveKey(key, filename: "api_key", label: "Anthropic")
+        saveKey(key, keychainAccount: "anthropic_api_key", label: "Anthropic")
         anthropicAPIKey = key
     }
 
     static func removeAPIKey() {
-        removeKey(filename: "api_key", label: "Anthropic")
+        removeKey(keychainAccount: "anthropic_api_key", label: "Anthropic")
         anthropicAPIKey = ""
     }
 
@@ -165,16 +173,16 @@ enum DuckConfig {
     // MARK: - Gemini API
 
     static var geminiAPIKey: String = {
-        resolveKey(envVar: "GEMINI_API_KEY", filename: "gemini_api_key") ?? ""
+        resolveKey(envVar: "GEMINI_API_KEY", filename: "gemini_api_key", keychainAccount: "gemini_api_key") ?? ""
     }()
 
     static func saveGeminiAPIKey(_ key: String) {
-        saveKey(key, filename: "gemini_api_key", label: "Gemini")
+        saveKey(key, keychainAccount: "gemini_api_key", label: "Gemini")
         geminiAPIKey = key
     }
 
     static func removeGeminiAPIKey() {
-        removeKey(filename: "gemini_api_key", label: "Gemini")
+        removeKey(keychainAccount: "gemini_api_key", label: "Gemini")
         geminiAPIKey = ""
     }
 

@@ -23,88 +23,48 @@ When users say "ducky, can you hear me" as a mic check, the duck answers as if i
 
 ---
 
-## Voice command popover — needs polish
+## ~~Voice command popover~~ ✅ DONE
+Popover resizes dynamically, arrow points away from duck (user's speech, not duck's). Looks good.
 
-The popover showing mic input text (anchored to the red listening dot) works but needs improvement:
-- **Responsiveness** — doesn't resize smoothly as STT text streams in. Fixed width feels static.
-- **Placement** — `arrowEdge: .top` works but macOS may flip it depending on screen position. Need to test edge cases (dock at bottom, widget near top of screen, etc.)
-- **Red dot persistence** — dot sometimes disappears between conversation turns (conversation mode timeout clearing wake state)
-- Consider: should it be a popover at all, or a custom overlay we fully control?
+## Red dot + conversation timeout — bugs
+
+**Red dot persistence during easter egg:**
+- During full story TTS reading, the red dot stays on the whole time
+- After backstory conversation, the dot sometimes doesn't clear on exit back to normal mode
+- Normal help conversations and wake word flow are mostly fine
+
+**Conversation mode drops unexpectedly:**
+- Sometimes the mic just stops listening mid-conversation — no follow-up window, just dead.
+- Likely a race condition in the conversation timeout timer — TTS finishing, STT restarting, and the timeout firing may be stepping on each other.
+- The timer is a dumb fixed duration after the duck finishes speaking. No intelligence about whether the conversation feels "done" vs "open."
+- Future polish: LLM could tag responses as final vs open and adjust the timeout accordingly.
 
 ---
 
-## 3. Onboarding + Help (unified)
+## ~~3. Onboarding + Help (unified)~~ ✅ MOSTLY DONE
 
-The duck IS the onboarding. It walks you through setup, answers questions, and that first interaction is also the demo of what it does. Help and onboarding are the same system.
+Core system shipped: DuckHelpService, wake word UX, speech bubble, session lifecycle, HelpView articles, mic/audio docs.
 
-### Golden path
-1. User installs widget from App Store → duck appears, introduces itself
-2. Duck guides plugin installation via voice/text: "Say 'ducky, help me install' or click the button"
-3. First permission fires → duck demonstrates the voice flow
-4. User is set up and understands all three modes
+### Still open
+- **Golden path polish** — first-launch experience needs testing end-to-end. Install detection works (alerts on missing Claude), but the guided flow isn't seamless yet.
+- **CLI install helper** — for users without Claude Code CLI. Need Terminal helper with copy/paste flow. The install commands are: `curl -fsSL https://claude.ai/install.sh | bash` then `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`. Gnarly for normal humans.
+- **Desktop zip install path** — for users with Claude Desktop but no CLI. Need a .zip ready for drag-in upload via Desktop's plugin UI. May need a folder with instructions + screenshots showing how to navigate to the upload button.
+- **Version warning in install flow** — minimum Claude 1.1.7714. Alert exists on app launch but could be more prominent.
 
-### On-device help — R&D DONE, ready to build
+## ~~4. Foundation Models tuning~~ ✅ MOSTLY DONE
 
-**R&D results** (Playground-tested, all tiers pass):
-- Grounding document: `docs/DUCK-HELP-GROUNDING.md` — compact help entries in duck's voice (~1200 tokens)
-- Playground tests: `widget/Playground/Sources/LLMPlayground/HelpPlayground.swift`
-- Single-turn Q&A: ✅ accurate, grounded, no hallucination, good TTS output
-- Classification + retrieval: ✅ correct topic routing with `@Generable` struct
-- Multi-turn conversation: ✅ holds 3-4 turns coherently, handles off-topic refusal
-- Key finding: entries must be meta-aware ("if you're talking to me, I'm running")
-- Key finding: "Can you help me debug" triggers Apple safety filter — keep questions duck-focused
-- Key finding: model quality tracks grounding doc quality directly — tight duck-voiced entries produce tight duck-voiced answers
+~~Typo obsession~~ ✅ Fixed. ~~Meaner than Haiku~~ ✅ Fixed. ~~Response length~~ ✅ Fixed. ~~Wildcard slow voice fallback~~ ✅ Fixed.
 
-### DuckHelpService architecture
-
-- New `DuckHelpService.swift` actor (mirrors `LocalEvaluator` pattern)
-- Connected to wake word: "ducky, how do I install the plugin?" → duck answers directly
-- **Companion mode**: wake word routes to help (gives wake word a purpose beyond relay)
-- **Relay mode**: help tries first. If Foundation recognizes it's NOT a duck question, says "That sounds like a Claude question" and relays to tmux
-- Handles random chats and curious people poking at the duck
-- **Intelligence-agnostic**: uses whatever eval engine is selected (Foundation/Haiku/Gemini)
-
-### Wake word UX
-- "Ducky" → immediate short response ("What?" / "Hmm?" / "Yeah?") + head cock expression. No dead-air gap.
-- Can also recap status on demand: "ducky, how am I doing?" → verbal score summary
-- Help response spoken via same TTS path as eval reactions
-
-### Session lifecycle
-- `LanguageModelSession` kept alive between wake word activations
-- Auto-reset after 4 turns (4K token window) — "I'm losing my train of thought — ask me again fresh?"
-- Also reset after 60s inactivity
-
-### Speech bubble fallback
-- Not everyone has speakers/mic — duck needs a text fallback
-- Speech bubble below/beside the duck face shows what it would have said
-- Liquid glass bubble that appears/fades with the utterance
-- Required for: App Store version (sandbox blocks mic on some setups), silent environments, accessibility
-- Also useful as a visual transcript — see what the duck said even with audio on
-
-### Files to change
-- `DuckHelpService.swift` (NEW) — actor with grounding content, session management, `ask()` method
-- `SpeechService.swift` — add `onHelpQuestion` callback, wake word acknowledgment pool
-- `RubberDuckWidgetApp.swift` — create help service, wire callbacks
-- `DuckCoordinator.swift` — `isAnsweringHelp` state for thinking animation
-- `DuckView.swift` — speech bubble overlay (NEW)
-
-## 4. Foundation Models tuning — response length + conversation flow
-
-~~Typo obsession~~ ✅ Fixed — casual messages no longer get roasted.
-~~Meaner than Haiku~~ ✅ Fixed — tone rebalanced.
-
-### Open tuning
-~~Response length~~ ✅ Fixed — eval prompt capped to one sentence, needs continued testing.
-~~Wildcard slow voice fallback~~ ✅ Fixed — `slowVoiceCharacterLimit = 140`, slow voices (Good News, Jester, Cellos, etc.) swap to Superstar above threshold.
-
-- **Help vs free chat flow** — the 3B model sometimes gets stuck in help mode when the user is just chatting. Needs clearer routing between structured help answers and casual conversation.
-- **Easter eggs** — Moby Duck backstory gate (3-attempt unlock → bedtime story reading), "can you hear me" mic check. Need testing across varied phrasing to make sure gates open reliably and don't block normal questions.
+### Still open
+- **Help vs free chat flow** — the 3B model sometimes gets stuck in help mode when the user is just chatting. Needs clearer routing.
+- **Easter eggs need continued testing** — Moby Duck backstory gate works (3-attempt unlock → bedtime story reading) but phrasing sensitivity needs tuning. Some normal questions still trigger the deflection path.
+- **"Can you hear me" mic check** — documented, not yet short-circuited in Swift. Should be a hardcoded affirmative before hitting the LLM.
 
 ## ~~5. Wildcard voice — tuning~~ ✅ DONE
 Score-gated V2 shipped. See `docs/VOICE-SELECTION-V2.md`.
 
-## ~~6. Wake word in companion mode~~ → merged into #3
-Help mode covers this. Wake word in companion = help. Wake word in relay = help-first, then relay.
+## ~~6. Wake word in companion mode~~ ✅ DONE
+Shipped. Wake word in companion = help. Wake word in relay = help-first, then relay.
 
 ---
 
@@ -200,3 +160,20 @@ Help mode covers this. Wake word in companion = help. Wake word in relay = help-
 - Three.js viewer at localhost:3333/viewer exists but was never fully dialed in
 - Both duck prototypes (servo + LED) render but need polish
 - Dev-only — not user-facing
+
+---
+
+## Recent completions (2026-03-24)
+
+- [x] **File-based API key storage** — replaced Keychain with plaintext files in Application Support. No more scary "wants to use your confidential information" dialog.
+- [x] **Menu reorganization** — Setup + Help left menus, right-click/right-icon unified and simplified.
+- [x] **Preferences window** — Intelligence tab with inline API keys, Voice tab with picker, accent color throughout.
+- [x] **Beak art update** — new beak PNGs, mouth animation during TTS (random flutter).
+- [x] **TTS pronunciation** — phoneme pipeline for "Ahab" and "Claude" via `TTSEngine.applyPronunciations`.
+- [x] **Moby Duck easter egg** — 3-attempt backstory gate, staged deflections, full bedtime story TTS reading, clean exit back to normal mode.
+- [x] **Wake word head tilt** — 45° ± 10° tilt on both Teensy and ESP32 firmwares.
+- [x] **Voice command popover** — dynamic resize, arrow points away from duck, anchored to red dot.
+- [x] **Plugin debug logging** — `duck_debug()` in duck-env.sh, per-hook DUCK_HOOK_NAME, health check on every invocation. `/tmp/duck-plugin-debug.log`.
+- [x] **Helpdesk docs** — mic/audio section, IDEO attribution, team section, mode-specific listening behavior.
+- [x] **Settings window focus** — `applicationDidResignActive` re-activates duck window so glass stays saturated.
+- [x] **Experimental features toggle** — Gemini behind feature flag, menu updates reactively via `@Published`.
