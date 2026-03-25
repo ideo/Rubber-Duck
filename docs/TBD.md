@@ -25,15 +25,8 @@ Structure is done (Setup, Help, right-click, Preferences window). Needs:
 
 ---
 
-## "Can you hear me" mishandled
-
-When users say "ducky, can you hear me" as a mic check, the duck answers as if it's a capabilities question ("I run everything locally, I can't hear you"). It should recognize this as a literal mic test and respond accordingly — "Yep, I hear you!" or "Loud and clear."
-
-**Fixes needed:**
-- Detect "can you hear me" / "do you hear me" / "are you listening" as mic-check phrases
-- Short-circuit before the LLM — return a hardcoded affirmative (like the backstory stages)
-- Add mic/audio info to the helpdesk prompt so if someone asks about hearing/microphone/audio capabilities, the duck knows it DOES use a mic in Companion and Relay modes
-- Current system prompt says nothing about the mic — it should mention: Companion mode listens for wake word, Relay mode listens for commands, Permissions Only listens for yes/no, No Mic mode doesn't listen at all
+## ~~"Can you hear me" mishandled~~ ✅ DONE
+Fixed in DuckHelpService system prompt — duck now knows it uses a mic and responds to mic checks correctly.
 
 ---
 
@@ -72,7 +65,6 @@ Core system shipped: DuckHelpService, wake word UX, speech bubble, session lifec
 ### Still open
 - **Help vs free chat flow** — the 3B model sometimes gets stuck in help mode when the user is just chatting. Needs clearer routing.
 - **Easter eggs need continued testing** — Moby Duck backstory gate works (3-attempt unlock → bedtime story reading) but phrasing sensitivity needs tuning. Some normal questions still trigger the deflection path.
-- **"Can you hear me" mic check** — documented, not yet short-circuited in Swift. Should be a hardcoded affirmative before hitting the LLM.
 
 ## ~~5. Wildcard voice — tuning~~ ✅ DONE
 Score-gated V2 shipped. See `docs/VOICE-SELECTION-V2.md`.

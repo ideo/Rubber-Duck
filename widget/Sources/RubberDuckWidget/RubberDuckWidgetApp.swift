@@ -244,17 +244,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var coordinator: DuckCoordinator?
 
     func applicationDidResignActive(_ notification: Notification) {
-        // When another app takes focus (e.g. after Settings closes),
-        // re-activate after a beat so the duck window stays saturated.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if let duck = Self.duckWindow, duck.isVisible {
-                NSApp.activate()
-                duck.makeKeyAndOrderFront(nil)
-            }
+        // When another app takes focus, re-activate so glass stays saturated.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard let duck = Self.duckWindow, duck.isVisible else { return }
+            NSApp.activate()
+            duck.makeKeyAndOrderFront(nil)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // When Settings/Help closes, re-key the duck window
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { notif in
+            guard let window = notif.object as? NSWindow,
+                  window != Self.duckWindow else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard let duck = Self.duckWindow, duck.isVisible else { return }
+                duck.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+            }
+        }
         // Strip useless default menus (View, Edit) — no SwiftUI API for this.
         // Delayed because SwiftUI rebuilds menus after applicationDidFinishLaunching.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -280,6 +290,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         DispatchQueue.main.async {
+            // At launch there's only one window — the duck.
+            // Grab it before Settings or Help can create more.
+            let duckWin = NSApp.windows.first
+            Self.duckWindow = duckWin
+
             for window in NSApp.windows {
                 // Fully borderless — no titlebar, no chrome
                 window.styleMask = [.borderless]
@@ -305,6 +320,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Reveal now that chrome is gone
                 window.alphaValue = 1
             }
+            DuckLog.log("[focus] duckWindow assigned: \(duckWin != nil)")
             NSApp.activate()
 
             // Strip default File/Edit/View/Window menus — they're useless for a widget
@@ -383,8 +399,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - Always-Active Window (Glass Tint Fix)
 
 /// Dynamically subclasses the SwiftUI window's actual runtime class so that
-/// `isKeyWindow` always returns `true`. This keeps the liquid glass compositor
-/// rendering in its saturated/tinted state even when the app isn't frontmost.
+/// `isKeyWindow` and `canBecomeKey/Main` always return `true`. This keeps the
+/// liquid glass compositor rendering in its saturated/tinted state even when
+/// the app isn't frontmost or another window (Settings) has taken key status.
+///
+/// Borderless windows return `canBecomeKey = false` by default, which prevents
+/// the system from returning key status to the duck after Settings closes.
 /// By subclassing the real class (not plain NSWindow), all private SwiftUI
 /// methods like `setMenuBarHeight:` are preserved.
 enum AlwaysActiveWindowHelper {
@@ -404,6 +424,20 @@ enum AlwaysActiveWindowHelper {
         // Create dynamic subclass of the window's actual runtime class
         guard let subclass = objc_allocateClassPair(originalClass, subclassName, 0) else {
             return
+        }
+
+        let boolBlock: @convention(block) (AnyObject) -> Bool = { _ in true }
+        let boolImp = imp_implementationWithBlock(boolBlock)
+
+        // Override canBecomeKey — borderless windows return false by default,
+        // which prevents the system from re-keying the window after Settings closes
+        if let canKeyMethod = class_getInstanceMethod(originalClass, #selector(getter: NSWindow.canBecomeKey)) {
+            class_addMethod(subclass, #selector(getter: NSWindow.canBecomeKey), boolImp, method_getTypeEncoding(canKeyMethod))
+        }
+
+        // Override canBecomeMain for the same reason
+        if let canMainMethod = class_getInstanceMethod(originalClass, #selector(getter: NSWindow.canBecomeMain)) {
+            class_addMethod(subclass, #selector(getter: NSWindow.canBecomeMain), boolImp, method_getTypeEncoding(canMainMethod))
         }
 
         // Override isKeyWindow getter to always return true
