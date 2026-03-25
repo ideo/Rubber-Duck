@@ -442,10 +442,111 @@ enum PluginInstaller {
         if let claude = findClaude() {
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
+        } else if desktopPluginDirExists() {
+            // Claude Desktop is installed but no CLI — direct file copy
+            Task { @MainActor in onSpeak?("Found Claude Desktop. Installing the plugin directly.") }
+            directInstall()
         } else {
             Task { @MainActor in
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
                 showClaudeNotFound()
+            }
+        }
+    }
+
+    /// Check if ~/.claude/plugins exists (Claude Desktop or CLI has been run)
+    private static func desktopPluginDirExists() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let pluginsDir = "\(home)/.claude/plugins"
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: pluginsDir, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// Install plugin by copying files directly to ~/.claude/plugins/ (no CLI needed)
+    private static func directInstall() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let bundledPath = findBundledPlugin() else {
+                Task { @MainActor in
+                    onSpeak?("Couldn't find the plugin files.")
+                    showResult(success: false, detail: "Bundled plugin not found in app bundle.")
+                }
+                return
+            }
+
+            let fm = FileManager.default
+            let home = fm.homeDirectoryForCurrentUser.path
+            let pluginsBase = "\(home)/.claude/plugins"
+            let version = "direct-\(Int(Date().timeIntervalSince1970))"
+            let installDir = "\(pluginsBase)/cache/duck-duck-duck-marketplace/duck-duck-duck/\(version)"
+
+            do {
+                // Create install directory and copy plugin files
+                try fm.createDirectory(atPath: installDir, withIntermediateDirectories: true)
+                for item in try fm.contentsOfDirectory(atPath: bundledPath) {
+                    let src = "\(bundledPath)/\(item)"
+                    let dst = "\(installDir)/\(item)"
+                    try fm.copyItem(atPath: src, toPath: dst)
+                }
+                // Make hook scripts executable
+                let hooksDir = "\(installDir)/hooks"
+                if fm.fileExists(atPath: hooksDir) {
+                    for file in (try? fm.contentsOfDirectory(atPath: hooksDir)) ?? [] where file.hasSuffix(".sh") {
+                        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: "\(hooksDir)/\(file)")
+                    }
+                }
+                print("[plugin] Copied plugin to \(installDir)")
+
+                // Update installed_plugins.json
+                let installedFile = "\(pluginsBase)/installed_plugins.json"
+                var manifest: [String: Any] = ["version": 2, "plugins": [:] as [String: Any]]
+                if let data = fm.contents(atPath: installedFile),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    manifest = json
+                }
+                var plugins = manifest["plugins"] as? [String: Any] ?? [:]
+                let now = ISO8601DateFormatter().string(from: Date())
+                plugins["duck-duck-duck@duck-duck-duck-marketplace"] = [[
+                    "scope": "user",
+                    "installPath": installDir,
+                    "version": version,
+                    "installedAt": now,
+                    "lastUpdated": now,
+                ]]
+                manifest["plugins"] = plugins
+                let jsonData = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+                try jsonData.write(to: URL(fileURLWithPath: installedFile))
+                print("[plugin] Updated installed_plugins.json")
+
+                // Update known_marketplaces.json
+                let marketplacesFile = "\(pluginsBase)/known_marketplaces.json"
+                var marketplaces: [String: Any] = [:]
+                if let data = fm.contents(atPath: marketplacesFile),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    marketplaces = json
+                }
+                if marketplaces["duck-duck-duck-marketplace"] == nil {
+                    let mpDir = "\(pluginsBase)/marketplaces/duck-duck-duck-marketplace"
+                    try fm.createDirectory(atPath: mpDir, withIntermediateDirectories: true)
+                    marketplaces["duck-duck-duck-marketplace"] = [
+                        "source": ["source": "github", "repo": "ideo/Rubber-Duck"],
+                        "installLocation": mpDir,
+                        "lastUpdated": now,
+                    ]
+                    let mpData = try JSONSerialization.data(withJSONObject: marketplaces, options: [.prettyPrinted, .sortedKeys])
+                    try mpData.write(to: URL(fileURLWithPath: marketplacesFile))
+                    print("[plugin] Updated known_marketplaces.json")
+                }
+
+                Task { @MainActor in
+                    onSpeak?("Plugin installed for Claude Desktop. Restart Claude to activate.")
+                    showResult(success: true, detail: "Plugin installed directly. Restart Claude Desktop to load the hooks.")
+                }
+            } catch {
+                print("[plugin] Direct install failed: \(error)")
+                Task { @MainActor in
+                    onSpeak?("Something went wrong with the install.")
+                    showResult(success: false, detail: "Direct install failed:\n\(error.localizedDescription)")
+                }
             }
         }
     }

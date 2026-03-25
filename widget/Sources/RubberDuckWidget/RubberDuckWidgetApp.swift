@@ -139,6 +139,8 @@ struct RubberDuckWidgetApp: App {
                 await MainActor.run {
                     speech.isWakeActive = false
                     if answer == DuckHelpService.fullStoryReadingSentinel {
+                        // Fully shut down conversation state before the long story read
+                        speech.exitConversation()
                         // Read the full Moby Duck story via TTS — no LLM, just reading aloud
                         speech.speak("Alright. Settle in. ... " + DuckHelpService.fullStoryText)
                         speech.restartAfterTTS(thenEnterConversation: false)
@@ -363,6 +365,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DuckLog.log("[startup] Claude detected — CLI: \(hasCLI), Desktop: \(hasDesktop)")
             }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Kill any lingering TTS — say process outlives the app
+        Process.launchedProcess(launchPath: "/usr/bin/killall", arguments: ["say"])
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
