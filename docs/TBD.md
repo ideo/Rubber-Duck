@@ -8,6 +8,20 @@
 - [x] **New hooks** — SessionEnd, PreCompact, PostCompact, StopFailure
 - [x] **Companion mode rename** — Critic → Companion (`.critic` enum kept internal)
 - [x] **Relay mode rename** — subtitle now "Walkie Talkie with Claude CLI", flask icon
+- [x] **Menu reorganization** — Setup + Help left menus, right-click/right-icon unified. Functionally done, needs visual polish and regression testing.
+- [x] **File-based API keys** — replaced Keychain with Application Support files. No more scary dialog.
+- [x] **Dynamic help prompt** — DuckHelpService knows which eval provider is active, explains privacy accurately per mode.
+
+---
+
+## Menu + Preferences — visual polish pass
+
+Structure is done (Setup, Help, right-click, Preferences window). Needs:
+- **Visual consistency** — accent color, spacing, alignment across all menus
+- **Preferences tabs** — Intelligence and Voice tabs work but look rough. Need proper spacing, grouping, polish.
+- **Custom SF Symbols** — puzzle piece (plugin), flask (experimental), sparkles (get started), manual (help) icons carried over to left menus
+- **Regression testing** — modes, volume, voice, launch session, experimental toggle all need re-testing after the restructure
+- **View menu** — still shows up empty. Need to suppress it (SwiftUI fights back on this one).
 
 ---
 
