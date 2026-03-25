@@ -25,13 +25,29 @@ enum DuckConfig {
 
     /// HTTP port for the embedded eval server.
     /// Override: DUCK_SERVICE_PORT=4444
-    static let servicePort: Int = {
+    static let preferredPort: Int = {
         if let override = ProcessInfo.processInfo.environment["DUCK_SERVICE_PORT"],
            let port = Int(override) {
             return port
         }
         return 3333
     }()
+
+    /// The actual port the server bound to (may differ from preferred if port was taken).
+    static var activePort: Int = 3333
+
+    /// Write the active port to Application Support so hooks can find it.
+    static func writePortFile() {
+        let portFile = storageDir.appendingPathComponent("port")
+        try? "\(activePort)".write(to: portFile, atomically: true, encoding: .utf8)
+        DuckLog.log("[config] Port file written: \(activePort)")
+    }
+
+    /// Remove port file on shutdown.
+    static func removePortFile() {
+        let portFile = storageDir.appendingPathComponent("port")
+        try? FileManager.default.removeItem(at: portFile)
+    }
 
     // MARK: - Eval Provider
 

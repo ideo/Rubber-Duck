@@ -37,7 +37,7 @@ class DuckServer: ObservableObject {
     private var server: MiniServer?
     private let port: Int
 
-    init(port: Int = DuckConfig.servicePort) {
+    init(port: Int = DuckConfig.preferredPort) {
         self.port = port
         self.claudeEvaluator = ClaudeEvaluator()
         self.geminiEvaluator = GeminiEvaluator()

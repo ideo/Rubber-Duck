@@ -370,6 +370,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Kill any lingering TTS — say process outlives the app
         Process.launchedProcess(launchPath: "/usr/bin/killall", arguments: ["say"])
+        // Clean up port file so hooks don't try a stale port
+        DuckConfig.removePortFile()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -558,7 +560,7 @@ struct HelpMenuContent: View {
         }
 
         Button {
-            NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.servicePort)")!)
+            NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.activePort)")!)
         } label: {
             Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent")
         }

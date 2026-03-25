@@ -165,7 +165,7 @@ final class MiniServer {
     private var onWSMessage: (@Sendable (WSConnection, String) async -> Void)?
     private var onWSDisconnect: (@Sendable (WSConnection) -> Void)?
 
-    let port: UInt16
+    private(set) var port: UInt16
     private let queue = DispatchQueue(label: "duck.miniserver")
 
     init(port: UInt16) {
@@ -197,21 +197,43 @@ final class MiniServer {
     // MARK: - Lifecycle
 
     func start() throws {
-        let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        // Try preferred port, then fallback to next available ports
+        let portsToTry: [UInt16] = [port] + (1...10).map { port + $0 }
+        var lastError: Error?
 
-        l.newConnectionHandler = { [weak self] conn in
-            self?.accept(conn)
-        }
-        l.stateUpdateHandler = { state in
-            if case .failed(let err) = state {
-                DuckLog.log("[server] Listener error: \(err)")
+        for candidate in portsToTry {
+            do {
+                let params = NWParameters.tcp
+                params.allowLocalEndpointReuse = true
+                let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: candidate)!)
+
+                l.newConnectionHandler = { [weak self] conn in
+                    self?.accept(conn)
+                }
+                l.stateUpdateHandler = { state in
+                    if case .failed(let err) = state {
+                        DuckLog.log("[server] Listener error on port \(candidate): \(err)")
+                    }
+                }
+
+                listener = l
+                l.start(queue: queue)
+                port = candidate
+                if candidate != portsToTry[0] {
+                    DuckLog.log("[server] Port \(portsToTry[0]) in use, bound to \(candidate)")
+                }
+                // Write port file so hooks can find us
+                DuckConfig.activePort = Int(candidate)
+                DuckConfig.writePortFile()
+                return
+            } catch {
+                lastError = error
+                DuckLog.log("[server] Port \(candidate) unavailable: \(error)")
+                continue
             }
         }
-
-        listener = l
-        l.start(queue: queue)
+        // All ports failed
+        throw lastError ?? NSError(domain: "MiniServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No available port"])
     }
 
     func stop() {
