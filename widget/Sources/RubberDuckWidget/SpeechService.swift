@@ -123,7 +123,7 @@ class SpeechService: ObservableObject {
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
     // Track which path is active
-    private var audioPath: AudioPath = .local
+    private(set) var audioPath: AudioPath = .local
 
     // Timers
     private var voiceInputTimer: Task<Void, Never>?
@@ -341,8 +341,9 @@ class SpeechService: ObservableObject {
                 await MainActor.run { self.currentUtterance = "" }
             }
         }
-        // Skip TTS when Silent — bubble-only mode
-        if !isSilent {
+        // Skip TTS when Silent, or when Mac is muted with no hardware duck
+        let systemMuted = audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted()
+        if !isSilent && !systemMuted {
             isSpeaking = true
             activeTTS.speak(text, skipChirpWait: skipChirpWait)
             // Poll gate.muted to detect when say finishes
@@ -354,6 +355,18 @@ class SpeechService: ObservableObject {
                         await MainActor.run { self.isSpeaking = false }
                         break
                     }
+                }
+            }
+        } else if isSilent || systemMuted {
+            // Mouth should still animate when showing speech bubble
+            isSpeaking = true
+            speakingPollTimer?.cancel()
+            speakingPollTimer = Task {
+                // Simulate speaking duration based on text length
+                let duration = 2.0 + Double(text.count) * 0.05
+                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                if !Task.isCancelled {
+                    await MainActor.run { self.isSpeaking = false }
                 }
             }
         }

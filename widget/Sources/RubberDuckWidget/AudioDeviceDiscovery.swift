@@ -212,6 +212,50 @@ enum AudioDeviceDiscovery {
                                    UInt32(MemoryLayout<Float32>.size), &vol)
     }
 
+    // MARK: - System Mute Detection
+
+    /// Check if the default output device is muted or at zero volume.
+    static func isSystemOutputMuted() -> Bool {
+        // Get default output device
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr,
+              deviceID != kAudioObjectUnknown else {
+            return false // Can't detect — assume not muted
+        }
+
+        // Check mute property
+        var muteAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var muted: UInt32 = 0
+        var muteSize = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(deviceID, &muteAddress, 0, nil, &muteSize, &muted) == noErr {
+            if muted != 0 { return true }
+        }
+
+        // Check volume — zero volume is effectively muted
+        var volAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var volume: Float32 = 1.0
+        var volSize = UInt32(MemoryLayout<Float32>.size)
+        if AudioObjectGetPropertyData(deviceID, &volAddress, 0, nil, &volSize, &volume) == noErr {
+            if volume < 0.01 { return true }
+        }
+
+        return false
+    }
+
     // MARK: - CoreAudio Helpers
 
     /// Safe CoreAudio string property reader — avoids UnsafeMutableRawPointer

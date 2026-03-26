@@ -15,10 +15,16 @@ struct DuckView: View {
     @State private var thinkingEyeY: CGFloat = 0
     @State private var beakFlutterTimer: Timer?
 
-    /// Show the speech bubble when: Silent voice selected, OR volume is 0, AND there's text to show.
+    /// Show the speech bubble when there's text AND audio won't be heard:
+    /// Silent voice, duck volume is 0, or Mac is muted with no hardware duck.
     private var speechBubbleVisible: Bool {
         guard !speechService.currentUtterance.isEmpty else { return false }
-        return speechService.isSilent || DuckConfig.volume <= 0
+        if speechService.isSilent || DuckConfig.volume <= 0 { return true }
+        // System muted + no external duck = nobody can hear TTS
+        if speechService.audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted() {
+            return true
+        }
+        return false
     }
 
     var body: some View {
@@ -224,6 +230,45 @@ struct DuckView: View {
                 ? "Wildcard"
                 : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
             Label("Voice: \(voiceLabel)", systemImage: "waveform")
+        }
+
+        // Intelligence picker
+        Menu {
+            Button {
+                DuckConfig.evalProvider = .foundation
+            } label: {
+                Label(
+                    DuckConfig.evalProvider == .foundation ? "✓ Apple Foundation Models" : "Apple Foundation Models",
+                    systemImage: "apple.logo"
+                )
+            }
+            Button {
+                guard DuckConfig.ensureAPIKey() else { return }
+                DuckConfig.evalProvider = .anthropic
+            } label: {
+                Label(
+                    DuckConfig.evalProvider == .anthropic ? "✓ Claude Haiku" : "Claude Haiku",
+                    systemImage: "brain.head.profile"
+                )
+            }
+            Button {
+                guard DuckConfig.ensureGeminiAPIKey() else { return }
+                DuckConfig.evalProvider = .gemini
+            } label: {
+                Label(
+                    DuckConfig.evalProvider == .gemini ? "✓ Gemini" : "Gemini",
+                    systemImage: "sparkles"
+                )
+            }
+        } label: {
+            let providerName: String = {
+                switch DuckConfig.evalProvider {
+                case .foundation: return "Foundation"
+                case .anthropic: return "Haiku"
+                case .gemini: return "Gemini"
+                }
+            }()
+            Label("Intelligence: \(providerName)", systemImage: "brain.head.profile")
         }
 
         Divider()

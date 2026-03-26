@@ -27,6 +27,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem?.autosaveName = "com.duckduckduck.statusitem"
         if let icon = Self.menuBarIcon() {
             statusItem?.button?.image = icon
             statusItem?.button?.title = ""
@@ -126,6 +127,42 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         addVoiceItems(to: voiceMenu, voices: DuckVoices.specialFX)
         voiceItem.submenu = voiceMenu
         menu.addItem(voiceItem)
+
+        // --- Intelligence submenu ---
+        let currentProvider = DuckConfig.evalProvider
+        let providerLabel: String
+        switch currentProvider {
+        case .foundation: providerLabel = "Foundation"
+        case .anthropic: providerLabel = "Haiku"
+        case .gemini: providerLabel = "Gemini"
+        }
+        let intellItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
+        intellItem.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "Intelligence")
+        let intellMenu = NSMenu()
+
+        let foundationItem = NSMenuItem(title: "Apple Foundation Models", action: #selector(setProviderFoundation), keyEquivalent: "")
+        foundationItem.target = self
+        foundationItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Apple")
+        foundationItem.subtitle = "On-device, free, sub-second"
+        foundationItem.state = currentProvider == .foundation ? .on : .off
+        intellMenu.addItem(foundationItem)
+
+        let haikuItem = NSMenuItem(title: "Claude Haiku", action: #selector(setProviderAnthropic), keyEquivalent: "")
+        haikuItem.target = self
+        haikuItem.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "Claude")
+        haikuItem.subtitle = "Anthropic API — requires key"
+        haikuItem.state = currentProvider == .anthropic ? .on : .off
+        intellMenu.addItem(haikuItem)
+
+        let geminiItem = NSMenuItem(title: "Gemini", action: #selector(setProviderGemini), keyEquivalent: "")
+        geminiItem.target = self
+        geminiItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Gemini")
+        geminiItem.subtitle = "Google API — requires key"
+        geminiItem.state = currentProvider == .gemini ? .on : .off
+        intellMenu.addItem(geminiItem)
+
+        intellItem.submenu = intellMenu
+        menu.addItem(intellItem)
 
         menu.addItem(.separator())
 
