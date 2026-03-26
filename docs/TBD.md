@@ -11,6 +11,14 @@
 - [x] **Menu reorganization** — Setup + Help left menus, right-click/right-icon unified. Functionally done, needs visual polish and regression testing.
 - [x] **File-based API keys** — replaced Keychain with Application Support files. No more scary dialog.
 - [x] **Dynamic help prompt** — DuckHelpService knows which eval provider is active, explains privacy accurately per mode.
+- [x] **Dynamic port** — widget tries 3333, falls back to 3334-3343 if taken. Writes port to file, hooks read it.
+- [x] **System mute detection** — Mac muted + no hardware duck → auto speech bubble + mouth animation. Hardware duck bypasses.
+- [x] **Intelligence picker restored** — back in right-click and status bar menus with modal key prompt.
+- [x] **Desktop plugin install path** — PluginInstaller detects Desktop-only users, copies bundled plugin directly.
+- [x] **Moby Duck easter egg** — 3-attempt backstory gate, staged deflections, full bedtime story TTS reading, TTS-optimized prose, clean exit back to normal mode.
+- [x] **TTS pronunciation pipeline** — phoneme replacements for "Ahab" and "Claude" in TTSEngine.
+- [x] **Beak mouth animation** — random flutter during TTS, syncs to speech bubble duration when muted.
+- [x] **Window focus recovery** — `canBecomeKey` override on borderless window, glass stays saturated after Settings.
 
 ---
 
@@ -25,13 +33,41 @@ Structure is done (Setup, Help, right-click, Preferences window). Needs:
 
 ---
 
-## ~~"Can you hear me" mishandled~~ ✅ DONE
-Fixed in DuckHelpService system prompt — duck now knows it uses a mic and responds to mic checks correctly.
+## Status bar icon disappearing on some Macs
+
+Reported on another user's Mac — the duck menu bar icon appears and disappears intermittently.
+
+**Root cause:** macOS hides overflow status bar items when space runs out, especially on notch Macs (14"/16" MacBook Pro) where the area between Apple menu and notch is limited. System items (WiFi, battery, clock) get priority over third-party items.
+
+**Mitigations applied:**
+- Added `autosaveName` so macOS remembers the icon's position across launches
+
+**Still needed:**
+- Consider making the icon `NSStatusItem.squareLength` instead of `variableLength` to minimize width
+- Investigate `isVisible` property to detect when macOS hides us and warn the user
+- Fallback: if status item is hidden, the duck widget itself should still be fully functional (right-click still works)
+- Document for users: "If the menu bar icon disappears, you may have too many menu bar items. Try Bartender or remove unused items."
+- Long-term: consider whether the status bar icon is essential or if the widget right-click + left menus are sufficient
 
 ---
 
-## ~~Voice command popover~~ ✅ DONE
-Popover resizes dynamically, arrow points away from duck (user's speech, not duck's). Looks good.
+## Claude version detection + compatibility
+
+The `StopFailure` hook broke all plugin loading on Claude 2.1.76 because it's not a valid hook event in that version. One invalid key = zero hooks loaded, silently.
+
+**Need to build:**
+- Widget detects Claude version at startup (parse `claude --version` or check binary metadata)
+- Maintain a compatibility table: which hooks are valid in which version
+- `hooks.json` generated dynamically or the widget warns about incompatible hooks
+- On plugin install, check version and warn: "Your Claude version doesn't support all features. Update recommended."
+- Session start hook could report Claude version to the widget for display in dashboard/help
+- Minimum supported version tracked in one place (currently 1.1.7714 for basic hooks)
+
+**Known hook support gaps:**
+- `StopFailure` — not in 2.1.76, present in 2.1.83
+- Need to map all hooks to the version that introduced them
+
+---
 
 ## Red dot + conversation timeout — bugs
 
@@ -48,29 +84,28 @@ Popover resizes dynamically, arrow points away from duck (user's speech, not duc
 
 ---
 
-## ~~3. Onboarding + Help (unified)~~ ✅ MOSTLY DONE
+## TTS interrupt — stop the duck mid-speech
 
-Core system shipped: DuckHelpService, wake word UX, speech bubble, session lifecycle, HelpView articles, mic/audio docs.
+No way to interrupt long TTS (especially the bedtime story). Need:
+- Voice command: "stop", "shut up", "quiet" kills `say` process
+- Duck face tap could also interrupt
+- On interrupt, duck says a short quip: "Ok, enough of that."
+- `killall say` is the manual escape hatch for now
 
-### Still open
-- **Golden path polish** — first-launch experience needs testing end-to-end. Install detection works (alerts on missing Claude), but the guided flow isn't seamless yet.
-- **CLI install helper** — for users without Claude Code CLI. Need Terminal helper with copy/paste flow. The install commands are: `curl -fsSL https://claude.ai/install.sh | bash` then `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`. Gnarly for normal humans.
-- **Desktop zip install path** — for users with Claude Desktop but no CLI. Need a .zip ready for drag-in upload via Desktop's plugin UI. May need a folder with instructions + screenshots showing how to navigate to the upload button.
-- **Version warning in install flow** — minimum Claude 1.1.7714. Alert exists on app launch but could be more prominent.
+---
 
-## ~~4. Foundation Models tuning~~ ✅ MOSTLY DONE
+## Onboarding — remaining gaps
 
-~~Typo obsession~~ ✅ Fixed. ~~Meaner than Haiku~~ ✅ Fixed. ~~Response length~~ ✅ Fixed. ~~Wildcard slow voice fallback~~ ✅ Fixed.
+- **CLI install helper** — for non-technical users. Commands are: `curl -fsSL https://claude.ai/install.sh | bash` then PATH setup. Need a Terminal helper with copy/paste flow, or widget opens Terminal and does it.
+- **Version warning polish** — minimum Claude 1.1.7714. Alert exists but could be more prominent.
+- **Golden path testing** — end-to-end first-launch experience needs a full walkthrough.
 
-### Still open
-- **Help vs free chat flow** — the 3B model sometimes gets stuck in help mode when the user is just chatting. Needs clearer routing.
-- **Easter eggs need continued testing** — Moby Duck backstory gate works (3-attempt unlock → bedtime story reading) but phrasing sensitivity needs tuning. Some normal questions still trigger the deflection path.
+---
 
-## ~~5. Wildcard voice — tuning~~ ✅ DONE
-Score-gated V2 shipped. See `docs/VOICE-SELECTION-V2.md`.
+## Foundation Models tuning — remaining
 
-## ~~6. Wake word in companion mode~~ ✅ DONE
-Shipped. Wake word in companion = help. Wake word in relay = help-first, then relay.
+- **Help vs free chat flow** — 3B model sometimes gets stuck in help mode during casual chat. Needs clearer routing.
+- **Easter egg sensitivity** — some normal questions still trigger the backstory deflection path.
 
 ---
 
