@@ -36,17 +36,45 @@ enum DuckConfig {
     /// The actual port the server bound to (may differ from preferred if port was taken).
     static var activePort: Int = 3333
 
-    /// Write the active port to Application Support so hooks can find it.
+    /// Write the active port + PID to Application Support so hooks can find us.
     static func writePortFile() {
         let portFile = storageDir.appendingPathComponent("port")
+        let pidFile = storageDir.appendingPathComponent("port.pid")
         try? "\(activePort)".write(to: portFile, atomically: true, encoding: .utf8)
-        DuckLog.log("[config] Port file written: \(activePort)")
+        try? "\(ProcessInfo.processInfo.processIdentifier)".write(to: pidFile, atomically: true, encoding: .utf8)
+        DuckLog.log("[config] Port file written: \(activePort) (pid \(ProcessInfo.processInfo.processIdentifier))")
     }
 
-    /// Remove port file on shutdown.
+    /// Remove port + PID files on shutdown.
     static func removePortFile() {
+        let fm = FileManager.default
+        try? fm.removeItem(at: storageDir.appendingPathComponent("port"))
+        try? fm.removeItem(at: storageDir.appendingPathComponent("port.pid"))
+    }
+
+    /// Clean up stale port file left by a crashed/killed previous instance.
+    /// Call this on launch, before starting the server.
+    static func cleanStalePortFile() {
         let portFile = storageDir.appendingPathComponent("port")
-        try? FileManager.default.removeItem(at: portFile)
+        let pidFile = storageDir.appendingPathComponent("port.pid")
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: portFile.path) else { return }
+
+        // If there's a PID file, check if that process is still alive
+        if let pidStr = try? String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           let pid = Int32(pidStr) {
+            let alive = kill(pid, 0) == 0  // signal 0 = just check existence
+            if alive {
+                DuckLog.log("[config] Previous instance (pid \(pid)) still running — leaving port file")
+                return
+            }
+        }
+
+        // Stale — remove both files
+        DuckLog.log("[config] Cleaning stale port file from crashed/killed previous instance")
+        try? fm.removeItem(at: portFile)
+        try? fm.removeItem(at: pidFile)
     }
 
     // MARK: - Eval Provider
@@ -288,6 +316,8 @@ enum DuckConfig {
     // MARK: - PID File
 
     /// PID file path — in Application Support for sandbox safety.
+    /// Note: The server also writes `port.pid` alongside the `port` file
+    /// for stale-port detection (see cleanStalePortFile).
     static let pidFilePath: String = {
         storageDir.appendingPathComponent("duck.pid").path
     }()

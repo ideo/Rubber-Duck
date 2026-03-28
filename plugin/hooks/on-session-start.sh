@@ -58,11 +58,12 @@ fi
 
 # --- Check widget ---
 
-if curl -sf "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
-    MSG="Duck Duck Duck is watching this session. Repo: ${REPO}. Time: ${TIME_VIBE}. Recency: ${RECENCY}. Greet the user with personality — pick a tone that fits the context. Be brief (one sentence). Examples by vibe: late_night: 'Burning the midnight oil, huh?' / morning+first_ever: 'First time! Let's see what you've got.' / back_immediately: 'Miss me already?' / recent: 'Back so soon — what broke?' / hours_away: 'Been a minute. What are we getting into?' / days_away: 'Long time no quack.' / friday evening: 'Friday night coding? Respect.' Do NOT use these examples verbatim — improvise something fresh each time."
-else
-    MSG="Duck Duck Duck widget is not running. Inform the user that the companion app needs to be running for the duck to watch and react. Download: https://github.com/ideo/Rubber-Duck/releases"
+# If widget isn't running, stay completely silent — don't inject anything into Claude's context
+if ! curl -sf "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
+    exit 0
 fi
+
+MSG="Duck Duck Duck is watching this session. Time: ${TIME_VIBE}. Recency: ${RECENCY}. Greet the user with personality — pick a tone that fits the context. Be brief (one sentence). Examples by vibe: late_night: 'Burning the midnight oil, huh?' / morning+first_ever: 'First time! Let's see what you've got.' / back_immediately: 'Miss me already?' / recent: 'Back so soon — what broke?' / hours_away: 'Been a minute. What are we getting into?' / days_away: 'Long time no quack.' / friday evening: 'Friday night coding? Respect.' Do NOT use these examples verbatim — improvise something fresh each time."
 
 cat <<EOF
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"${MSG}"}}

@@ -7,20 +7,19 @@ source "$SCRIPT_DIR/duck-env.sh"
 
 INPUT=$(cat)
 
-PROMPT=$(echo "$INPUT" | jq -r '.prompt // ""')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+PROMPT=$(json_get "$INPUT" "prompt")
+SESSION_ID=$(json_get "$INPUT" "session_id")
 
 # Skip empty prompts
 if [ -z "$PROMPT" ] || [ "$PROMPT" = "null" ]; then
   exit 0
 fi
 
-PAYLOAD=$(jq -n \
-  --arg session "$SESSION_ID" \
-  --arg text "$PROMPT" \
-  --arg source "user" \
-  --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{session_id: $session, timestamp: $timestamp, source: $source, text: $text}')
+PAYLOAD=$(json_build \
+  session_id "$SESSION_ID" \
+  timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  source "user" \
+  text "$PROMPT")
 
 curl -s -X POST "${DUCK_SERVICE_URL}/evaluate" \
   -H "Content-Type: application/json" \

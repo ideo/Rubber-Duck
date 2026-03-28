@@ -8,6 +8,11 @@ source "$SCRIPT_DIR/duck-env.sh"
 
 LOG="/tmp/rubber-duck-permission.log"
 
+# Rotate log if over 1MB
+if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+  tail -200 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+fi
+
 # 1. Log hook start with timestamp
 echo "========================================" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] HOOK START" >> "$LOG"
@@ -17,25 +22,34 @@ INPUT=$(cat)
 # 2. Log the full INPUT received from stdin
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] INPUT: $INPUT" >> "$LOG"
 
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
-TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // "{}"')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
-PERMISSION_SUGGESTIONS=$(echo "$INPUT" | jq -c '.permission_suggestions // []')
+TOOL_NAME=$(json_get "$INPUT" "tool_name" "unknown")
+TOOL_INPUT=$(json_get "$INPUT" "tool_input" "{}")
+SESSION_ID=$(json_get "$INPUT" "session_id")
+# Extract suggestions as raw JSON (need the array intact for the response)
+PERMISSION_SUGGESTIONS=$(python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    print(json.dumps(d.get('permission_suggestions', [])))
+except: print('[]')
+" "$INPUT")
 
 # 3. Log extracted fields
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_NAME: $TOOL_NAME" >> "$LOG"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_INPUT: $TOOL_INPUT" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 
-# 4. Log the curl request being made
-CURL_BODY=$(jq -n \
-    --arg tool "$TOOL_NAME" \
-    --arg input "$TOOL_INPUT" \
-    --arg session "$SESSION_ID" \
-    --argjson suggestions "$PERMISSION_SUGGESTIONS" \
-    '{tool_name: $tool, tool_input: $input, session_id: $session, permission_suggestions: $suggestions}')
+# Build the permission request payload
+CURL_BODY=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'tool_name': sys.argv[1],
+    'tool_input': sys.argv[2],
+    'session_id': sys.argv[3],
+    'permission_suggestions': json.loads(sys.argv[4])
+}))
+" "$TOOL_NAME" "$TOOL_INPUT" "$SESSION_ID" "$PERMISSION_SUGGESTIONS")
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] CURL REQUEST: POST ${DUCK_SERVICE_URL}/permission" >> "$LOG"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] CURL BODY: $CURL_BODY" >> "$LOG"
 
 # POST to permission endpoint (blocks until voice response or 30s timeout)
 RESPONSE=$(curl -s -X POST ${DUCK_SERVICE_URL}/permission \
@@ -56,33 +70,37 @@ if [ -z "$RESPONSE" ]; then
   exit 0
 fi
 
-# Extract decision and optional suggestion index (-1 = deny, 0 = allow once, 1+ = suggestion[index-1])
-DECISION=$(echo "$RESPONSE" | jq -r '.decision // ""')
-SUGGESTION_INDEX=$(echo "$RESPONSE" | jq -r '.suggestion_index // "null"')
+# Extract decision and optional suggestion index
+DECISION=$(json_get "$RESPONSE" "decision")
+SUGGESTION_INDEX=$(json_get "$RESPONSE" "suggestion_index" "null")
 
 # 6. Log the extracted decision
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] DECISION: $DECISION, SUGGESTION_INDEX: $SUGGESTION_INDEX" >> "$LOG"
 
 # Only output if we got a clear decision
-# Claude Code expects: {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow|deny", "updatedPermissions": {...}}}}
 if [ "$DECISION" = "allow" ] || [ "$DECISION" = "deny" ]; then
-  SUGGESTION_COUNT=$(echo "$PERMISSION_SUGGESTIONS" | jq 'length')
+  OUTPUT=$(python3 -c "
+import json, sys
+decision = sys.argv[1]
+suggestion_index = sys.argv[2]
+suggestions = json.loads(sys.argv[3])
 
-  if [ "$SUGGESTION_INDEX" != "null" ] && [ "$SUGGESTION_INDEX" -gt "0" ] 2>/dev/null \
-      && [ "$SUGGESTION_COUNT" -gt "0" ]; then
-    # Use the suggestion at index-1 (1-based from user)
-    IDX=$((SUGGESTION_INDEX - 1))
-    SELECTED=$(echo "$PERMISSION_SUGGESTIONS" | jq -c ".[$IDX]")
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Applying suggestion[$IDX]: $SELECTED" >> "$LOG"
-    OUTPUT=$(jq -n \
-      --arg behavior "$DECISION" \
-      --argjson perms "$SELECTED" \
-      '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": $behavior, "updatedPermissions": $perms}}}')
-  else
-    OUTPUT=$(jq -n --arg behavior "$DECISION" \
-      '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": $behavior}}}')
-  fi
-  # 7. Log the final output being sent to stdout
+result = {'behavior': decision}
+if suggestion_index != 'null':
+    try:
+        idx = int(suggestion_index) - 1  # 1-based from user
+        if 0 <= idx < len(suggestions):
+            result['updatedPermissions'] = suggestions[idx]
+    except: pass
+
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PermissionRequest',
+        'decision': result
+    }
+}))
+" "$DECISION" "$SUGGESTION_INDEX" "$PERMISSION_SUGGESTIONS")
+
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] OUTPUT (stdout): $OUTPUT" >> "$LOG"
   echo "$OUTPUT"
 else

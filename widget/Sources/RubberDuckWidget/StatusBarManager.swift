@@ -39,9 +39,12 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         statusItem?.menu = menu
     }
 
-    /// Load the duck silhouette SVG from the resource bundle as a menu bar template image.
-    private static func menuBarIcon() -> NSImage? {
-        guard let url = Resources.bundle.url(forResource: "duck-symbol", withExtension: "svg"),
+    /// Load a duck SVG from the resource bundle as a menu bar image.
+    /// - Parameters:
+    ///   - named: SVG filename without extension (e.g. "duck-symbol", "duck-symbol-alert")
+    ///   - isTemplate: true for monochrome (adapts to light/dark), false for color (alert icon)
+    private static func menuBarIcon(named: String = "duck-symbol", isTemplate: Bool = true) -> NSImage? {
+        guard let url = Resources.bundle.url(forResource: named, withExtension: "svg"),
               let svgImage = NSImage(contentsOf: url) else {
             return nil
         }
@@ -54,13 +57,29 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             svgImage.draw(in: rect)
             return true
         }
-        resized.isTemplate = true  // adapts to light/dark menu bar
+        resized.isTemplate = isTemplate
         return resized
+    }
+
+    // MARK: - Status Icon
+
+    /// Swap the menu bar icon between normal duck and alert duck based on permission state.
+    private func updateStatusIcon() {
+        let hasIssues = !speechService.micPermissionGranted || !speechService.speechPermissionGranted
+        let iconName = hasIssues ? "duck-symbol-alert" : "duck-symbol"
+        // duck-symbol-alert has color (yellow triangle) → NOT template
+        // duck-symbol is monochrome → template (adapts to light/dark)
+        if let icon = Self.menuBarIcon(named: iconName, isTemplate: !hasIssues) {
+            statusItem?.button?.image = icon
+            statusItem?.button?.title = ""
+        }
     }
 
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        speechService.refreshPermissionStatus()
+        updateStatusIcon()
         rebuildMenu(menu)
     }
 
@@ -171,6 +190,33 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         claudeSession.target = self
         claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
         menu.addItem(claudeSession)
+
+        // --- Permission warnings (only if something is wrong) ---
+        let micOK = speechService.micPermissionGranted
+        let speechOK = speechService.speechPermissionGranted
+        if !micOK || !speechOK {
+            menu.addItem(.separator())
+            if !micOK {
+                let item = NSMenuItem(title: "Microphone: Not Granted", action: nil, keyEquivalent: "")
+                item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
+                item.isEnabled = false
+                menu.addItem(item)
+                let fix = NSMenuItem(title: "Open Microphone Settings…", action: #selector(openMicSettings), keyEquivalent: "")
+                fix.target = self
+                fix.image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
+                menu.addItem(fix)
+            }
+            if !speechOK {
+                let item = NSMenuItem(title: "Speech Recognition: Not Granted", action: nil, keyEquivalent: "")
+                item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
+                item.isEnabled = false
+                menu.addItem(item)
+                let fix = NSMenuItem(title: "Open Speech Recognition Settings…", action: #selector(openSpeechSettings), keyEquivalent: "")
+                fix.target = self
+                fix.image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
+                menu.addItem(fix)
+            }
+        }
 
         menu.addItem(.separator())
 
@@ -319,7 +365,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     static func installClaudeCLIAction() {
         PluginInstaller.onSpeak?("Installing Claude Code. Watch the Terminal.")
         let installCmd = """
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc 2>/dev/null; \
+            RC="$HOME/.$(basename "$SHELL")rc"; \
+            grep -qF '.local/bin' "$RC" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC" 2>/dev/null; \
             export PATH="$HOME/.local/bin:$PATH"; \
             curl -fsSL https://claude.ai/install.sh | bash; \
             echo ''; \
@@ -433,6 +480,18 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
+    @objc private func openMicSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openSpeechSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Helpers
 
     private func item(_ title: String, action: Selector) -> NSMenuItem {
@@ -470,13 +529,66 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 enum PluginInstaller {
     private static let installCommand = "claude plugin marketplace add ideo/Rubber-Duck && claude plugin install duck-duck-duck"
 
+    /// Minimum Claude version that supports plugin hooks.
+    static let minimumClaudeVersion = [1, 1, 7714]
+    static var minimumClaudeVersionString: String { minimumClaudeVersion.map(String.init).joined(separator: ".") }
+
     /// Callback for voice feedback during install. Set by the app on launch.
     @MainActor static var onSpeak: ((String) -> Void)?
+
+    /// Check if the Claude CLI version is new enough for plugin hooks.
+    /// Returns (ok, versionString). If version can't be determined, returns (true, "unknown") to avoid blocking.
+    private static func checkClaudeVersion(_ claudePath: String) -> (ok: Bool, version: String) {
+        let (success, output) = run(claudePath, args: ["--version"])
+        guard success else { return (true, "unknown") }
+
+        // Output format: "2.1.83 (Claude Code)" — grab first word
+        let versionStr = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: " ").first ?? ""
+        let parts = versionStr.components(separatedBy: ".").compactMap { Int($0) }
+        guard !parts.isEmpty else { return (true, versionStr.isEmpty ? "unknown" : versionStr) }
+
+        // Compare component-wise against minimum
+        for (actual, required) in zip(parts, minimumClaudeVersion) {
+            if actual > required { return (true, versionStr) }
+            if actual < required { return (false, versionStr) }
+        }
+        // If we get here, all compared components are equal.
+        // If actual has fewer components, treat as less than (e.g. "1.1" < "1.1.7714")
+        return (parts.count >= minimumClaudeVersion.count, versionStr)
+    }
+
+    /// Show a warning that Claude is too old.
+    @MainActor
+    private static func showVersionWarning(found: String) {
+        let alert = NSAlert()
+        alert.messageText = "Claude Version Too Old"
+        alert.informativeText = """
+            Found Claude \(found), but Duck Duck Duck requires \(minimumClaudeVersionString) or newer.
+
+            Update Claude Code:
+            claude update
+
+            Or reinstall from claude.ai/download.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
 
     /// Install the plugin. Tries automatic install first, falls back to clipboard if sandboxed.
     static func install() {
         // Try automatic install via CLI (works in dev, fails in sandbox)
         if let claude = findClaude() {
+            // Check version before attempting install
+            let (versionOK, foundVersion) = checkClaudeVersion(claude)
+            if !versionOK {
+                Task { @MainActor in
+                    onSpeak?("Your Claude version is too old for plugins. Please update.")
+                    showVersionWarning(found: foundVersion)
+                }
+                return
+            }
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
         } else if desktopPluginDirExists() {
@@ -533,12 +645,21 @@ enum PluginInstaller {
                 }
                 print("[plugin] Copied plugin to \(installDir)")
 
-                // Update installed_plugins.json
+                // Update installed_plugins.json (atomic write to prevent corruption)
                 let installedFile = "\(pluginsBase)/installed_plugins.json"
+                let installedURL = URL(fileURLWithPath: installedFile)
                 var manifest: [String: Any] = ["version": 2, "plugins": [:] as [String: Any]]
                 if let data = fm.contents(atPath: installedFile),
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   json["version"] != nil, json["plugins"] is [String: Any] {
+                    // Existing file is valid — use it
                     manifest = json
+                } else if fm.fileExists(atPath: installedFile) {
+                    // File exists but is corrupt — back it up and start fresh
+                    let backup = installedFile + ".bak"
+                    try? fm.removeItem(atPath: backup)
+                    try? fm.copyItem(atPath: installedFile, toPath: backup)
+                    print("[plugin] Backed up corrupt installed_plugins.json")
                 }
                 var plugins = manifest["plugins"] as? [String: Any] ?? [:]
                 let now = ISO8601DateFormatter().string(from: Date())
@@ -551,11 +672,12 @@ enum PluginInstaller {
                 ]]
                 manifest["plugins"] = plugins
                 let jsonData = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
-                try jsonData.write(to: URL(fileURLWithPath: installedFile))
+                try jsonData.write(to: installedURL, options: .atomic)
                 print("[plugin] Updated installed_plugins.json")
 
-                // Update known_marketplaces.json
+                // Update known_marketplaces.json (atomic write)
                 let marketplacesFile = "\(pluginsBase)/known_marketplaces.json"
+                let marketplacesURL = URL(fileURLWithPath: marketplacesFile)
                 var marketplaces: [String: Any] = [:]
                 if let data = fm.contents(atPath: marketplacesFile),
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -570,7 +692,7 @@ enum PluginInstaller {
                         "lastUpdated": now,
                     ]
                     let mpData = try JSONSerialization.data(withJSONObject: marketplaces, options: [.prettyPrinted, .sortedKeys])
-                    try mpData.write(to: URL(fileURLWithPath: marketplacesFile))
+                    try mpData.write(to: marketplacesURL, options: .atomic)
                     print("[plugin] Updated known_marketplaces.json")
                 }
 
@@ -596,6 +718,7 @@ enum PluginInstaller {
             "\(home)/.local/bin/claude",
             "\(home)/.claude/local/bin/claude",
             "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
         ])
     }
 
@@ -655,7 +778,7 @@ enum PluginInstaller {
                     if installOk {
                         Task { @MainActor in
                             onSpeak?("Plugin installed. Start a Claude session and I'll be watching.")
-                            showResult(success: true, detail: "Installed from bundled plugin. Start a new Claude Code session to activate the hooks.")
+                            showResult(success: true, detail: "Installed from bundled plugin. Close and reopen Claude Code to activate the hooks.")
                         }
                         return
                     }
@@ -682,7 +805,7 @@ enum PluginInstaller {
             Task { @MainActor in
                 if installOk {
                     onSpeak?("Plugin installed. Start a Claude session and I'll be watching.")
-                    showResult(success: true, detail: "Start a new Claude Code session to activate the hooks.")
+                    showResult(success: true, detail: "Close and reopen Claude Code to activate the hooks.")
                 } else {
                     onSpeak?("Something went wrong with the install.")
                     showResult(success: false, detail: "Plugin install failed:\n\(installOut)")
@@ -726,8 +849,9 @@ enum PluginInstaller {
 
     private static let cliInstallCommand = """
         curl -fsSL https://claude.ai/install.sh | bash && \
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && \
-        source ~/.zshrc
+        RC="$HOME/.$(basename "$SHELL")rc" && \
+        grep -qF '.local/bin' "$RC" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC" && \
+        source "$RC"
         """
 
     @MainActor
@@ -741,8 +865,6 @@ enum PluginInstaller {
             Paste this in Terminal — it installs Claude Code and sets up your PATH:
 
             curl -fsSL https://claude.ai/install.sh | bash
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-            source ~/.zshrc
 
             The command has been copied to your clipboard.
 

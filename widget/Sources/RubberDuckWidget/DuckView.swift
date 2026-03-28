@@ -11,9 +11,7 @@ struct DuckView: View {
     @EnvironmentObject var speechService: SpeechService
     @EnvironmentObject var serialManager: SerialManager
 
-    @State private var thinkingEyeX: CGFloat = 0
-    @State private var thinkingEyeY: CGFloat = 0
-    @State private var beakFlutterTimer: Timer?
+    // Thinking eye animation + beak flutter moved to DuckFaceView (isolated to prevent context menu flicker)
 
     /// Show the speech bubble when there's text AND audio won't be heard:
     /// Silent voice, duck volume is 0, or Mac is muted with no hardware duck.
@@ -74,115 +72,13 @@ struct DuckView: View {
                 coordinator.handlePermissionResolved()
             }
         }
-        .onChange(of: coordinator.isThinking) {
-            if coordinator.isThinking {
-                startThinkingAnimation()
-            } else {
-                thinkingEyeX = 0
-                thinkingEyeY = 0
-            }
-        }
-        .onChange(of: speechService.isSpeaking) {
-            if speechService.isSpeaking {
-                startBeakFlutter()
-            } else {
-                stopBeakFlutter()
-            }
-        }
+        // All face animations handled inside DuckFaceView (isolated to prevent context menu flicker)
     }
 
-    // MARK: - Duck Body
+    // MARK: - Duck Body (isolated face)
 
     private var duckBody: some View {
-        ZStack {
-            // Face — positioned from center (on top of glass)
-            ZStack {
-                // Eyes — on the vertical center line
-                DuckEyesView(
-                    permissionPending: evalService.permissionPending,
-                    eyeHeight: coordinator.expression.eyeHeight,
-                    sentiment: evalService.scores?.sentiment ?? 0
-                )
-                .offset(
-                    x: coordinator.isThinking && !evalService.permissionPending
-                        ? thinkingEyeX : 0,
-                    y: -2 + coordinator.expression.eyeOffsetY
-                        + (coordinator.isThinking && !evalService.permissionPending
-                           ? thinkingEyeY : 0)
-                )
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: evalService.permissionPending)
-                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeX)
-                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeY)
-
-                // Beak — large, below eyes
-                duckBeak
-                    .offset(y: 20)
-
-
-            }
-            .allowsHitTesting(false)
-
-            // Mood tint overlay — on top of glass
-            if coordinator.expression.glowIntensity > 0 {
-                RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
-                    .fill(coordinator.expression.glowColor)
-                    .opacity(coordinator.expression.glowIntensity * 0.3)
-                    .animation(.easeInOut(duration: 0.5), value: coordinator.expression.glowIntensity)
-                    .allowsHitTesting(false)
-            }
-
-            // Flash overlay on new eval
-            if coordinator.showReaction {
-                RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
-                    .fill(Color.white.opacity(0.3))
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
-        // Liquid Glass — real refraction + lensing, tinted duck yellow
-        .glassEffect(
-            .clear.tint(DuckTheme.bodyColor),
-            in: RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
-        )
-    }
-
-    // MARK: - Beak
-
-    private var beakImage: Image {
-        if let url = Resources.bundle.url(forResource: "beak", withExtension: "png"),
-           let nsImage = NSImage(contentsOf: url) {
-            return Image(nsImage: nsImage)
-        }
-        // Fallback — orange ellipse if PNG missing
-        return Image(systemName: "oval.fill")
-    }
-
-    private var duckBeak: some View {
-        ZStack {
-            // Beak PNG — 60% of body width (no animation — stays static)
-            beakImage
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 67, height: 34)
-                .animation(nil, value: coordinator.expression.beakOpen)
-
-            // Mouth gap (visible when speaking/reacting)
-            Ellipse()
-                .fill(Color(red: 0.15, green: 0.05, blue: 0.02))
-                .frame(width: 20, height: 4 + coordinator.expression.beakOpen * 8)
-                .offset(x: -1, y: -1 + coordinator.expression.beakOpen * 3)
-                .opacity(coordinator.expression.beakOpen > 0.05 ? 1 : 0)
-                .animation(.spring(response: 0.2), value: coordinator.expression.beakOpen)
-
-            // "X" over mouth when duck is turned off
-            if !AppDelegate.isDuckActive {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(DuckTheme.eyeColor.opacity(0.6))
-                    .offset(y: 4)
-            }
-        }
+        DuckFaceView()
     }
 
     // MARK: - Context Menu (lean — settings live in menu bar 🦆)
@@ -289,31 +185,86 @@ struct DuckView: View {
         }
     }
 
-    // Blink logic moved to DuckEyesView (isolated @State prevents menu flicker)
+}
 
-    // 6-position grid: 3 top row, 3 bottom row. Bottom-center is home.
+// MARK: - Duck Face (isolated from parent to prevent context menu flicker)
+
+/// Owns ALL face animation state: eyes, beak, thinking eye movement, glow, flash.
+/// Uses @EnvironmentObject to observe state directly — parent DuckView never re-renders
+/// due to face animations, so context menus stay open.
+private struct DuckFaceView: View {
+    @EnvironmentObject var coordinator: DuckCoordinator
+    @EnvironmentObject var evalService: EvalService
+    @EnvironmentObject var speechService: SpeechService
+
+    @State private var thinkingEyeX: CGFloat = 0
+    @State private var thinkingEyeY: CGFloat = 0
+
+    // 6-position grid for thinking eye movement
     private static let eyePositions: [(x: CGFloat, y: CGFloat)] = [
-        (-4, -3), (0, -3), (4, -3),   // top row
-        (-4,  0), (0,  0), (4,  0),   // bottom row (center = home)
+        (-4, -3), (0, -3), (4, -3),
+        (-4,  0), (0,  0), (4,  0),
     ]
 
-    private func startBeakFlutter() {
-        beakFlutterTimer?.invalidate()
-        beakFlutterTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak coordinator] _ in
-            DispatchQueue.main.async {
-                let open = CGFloat.random(in: 0.2...0.8)
-                withAnimation(.spring(response: 0.1)) {
-                    coordinator?.expression.beakOpen = open
-                }
+    var body: some View {
+        ZStack {
+            // Face
+            ZStack {
+                // Eyes
+                DuckEyesView(
+                    permissionPending: evalService.permissionPending,
+                    eyeHeight: coordinator.expression.eyeHeight,
+                    sentiment: evalService.scores?.sentiment ?? 0
+                )
+                .offset(
+                    x: coordinator.isThinking && !evalService.permissionPending
+                        ? thinkingEyeX : 0,
+                    y: -2 + coordinator.expression.eyeOffsetY
+                        + (coordinator.isThinking && !evalService.permissionPending
+                           ? thinkingEyeY : 0)
+                )
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: evalService.permissionPending)
+                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeX)
+                .animation(.spring(response: 0.12, dampingFraction: 0.5), value: thinkingEyeY)
+
+                // Beak
+                DuckBeakView(
+                    isSpeaking: speechService.isSpeaking,
+                    isDuckActive: AppDelegate.isDuckActive
+                )
+                .offset(y: 20)
+            }
+            .allowsHitTesting(false)
+
+            // Mood tint overlay
+            if coordinator.expression.glowIntensity > 0 {
+                RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
+                    .fill(coordinator.expression.glowColor)
+                    .opacity(coordinator.expression.glowIntensity * 0.3)
+                    .animation(.easeInOut(duration: 0.5), value: coordinator.expression.glowIntensity)
+                    .allowsHitTesting(false)
+            }
+
+            // Flash overlay on new eval
+            if coordinator.showReaction {
+                RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
+                    .fill(Color.white.opacity(0.3))
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
             }
         }
-    }
-
-    private func stopBeakFlutter() {
-        beakFlutterTimer?.invalidate()
-        beakFlutterTimer = nil
-        withAnimation(.spring(response: 0.2)) {
-            coordinator.expression.beakOpen = 0.0
+        .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
+        .glassEffect(
+            .clear.tint(DuckTheme.bodyColor),
+            in: RoundedRectangle(cornerRadius: DuckTheme.cornerRadius)
+        )
+        .onChange(of: coordinator.isThinking) {
+            if coordinator.isThinking {
+                startThinkingAnimation()
+            } else {
+                thinkingEyeX = 0
+                thinkingEyeY = 0
+            }
         }
     }
 
@@ -402,6 +353,75 @@ private struct DuckEyesView: View {
                     scheduleBlink()
                 }
             }
+        }
+    }
+}
+
+// MARK: - Duck Beak (isolated flutter state)
+
+/// Isolated from parent view to prevent context menu dismissal on mouth animation.
+/// Same pattern as DuckEyesView — uses @State for the flutter timer.
+private struct DuckBeakView: View {
+    var isSpeaking: Bool
+    var isDuckActive: Bool
+
+    @State private var flutterOpen: CGFloat = 0
+    @State private var flutterTimer: Timer?
+
+    private static let cachedBeakImage: Image = {
+        if let url = Resources.bundle.url(forResource: "beak", withExtension: "png"),
+           let nsImage = NSImage(contentsOf: url) {
+            return Image(nsImage: nsImage)
+        }
+        return Image(systemName: "oval.fill")
+    }()
+
+    var body: some View {
+        ZStack {
+            Self.cachedBeakImage
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 67, height: 34)
+
+            Ellipse()
+                .fill(Color(red: 0.15, green: 0.05, blue: 0.02))
+                .frame(width: 20, height: 4 + flutterOpen * 8)
+                .offset(x: -1, y: -1 + flutterOpen * 3)
+                .opacity(flutterOpen > 0.05 ? 1 : 0)
+                .animation(.spring(response: 0.2), value: flutterOpen)
+
+            if !isDuckActive {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(DuckTheme.eyeColor.opacity(0.6))
+                    .offset(y: 4)
+            }
+        }
+        .onChange(of: isSpeaking) {
+            if isSpeaking {
+                startFlutter()
+            } else {
+                stopFlutter()
+            }
+        }
+    }
+
+    private func startFlutter() {
+        flutterTimer?.invalidate()
+        flutterTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { _ in
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.1)) {
+                    flutterOpen = CGFloat.random(in: 0.2...0.8)
+                }
+            }
+        }
+    }
+
+    private func stopFlutter() {
+        flutterTimer?.invalidate()
+        flutterTimer = nil
+        withAnimation(.spring(response: 0.2)) {
+            flutterOpen = 0
         }
     }
 }

@@ -199,7 +199,6 @@ final class MiniServer {
     func start() throws {
         // Try preferred port, then fallback to next available ports
         let portsToTry: [UInt16] = [port] + (1...10).map { port + $0 }
-        var lastError: Error?
 
         for candidate in portsToTry {
             do {
@@ -227,13 +226,37 @@ final class MiniServer {
                 DuckConfig.writePortFile()
                 return
             } catch {
-                lastError = error
                 DuckLog.log("[server] Port \(candidate) unavailable: \(error)")
                 continue
             }
         }
-        // All ports failed
-        throw lastError ?? NSError(domain: "MiniServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No available port"])
+        // All preferred ports failed — let the OS pick any available port
+        do {
+            let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
+            let l = try NWListener(using: params)  // no port = OS auto-assigns
+
+            l.newConnectionHandler = { [weak self] conn in
+                self?.accept(conn)
+            }
+            l.stateUpdateHandler = { [weak self] state in
+                if case .ready = state, let actualPort = l.port?.rawValue {
+                    self?.port = actualPort
+                    DuckConfig.activePort = Int(actualPort)
+                    DuckConfig.writePortFile()
+                    DuckLog.log("[server] OS assigned port \(actualPort)")
+                } else if case .failed(let err) = state {
+                    DuckLog.log("[server] Listener error on OS-assigned port: \(err)")
+                }
+            }
+
+            listener = l
+            l.start(queue: queue)
+            DuckLog.log("[server] Ports \(portsToTry.first!)–\(portsToTry.last!) all taken, using OS-assigned port")
+            return
+        } catch {
+            throw error
+        }
     }
 
     func stop() {

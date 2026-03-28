@@ -249,35 +249,77 @@ class SpeechService: ObservableObject {
 
     // MARK: - Public API
 
+    /// Re-check current permission state without triggering dialogs.
+    /// Call this when the menu opens or app returns to foreground to catch
+    /// permissions toggled in System Settings while the app was running.
+    func refreshPermissionStatus() {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        micPermissionGranted = (micStatus == .authorized)
+
+        let speechStatus = SFSpeechRecognizer.authorizationStatus()
+        speechPermissionGranted = (speechStatus == .authorized)
+    }
+
     func requestPermissions() {
         log("[speech] Requesting permissions (mic first, then speech)...")
 
+        // Check current status first — skip prompts for already-decided permissions.
+        // This avoids redundant dialogs after System Settings toggles or dev rebuilds.
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        let speechStatus = SFSpeechRecognizer.authorizationStatus()
+
+        if micStatus == .authorized && speechStatus == .authorized {
+            log("[speech] Both permissions already granted — skipping dialogs")
+            micPermissionGranted = true
+            speechPermissionGranted = true
+            selectMicrophone()
+            startListeningIfReady()
+            return
+        }
+
         // Request mic FIRST — it's the critical one. macOS won't show two dialogs at once,
         // so we chain them: mic → speech. Mic prompt must appear.
-        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            Task { @MainActor in
-                guard let self else { return }
-                self.micPermissionGranted = granted
-                self.log("[speech] Mic permission: \(granted ? "granted" : "denied")")
-                if granted {
-                    self.selectMicrophone()
-                } else {
-                    self.lastError = "Microphone access denied"
-                }
-
-                // Now request speech recognition (after mic dialog is dismissed)
-                SFSpeechRecognizer.requestAuthorization { [weak self] status in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.speechPermissionGranted = (status == .authorized)
-                        self.log("[speech] Speech auth status: \(status.rawValue) (\(status == .authorized ? "granted" : "denied"))")
-                        if status != .authorized {
-                            self.lastError = "Speech recognition not authorized"
-                        }
-                        self.startListeningIfReady()
+        if micStatus == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.micPermissionGranted = granted
+                    self.log("[speech] Mic permission: \(granted ? "granted" : "denied")")
+                    if granted {
+                        self.selectMicrophone()
+                    } else {
+                        self.lastError = "Microphone access denied"
                     }
+                    self.requestSpeechPermission()
                 }
             }
+        } else {
+            micPermissionGranted = (micStatus == .authorized)
+            if micPermissionGranted { selectMicrophone() }
+            else { lastError = "Microphone access denied" }
+            requestSpeechPermission()
+        }
+    }
+
+    /// Request speech recognition permission (or skip if already decided).
+    private func requestSpeechPermission() {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        if status == .notDetermined {
+            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.speechPermissionGranted = (status == .authorized)
+                    self.log("[speech] Speech auth status: \(status.rawValue) (\(status == .authorized ? "granted" : "denied"))")
+                    if status != .authorized {
+                        self.lastError = "Speech recognition not authorized"
+                    }
+                    self.startListeningIfReady()
+                }
+            }
+        } else {
+            speechPermissionGranted = (status == .authorized)
+            if status != .authorized { lastError = "Speech recognition not authorized" }
+            startListeningIfReady()
         }
     }
 
@@ -305,6 +347,10 @@ class SpeechService: ObservableObject {
     }
 
     func startListening() {
+        guard AppDelegate.isDuckActive else {
+            log("[speech] Skipping startListening — duck is paused")
+            return
+        }
         guard micPermissionGranted && speechPermissionGranted else {
             log("[speech] Missing permissions (mic=\(micPermissionGranted), speech=\(speechPermissionGranted))")
             lastError = "Missing permissions"

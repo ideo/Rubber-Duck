@@ -113,6 +113,9 @@ struct RubberDuckWidgetApp: App {
             }
         }
 
+        // Clean up stale port file from a previous crash/kill -9
+        DuckConfig.cleanStalePortFile()
+
         // Start the embedded HTTP + WebSocket server
         server.start()
 
@@ -245,14 +248,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
 
-    func applicationDidResignActive(_ notification: Notification) {
-        // When another app takes focus, re-activate so glass stays saturated.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard let duck = Self.duckWindow, duck.isVisible else { return }
-            NSApp.activate()
-            duck.makeKeyAndOrderFront(nil)
-        }
-    }
+    // NOTE: applicationDidResignActive removed — it was stealing focus from
+    // Settings/Help windows, preventing sidebar clicks. Glass saturation is
+    // now handled solely by canBecomeKey override on the duck window.
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // When Settings/Help closes, re-key the duck window
@@ -449,15 +447,10 @@ enum AlwaysActiveWindowHelper {
             class_addMethod(subclass, #selector(getter: NSWindow.canBecomeMain), boolImp, method_getTypeEncoding(canMainMethod))
         }
 
-        // Override isKeyWindow getter to always return true
-        let selector = #selector(getter: NSWindow.isKeyWindow)
-        guard let method = class_getInstanceMethod(originalClass, selector) else {
-            return
-        }
-        let types = method_getTypeEncoding(method)
-        let block: @convention(block) (AnyObject) -> Bool = { _ in true }
-        let imp = imp_implementationWithBlock(block)
-        class_addMethod(subclass, selector, imp, types)
+        // NOTE: we do NOT override isKeyWindow. Lying about key status prevents
+        // other windows (Settings, Help) from receiving clicks. canBecomeKey +
+        // canBecomeMain are enough for the system to return focus to us.
+        // Glass saturation is handled by applicationDidResignActive re-activating.
 
         objc_registerClassPair(subclass)
         object_setClass(window, subclass)

@@ -84,6 +84,22 @@ The `StopFailure` hook broke all plugin loading on Claude 2.1.76 because it's no
 
 ---
 
+## ~~All ports taken = dead duck, no recovery~~ — FIXED (2026-03-28)
+
+Solved: MiniServer now falls back to OS auto-assigned port (port 0) if 3333–3343 are all taken. Hooks read the port file so they don't care what number it is.
+
+---
+
+## TTS-to-device latency — voice stream lag
+
+Noticeable delay when streaming TTS audio to the hardware duck (Teensy/ESP32). The voice starts late compared to the speech bubble appearing on screen. Need to investigate:
+- Buffering in the serial audio path (DMA buffer sizes, chunk sizes)
+- `say` process startup latency vs when audio actually hits the device
+- Whether pre-buffering or smaller chunks would help
+- Measure actual latency to quantify the gap
+
+---
+
 ## TTS interrupt — stop the duck mid-speech
 
 No way to interrupt long TTS (especially the bedtime story). Need:

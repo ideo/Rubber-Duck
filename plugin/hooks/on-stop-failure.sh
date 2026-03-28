@@ -6,13 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/duck-env.sh"
 
 INPUT=$(cat)
-ERROR_TYPE=$(echo "$INPUT" | jq -r '.error_type // "unknown"')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+ERROR_TYPE=$(json_get "$INPUT" "error_type" "unknown")
+SESSION_ID=$(json_get "$INPUT" "session_id")
 
 # Notify widget (fire-and-forget)
+PAYLOAD=$(json_build error_type "$ERROR_TYPE" session_id "$SESSION_ID")
 curl -sf -X POST "${DUCK_SERVICE_URL}/stop-failure" \
   -H "Content-Type: application/json" \
-  -d "{\"error_type\":\"${ERROR_TYPE}\",\"session_id\":\"${SESSION_ID}\"}" \
-  > /dev/null 2>&1
+  -d "$PAYLOAD" > /dev/null 2>&1
 
 exit 0
