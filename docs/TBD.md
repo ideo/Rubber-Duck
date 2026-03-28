@@ -1,33 +1,33 @@
 # TBD — Open Items
 
-## Active
+## Active (priority order)
 
-### Conversation polish — latency, red dot, timeouts
+### 1. Conversation polish — latency, red dot, timeouts
 Combined performance/UX issues in voice conversations:
 - **Mouth starts before audio**: mouth animation fires on `speak()` but `say` process has cold-start lag on first utterance. Subsequent calls are fast. Mainly noticeable on conversation start.
 - **Red dot persistence**: during easter egg TTS reading, red dot stays on. After backstory conversation, dot sometimes doesn't clear on exit.
 - **Conversation drops**: mic stops listening mid-conversation — no follow-up window. Likely race condition in conversation timeout timer (TTS finishing, STT restarting, timeout firing stepping on each other).
 - **Future**: LLM could tag responses as final vs open and adjust timeout accordingly.
 
-### Foundation Models tuning
+### 2. Foundation Models tuning
 - Help vs free chat flow — 3B model sometimes gets stuck in help mode
 - Easter egg sensitivity — some normal questions still trigger backstory deflection
 
-### Menu + Preferences — regression testing
-- View menu suppression working but hacky (didBecomeActiveNotification + delay)
-- Full regression test needed after all restructuring (modes, volume, voice, launch, experimental)
-
-### Status bar icon disappearing on some Macs
-macOS hides overflow status bar items on notch Macs when space runs out.
-- `autosaveName` applied — macOS remembers position
-- Settings menu and right-click cover all features — not blocking
-
-### Version check via GitHub API
+### 3. Version check via GitHub API
 Lightweight update check — no Sparkle dependency:
 - `GET api.github.com/repos/ideo/Rubber-Duck/releases/latest`
 - Compare tag against bundle version
 - Show notification linking to release page (GitHub) or App Store
 - App Store safe — no self-update mechanism
+
+### 4. Menu + Preferences — regression testing
+- View menu suppression working but hacky (didBecomeActiveNotification + delay)
+- Full regression test needed after all restructuring (modes, volume, voice, launch, experimental)
+
+### 5. Status bar icon disappearing on some Macs
+macOS hides overflow status bar items on notch Macs when space runs out.
+- `autosaveName` applied — macOS remembers position
+- Settings menu and right-click cover all features — not blocking
 
 ---
 
