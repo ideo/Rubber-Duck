@@ -123,13 +123,23 @@ class DuckServer: ObservableObject {
                                                                 wildcardEnabled: wildcardOn)
                 }
             } catch {
-                DuckLog.log("[server] Eval error: \(error)")
-                scores = EvalScores(
-                    creativity: 0, soundness: 0, ambition: 0,
-                    elegance: 0, risk: 0,
-                    reaction: "I'm confused",
-                    summary: "Evaluation failed"
-                )
+                DuckLog.log("[server] Eval error: \(error) — falling back to Foundation Model")
+                // Cloud provider failed — try Foundation Model as fallback
+                do {
+                    scores = try await localEvaluator.evaluate(text: text, source: source,
+                                                                userContext: userContext,
+                                                                claudeContext: claudeContext,
+                                                                wildcardEnabled: wildcardOn)
+                } catch {
+                    DuckLog.log("[server] Foundation Model fallback also failed: \(error)")
+                    let reactions = ["Hmm.", "That's odd.", "Uh oh.", "Something broke.", "Didn't catch that."]
+                    scores = EvalScores(
+                        creativity: 0, soundness: 0, ambition: 0,
+                        elegance: 0, risk: 0,
+                        reaction: reactions.randomElement()!,
+                        summary: "Evaluation failed"
+                    )
+                }
             }
 
             let textPreview = String(text.prefix(150)) + (text.count > 150 ? "..." : "")

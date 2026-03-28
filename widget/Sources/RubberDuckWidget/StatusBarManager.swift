@@ -159,10 +159,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         intellItem.image = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: "Intelligence")
         let intellMenu = NSMenu()
 
-        let foundationItem = NSMenuItem(title: "Apple Foundation Models", action: #selector(setProviderFoundation), keyEquivalent: "")
+        let foundationItem = NSMenuItem(title: "Apple Foundation Model", action: #selector(setProviderFoundation), keyEquivalent: "")
         foundationItem.target = self
         foundationItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Apple")
-        foundationItem.subtitle = "On-device, free, sub-second"
+        foundationItem.subtitle = "Private to your machine, free"
         foundationItem.state = currentProvider == .foundation ? .on : .off
         intellMenu.addItem(foundationItem)
 

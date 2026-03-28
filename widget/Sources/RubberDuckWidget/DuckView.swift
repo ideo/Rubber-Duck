@@ -103,7 +103,7 @@ private struct DuckContextMenu: View {
                 DuckConfig.evalProvider = .foundation
             } label: {
                 Label(
-                    DuckConfig.evalProvider == .foundation ? "✓ Apple Foundation Models" : "Apple Foundation Models",
+                    DuckConfig.evalProvider == .foundation ? "✓ Apple Foundation Model" : "Apple Foundation Model",
                     systemImage: "apple.logo"
                 )
             }

@@ -125,7 +125,7 @@ actor GeminiEvaluator {
         EvalScores(
             creativity: 0, soundness: 0, ambition: 0,
             elegance: 0, risk: 0,
-            reaction: "I'm confused",
+            reaction: ["Hmm.", "That's odd.", "Didn't catch that."].randomElement()!,
             summary: "Failed to parse evaluation"
         )
     }

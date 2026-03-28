@@ -93,8 +93,8 @@ private struct IntelligencePane: View {
         Form {
             Section("Provider") {
                 providerRow(.foundation, icon: "apple.logo",
-                            title: "Apple Foundation Models",
-                            subtitle: "On-device, free, sub-second")
+                            title: "Apple Foundation Model",
+                            subtitle: "Private to your machine, free")
 
                 providerRow(.anthropic, icon: "asterisk",
                             title: "Claude Haiku",
@@ -103,6 +103,23 @@ private struct IntelligencePane: View {
                 providerRow(.gemini, icon: "sparkle",
                             title: "Gemini",
                             subtitle: "Google API, alternative cloud scoring")
+
+                if evalProvider != .foundation {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your chats with Claude will be evaluated by third-party LLMs and are subject to their usage and privacy terms.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            if evalProvider == .anthropic {
+                                Link("Anthropic Usage Policy", destination: URL(string: "https://www.anthropic.com/legal/aup")!)
+                                    .font(.caption)
+                            } else if evalProvider == .gemini {
+                                Link("Google Gemini API Terms", destination: URL(string: "https://ai.google.dev/gemini-api/terms")!)
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
             }
 
             Section("API Keys") {
@@ -162,6 +179,12 @@ private struct IntelligencePane: View {
 
     private func providerRow(_ provider: DuckConfig.EvalProvider, icon: String, title: String, subtitle: String) -> some View {
         Button {
+            // Require API key before switching to cloud providers
+            if provider == .anthropic {
+                guard DuckConfig.ensureAPIKey() else { return }
+            } else if provider == .gemini {
+                guard DuckConfig.ensureGeminiAPIKey() else { return }
+            }
             evalProvider = provider
             DuckConfig.evalProvider = provider
         } label: {
