@@ -156,7 +156,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         case .gemini: providerLabel = "Gemini"
         }
         let intellItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
-        intellItem.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "Intelligence")
+        intellItem.image = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: "Intelligence")
         let intellMenu = NSMenu()
 
         let foundationItem = NSMenuItem(title: "Apple Foundation Models", action: #selector(setProviderFoundation), keyEquivalent: "")

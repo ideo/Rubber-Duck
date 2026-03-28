@@ -18,7 +18,7 @@ struct PreferencesView: View {
 
         var icon: String {
             switch self {
-            case .intelligence: return "brain.head.profile"
+            case .intelligence: return "brain.fill"
             case .behavior: return "slider.horizontal.3"
             case .about: return "info.circle"
             }

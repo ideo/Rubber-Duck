@@ -429,9 +429,11 @@ class SpeechService: ObservableObject {
     func stopSpeaking() {
         activeTTS.stop()
         speakingPollTimer?.cancel()
+        speakingPollTimer = nil
         isSpeaking = false
         utteranceClearTimer?.cancel()
         currentUtterance = ""
+        exitConversation()
     }
 
     /// Set master volume (0.0–1.0). Propagates to both TTS engines.

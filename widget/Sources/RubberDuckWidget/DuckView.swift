@@ -5,86 +5,43 @@
 import SwiftUI
 
 struct DuckView: View {
-    @EnvironmentObject var coordinator: DuckCoordinator
-    @EnvironmentObject var duckServer: DuckServer
-    @EnvironmentObject var evalService: EvalService
-    @EnvironmentObject var speechService: SpeechService
-    @EnvironmentObject var serialManager: SerialManager
+    // NOTE: No @EnvironmentObject here. All observable state is read inside
+    // isolated child views. This prevents body re-evaluation from dismissing .contextMenu.
 
-    // Thinking eye animation + beak flutter moved to DuckFaceView (isolated to prevent context menu flicker)
-
-    /// Show the speech bubble when there's text AND audio won't be heard:
-    /// Silent voice, duck volume is 0, or Mac is muted with no hardware duck.
-    private var speechBubbleVisible: Bool {
-        guard !speechService.currentUtterance.isEmpty else { return false }
-        if speechService.isSilent || DuckConfig.volume <= 0 { return true }
-        // System muted + no external duck = nobody can hear TTS
-        if speechService.audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted() {
-            return true
-        }
-        return false
-    }
+    @State private var isHovering = false
 
     var body: some View {
         ZStack {
-            // Duck body (liquid glass — no rotation/scale; transforms break glass refraction)
-            duckBody
+            // Duck body (liquid glass face — isolated)
+            DuckFaceView()
 
-            // Status indicators (top edge of duck body)
-            HStack(spacing: 4) {
-                if speechService.isWakeActive || speechService.isInConversation {
-                    Circle()
-                        .fill(Color.red.opacity(0.9))
-                        .frame(width: 6, height: 6)
-                        .transition(.scale.combined(with: .opacity))
-                } else if serialManager.isConnected {
-                    Circle()
-                        .fill(Color.blue.opacity(0.7))
-                        .frame(width: 6, height: 6)
-                }
-                if !evalService.isConnected {
-                    Circle()
-                        .fill(Color.red.opacity(0.7))
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .animation(.easeInOut(duration: 0.15), value: speechService.isWakeActive || speechService.isInConversation)
-            .popover(isPresented: .constant(!speechService.lastHeard.isEmpty), arrowEdge: .top) {
-                VoiceCommandBubbleView(text: speechService.lastHeard)
-            }
-            .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
+            // Wing overlay (isolated — reads isSpeaking internally)
+            DuckWingsView(isHovering: isHovering)
+                .zIndex(10)
+
+            // Status indicators + popovers (isolated — reads speech/serial/eval state internally)
+            DuckStatusOverlay()
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
-        .popover(isPresented: .constant(speechBubbleVisible), arrowEdge: .bottom) {
-            SpeechBubbleView(text: speechService.currentUtterance)
-                .padding(4)
-        }
         .contentShape(Rectangle())
-        .contextMenu { duckContextMenu }
-        .onChange(of: evalService.evalCount) {
-            coordinator.handleNewEval()
-        }
-        .onChange(of: evalService.permissionRequestId) {
-            coordinator.handlePermissionChange()
-        }
-        .onChange(of: evalService.permissionPending) {
-            if !evalService.permissionPending {
-                coordinator.handlePermissionResolved()
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                isHovering = hovering
             }
         }
-        // All face animations handled inside DuckFaceView (isolated to prevent context menu flicker)
+        .contextMenu { DuckContextMenu() }
     }
 
-    // MARK: - Duck Body (isolated face)
+}
 
-    private var duckBody: some View {
-        DuckFaceView()
-    }
+// MARK: - Context Menu (isolated — reads coordinator/speechService/duckServer internally)
 
-    // MARK: - Context Menu (lean — settings live in menu bar 🦆)
+private struct DuckContextMenu: View {
+    @EnvironmentObject var coordinator: DuckCoordinator
+    @EnvironmentObject var speechService: SpeechService
+    @EnvironmentObject var duckServer: DuckServer
 
-    @ViewBuilder
-    private var duckContextMenu: some View {
+    var body: some View {
         // Mode selector
         Menu {
             ForEach(DuckMode.allCases, id: \.rawValue) { mode in
@@ -157,14 +114,7 @@ struct DuckView: View {
                 )
             }
         } label: {
-            let providerName: String = {
-                switch DuckConfig.evalProvider {
-                case .foundation: return "Foundation"
-                case .anthropic: return "Haiku"
-                case .gemini: return "Gemini"
-                }
-            }()
-            Label("Intelligence: \(providerName)", systemImage: "brain.head.profile")
+            Label("Intelligence", systemImage: "brain.fill")
         }
 
         Divider()
@@ -184,7 +134,67 @@ struct DuckView: View {
             Label("Quit", systemImage: "xmark")
         }
     }
+}
 
+// MARK: - Duck Status Overlay (isolated — reads all frequently-changing state)
+
+/// Owns status indicators, voice command popover, and speech bubble.
+/// Isolated from DuckView so rapid @Published changes (lastHeard, currentUtterance,
+/// isWakeActive, evalCount) don't re-evaluate the parent body and dismiss .contextMenu.
+private struct DuckStatusOverlay: View {
+    @EnvironmentObject var speechService: SpeechService
+    @EnvironmentObject var evalService: EvalService
+    @EnvironmentObject var serialManager: SerialManager
+    @EnvironmentObject var coordinator: DuckCoordinator
+
+    private var speechBubbleVisible: Bool {
+        guard !speechService.currentUtterance.isEmpty else { return false }
+        if speechService.isSilent || DuckConfig.volume <= 0 { return true }
+        if speechService.audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted() {
+            return true
+        }
+        return false
+    }
+
+    var body: some View {
+        ZStack {
+            // Status indicators (top edge)
+            HStack(spacing: 4) {
+                if speechService.isWakeActive || speechService.isInConversation {
+                    Image(systemName: "square.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.red.opacity(0.9))
+                        .transition(.scale.combined(with: .opacity))
+                } else if serialManager.isConnected {
+                    Image(systemName: "square.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(DuckTheme.accent)
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: speechService.isWakeActive || speechService.isInConversation)
+            .popover(isPresented: .constant(!speechService.lastHeard.isEmpty), arrowEdge: .top) {
+                VoiceCommandBubbleView(text: speechService.lastHeard)
+            }
+            .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
+        }
+        .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
+        .popover(isPresented: .constant(speechBubbleVisible), arrowEdge: .bottom) {
+            SpeechBubbleView(text: speechService.currentUtterance)
+                .padding(4)
+        }
+        .allowsHitTesting(false)
+        .onChange(of: evalService.evalCount) {
+            coordinator.handleNewEval()
+        }
+        .onChange(of: evalService.permissionRequestId) {
+            coordinator.handlePermissionChange()
+        }
+        .onChange(of: evalService.permissionPending) {
+            if !evalService.permissionPending {
+                coordinator.handlePermissionResolved()
+            }
+        }
+    }
 }
 
 // MARK: - Duck Face (isolated from parent to prevent context menu flicker)
@@ -229,8 +239,7 @@ private struct DuckFaceView: View {
 
                 // Beak
                 DuckBeakView(
-                    isSpeaking: speechService.isSpeaking,
-                    isDuckActive: AppDelegate.isDuckActive
+                    isSpeaking: speechService.isSpeaking
                 )
                 .offset(y: 20)
             }
@@ -363,7 +372,6 @@ private struct DuckEyesView: View {
 /// Same pattern as DuckEyesView — uses @State for the flutter timer.
 private struct DuckBeakView: View {
     var isSpeaking: Bool
-    var isDuckActive: Bool
 
     @State private var flutterOpen: CGFloat = 0
     @State private var flutterTimer: Timer?
@@ -389,13 +397,6 @@ private struct DuckBeakView: View {
                 .offset(x: -1, y: -1 + flutterOpen * 3)
                 .opacity(flutterOpen > 0.05 ? 1 : 0)
                 .animation(.spring(response: 0.2), value: flutterOpen)
-
-            if !isDuckActive {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(DuckTheme.eyeColor.opacity(0.6))
-                    .offset(y: 4)
-            }
         }
         .onChange(of: isSpeaking) {
             if isSpeaking {
@@ -423,6 +424,90 @@ private struct DuckBeakView: View {
         withAnimation(.spring(response: 0.2)) {
             flutterOpen = 0
         }
+    }
+}
+
+// MARK: - Duck Wings (isolated to prevent context menu flicker)
+
+/// Isolated from parent DuckView so isSpeaking changes don't re-render the parent.
+private struct DuckWingsView: View {
+    var isHovering: Bool
+    @EnvironmentObject var speechService: SpeechService
+
+    private var wingsVisible: Bool {
+        (isHovering && speechService.isSpeaking) || !AppDelegate.isDuckActive
+    }
+
+    var body: some View {
+        ZStack {
+            // Left wing
+            DuckWingShape()
+                .fill(.clear)
+                .glassEffect(
+                    .clear.tint(DuckTheme.bodyColor),
+                    in: DuckWingShape()
+                )
+                .frame(width: 84, height: 62)
+                .offset(x: -16, y: wingsVisible ? 32 : 60)
+                .opacity(wingsVisible ? 1 : 0)
+            // Right wing (mirrored)
+            DuckWingShape()
+                .fill(.clear)
+                .glassEffect(
+                    .clear.tint(DuckTheme.bodyColor),
+                    in: DuckWingShape()
+                )
+                .frame(width: 84, height: 62)
+                .scaleEffect(x: -1, y: 1)
+                .offset(x: 16, y: wingsVisible ? 32 : 60)
+                .opacity(wingsVisible ? 1 : 0)
+            // Tap target
+            if wingsVisible {
+                Color.clear
+                    .frame(width: DuckTheme.widgetSize - 8, height: 62)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture().onEnded {
+                        if speechService.isSpeaking {
+                            DuckLog.log("[duck] Wing tap — stopping speech")
+                            speechService.stopSpeaking()
+                        } else if !AppDelegate.isDuckActive {
+                            AppDelegate.turnOn()
+                        }
+                    })
+                    .offset(y: 32)
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovering)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: speechService.isSpeaking)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: AppDelegate.isDuckActive)
+    }
+}
+
+// MARK: - Duck Wing Shape
+
+/// SwiftUI Shape converted from left-wing-stroke.svg (viewBox 0 0 80 59).
+/// Originates from bottom-left, sweeps up-right with a feathered curve.
+private struct DuckWingShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let sx = rect.width / 80.0
+        let sy = rect.height / 59.0
+        var p = Path()
+        p.move(to: CGPoint(x: 71.678 * sx, y: 0.967 * sy))
+        p.addLine(to: CGPoint(x: 0.750 * sx, y: 50.207 * sy))
+        p.addLine(to: CGPoint(x: 0.750 * sx, y: 58.066 * sy))
+        p.addLine(to: CGPoint(x: 70.218 * sx, y: 58.085 * sy))
+        p.addCurve(
+            to: CGPoint(x: 71.111 * sx, y: 31.745 * sy),
+            control1: CGPoint(x: 86.955 * sx, y: 45.524 * sy),
+            control2: CGPoint(x: 71.111 * sx, y: 31.745 * sy)
+        )
+        p.addCurve(
+            to: CGPoint(x: 71.678 * sx, y: 0.967 * sy),
+            control1: CGPoint(x: 71.111 * sx, y: 31.745 * sy),
+            control2: CGPoint(x: 87.572 * sx, y: 16.373 * sy)
+        )
+        p.closeSubpath()
+        return p
     }
 }
 
