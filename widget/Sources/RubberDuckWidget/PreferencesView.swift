@@ -11,7 +11,7 @@ struct PreferencesView: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case intelligence = "Intelligence"
-        case voice = "Voice"
+        case behavior = "Behavior"
         case about = "About"
 
         var id: String { rawValue }
@@ -19,7 +19,7 @@ struct PreferencesView: View {
         var icon: String {
             switch self {
             case .intelligence: return "brain.head.profile"
-            case .voice: return "waveform"
+            case .behavior: return "slider.horizontal.3"
             case .about: return "info.circle"
             }
         }
@@ -64,8 +64,8 @@ struct PreferencesView: View {
                 switch selectedTab {
                 case .intelligence:
                     IntelligencePane()
-                case .voice:
-                    VoicePane(speechService: speechService)
+                case .behavior:
+                    BehaviorPane()
                 case .about:
                     AboutPane()
                 }
@@ -79,7 +79,7 @@ struct PreferencesView: View {
 // MARK: - Intelligence Pane
 
 private struct IntelligencePane: View {
-    private let accent = Color(red: 0.925, green: 0.725, blue: 0.278)
+    private var accent: Color { DuckTheme.accent }
 
     @State private var evalProvider = DuckConfig.evalProvider
     @State private var anthropicKey = DuckConfig.anthropicAPIKey
@@ -96,11 +96,11 @@ private struct IntelligencePane: View {
                             title: "Apple Foundation Models",
                             subtitle: "On-device, free, sub-second")
 
-                providerRow(.anthropic, icon: "brain.head.profile",
+                providerRow(.anthropic, icon: "asterisk",
                             title: "Claude Haiku",
                             subtitle: "Anthropic API, higher quality scoring")
 
-                providerRow(.gemini, icon: "sparkles",
+                providerRow(.gemini, icon: "sparkle",
                             title: "Gemini",
                             subtitle: "Google API, alternative cloud scoring")
             }
@@ -137,19 +137,22 @@ private struct IntelligencePane: View {
                               hasGeminiKey = false
                               editingGeminiKey = false
                           })
-            }
 
-            if hasAnthropicKey || hasGeminiKey {
-                Section {
-                    Button(role: .destructive) {
-                        DuckConfig.removeAPIKey()
-                        DuckConfig.removeGeminiAPIKey()
-                        anthropicKey = ""; geminiKey = ""
-                        hasAnthropicKey = false; hasGeminiKey = false
-                        evalProvider = .foundation
-                        DuckConfig.evalProvider = .foundation
-                    } label: {
-                        Label("Clear All Keys", systemImage: "trash")
+                if hasAnthropicKey || hasGeminiKey {
+                    HStack {
+                        Spacer()
+                        Button(role: .destructive) {
+                            DuckConfig.removeAPIKey()
+                            DuckConfig.removeGeminiAPIKey()
+                            anthropicKey = ""; geminiKey = ""
+                            hasAnthropicKey = false; hasGeminiKey = false
+                            evalProvider = .foundation
+                            DuckConfig.evalProvider = .foundation
+                        } label: {
+                            Text("Clear All Keys")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -197,8 +200,6 @@ private struct IntelligencePane: View {
                 if hasKey && !isEditing.wrappedValue {
                     Text("••••••••")
                         .foregroundStyle(.secondary)
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
                     Button("Edit") { isEditing.wrappedValue = true }
                         .buttonStyle(.borderless)
                 } else if !hasKey && !isEditing.wrappedValue {
@@ -230,17 +231,56 @@ private struct IntelligencePane: View {
     }
 }
 
-// MARK: - Voice Pane
+// MARK: - Behavior Pane
 
-private struct VoicePane: View {
-    let speechService: SpeechService
+private struct BehaviorPane: View {
+    @EnvironmentObject var speechService: SpeechService
+    @EnvironmentObject var coordinator: DuckCoordinator
 
+    @State private var selectedMode: DuckMode = DuckConfig.duckMode
     @State private var selectedVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckVoices.wildcardSayName
     @State private var volume: Float = DuckConfig.volume
+    @State private var selectedMic: String = ""
+    @State private var availableMics: [(index: Int, name: String)] = []
+
+    private var accent: Color { DuckTheme.accent }
 
     var body: some View {
         Form {
-            Section("Voice") {
+            // --- Mode ---
+            Section("Mode") {
+                ForEach(DuckMode.allCases, id: \.rawValue) { mode in
+                    Button {
+                        selectedMode = mode
+                        coordinator.setMode(mode)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: mode.iconName)
+                                .font(.title3)
+                                .frame(width: 24)
+                                .foregroundStyle(selectedMode == mode ? accent : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.label)
+                                    .fontWeight(selectedMode == mode ? .semibold : .regular)
+                                    .foregroundStyle(.primary)
+                                Text(mode.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedMode == mode {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(accent)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // --- Sound ---
+            Section("Sound") {
                 Picker("Voice", selection: $selectedVoice) {
                     Text("Wildcard (AI picks)").tag(DuckVoices.wildcardSayName)
                     Text("Silent (speech bubbles)").tag(DuckVoices.silentSayName)
@@ -265,24 +305,64 @@ private struct VoicePane: View {
                         speechService.speak(voice?.preview ?? "This is how I sound.", skipChirpWait: true)
                     }
                 }
-            }
 
-            Section("Volume") {
                 HStack(spacing: 8) {
-                    Image(systemName: volumeIcon)
-                        .frame(width: 20)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $volume, in: 0...1, step: 0.05)
-                        .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
                     Text("\(Int(volume * 100))%")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(width: 40, alignment: .leading)
+                    Slider(value: $volume, in: 0...1)
+                        .tint(accent)
+                    Image(systemName: volumeIcon)
+                        .frame(width: 20, alignment: .leading)
+                        .foregroundStyle(.secondary)
                 }
                 .onChange(of: volume) {
                     DuckConfig.volume = volume
                     speechService.setVolume(volume)
                 }
+            }
+
+            // --- Microphone ---
+            Section("Microphone") {
+                if speechService.audioPath == .teensy || speechService.audioPath == .esp32Serial {
+                    // Hardware duck connected — show read-only
+                    HStack {
+                        Text("Device")
+                        Spacer()
+                        Text(speechService.selectedMicName)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    // No hardware duck — show picker
+                    Picker("Device", selection: $selectedMic) {
+                        Text("System Default").tag("")
+                        ForEach(availableMics, id: \.name) { mic in
+                            Text(mic.name).tag(mic.name)
+                        }
+                    }
+                    .onChange(of: selectedMic) {
+                        if selectedMic.isEmpty {
+                            speechService.selectDefaultMicrophone()
+                        } else {
+                            speechService.selectMicrophone(byName: selectedMic)
+                        }
+                    }
+                }
+
+                // Permission status
+                permissionRow("Microphone", granted: speechService.micPermissionGranted,
+                              settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+                permissionRow("Speech Recognition", granted: speechService.speechPermissionGranted,
+                              settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
+            }
+            .onAppear {
+                availableMics = SpeechService.listMicrophones()
+                selectedMic = speechService.selectedMicName
+            }
+            .onChange(of: speechService.selectedMicName) {
+                selectedMic = speechService.selectedMicName
+                availableMics = SpeechService.listMicrophones()
             }
         }
         .formStyle(.grouped)
@@ -295,6 +375,33 @@ private struct VoicePane: View {
         case ..<0.66: return "speaker.wave.2.fill"
         default:      return "speaker.wave.3.fill"
         }
+    }
+
+    private func permissionRow(_ label: String, granted: Bool, settingsURL: String) -> some View {
+        Button {
+            if let url = URL(string: settingsURL) {
+                NSWorkspace.shared.open(url)
+            }
+        } label: {
+            HStack {
+                Text(label)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if granted {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(accent)
+                    Text("Granted")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Not Granted")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

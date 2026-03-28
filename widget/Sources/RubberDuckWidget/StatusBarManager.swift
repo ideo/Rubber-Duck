@@ -168,14 +168,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         let haikuItem = NSMenuItem(title: "Claude Haiku", action: #selector(setProviderAnthropic), keyEquivalent: "")
         haikuItem.target = self
-        haikuItem.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: "Claude")
+        haikuItem.image = NSImage(systemSymbolName: "asterisk", accessibilityDescription: "Claude")
         haikuItem.subtitle = "Anthropic API — requires key"
         haikuItem.state = currentProvider == .anthropic ? .on : .off
         intellMenu.addItem(haikuItem)
 
         let geminiItem = NSMenuItem(title: "Gemini", action: #selector(setProviderGemini), keyEquivalent: "")
         geminiItem.target = self
-        geminiItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Gemini")
+        geminiItem.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Gemini")
         geminiItem.subtitle = "Google API — requires key"
         geminiItem.state = currentProvider == .gemini ? .on : .off
         intellMenu.addItem(geminiItem)
@@ -222,14 +222,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         // --- Pause / Resume ---
         if AppDelegate.isDuckActive {
-            let pauseItem = NSMenuItem(title: "Pause Duck, Duck, Duck", action: #selector(turnOffDuck), keyEquivalent: "")
+            let pauseItem = NSMenuItem(title: "Pause", action: #selector(turnOffDuck), keyEquivalent: "")
             pauseItem.target = self
             if let icon = svgMenuIcon("no-duck-symbol") {
                 pauseItem.image = icon
             }
             menu.addItem(pauseItem)
         } else {
-            let resumeItem = NSMenuItem(title: "Resume Duck, Duck, Duck", action: #selector(turnOnDuck), keyEquivalent: "")
+            let resumeItem = NSMenuItem(title: "Resume", action: #selector(turnOnDuck), keyEquivalent: "")
             resumeItem.target = self
             if let icon = svgMenuIcon("duck-symbol") {
                 resumeItem.image = icon
@@ -237,9 +237,9 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             menu.addItem(resumeItem)
         }
 
-        let quitItem = NSMenuItem(title: "Quit Duck, Duck, Duck", action: #selector(quitApp), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "")
         quitItem.target = self
-        quitItem.image = NSImage(systemSymbolName: "xmark.square.fill", accessibilityDescription: "Quit")
+        quitItem.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Quit")
         menu.addItem(quitItem)
     }
 

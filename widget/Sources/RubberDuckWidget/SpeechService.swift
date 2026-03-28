@@ -123,7 +123,7 @@ class SpeechService: ObservableObject {
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
     // Track which path is active
-    private(set) var audioPath: AudioPath = .local
+    @Published private(set) var audioPath: AudioPath = .local
 
     // Timers
     private var voiceInputTimer: Task<Void, Never>?
@@ -231,14 +231,22 @@ class SpeechService: ObservableObject {
 
         audioPath = newPath
 
-        // Swap active backends
+        // Swap active backends + update displayed mic name
         switch newPath {
         case .esp32Serial:
             if let mic = serialMic { activeSTT = mic }
             if let ttsEngine = serialTTS { activeTTS = ttsEngine }
-        case .teensy, .local:
+            selectedMicName = serialTransport?.displayName ?? "Duck, Duck, Duck"
+        case .teensy:
             activeSTT = stt
             activeTTS = tts
+            if let device = AudioDeviceDiscovery.findDuckDevice() {
+                selectedMicName = device.name
+            }
+        case .local:
+            activeSTT = stt
+            activeTTS = tts
+            selectMicrophone()
         }
 
         // Restart on the new path if we were listening
@@ -477,10 +485,30 @@ class SpeechService: ObservableObject {
 
     // MARK: - Mic Selection
 
+    /// Re-select the system default microphone (called from Preferences picker).
+    func selectDefaultMicrophone() {
+        selectMicrophone()
+    }
+
+    /// Select a specific microphone by name (called from Preferences picker).
+    func selectMicrophone(byName name: String) {
+        let mics = AudioDeviceDiscovery.listMicrophones()
+        guard let mic = mics.first(where: { $0.name == name }) else {
+            log("[speech] Mic '\(name)' not found — falling back to default")
+            selectMicrophone()
+            return
+        }
+        selectedMicName = mic.name
+        audioPath = .local
+        stt.clearTeensyDevice()
+        tts.outputDeviceName = nil
+        log("[speech] User selected mic: \(mic.name)")
+    }
+
     private func selectMicrophone() {
         // ESP32-C3 serial path doesn't use CoreAudio — skip mic selection
         if audioPath == .esp32Serial {
-            selectedMicName = "ESP32 Serial Mic"
+            selectedMicName = serialTransport?.displayName ?? "Duck, Duck, Duck"
             log("[speech] Using ESP32 serial mic — no CoreAudio mic needed")
             return
         }

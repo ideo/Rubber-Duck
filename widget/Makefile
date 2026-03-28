@@ -26,7 +26,7 @@ icon:
 		--minimum-deployment-target 26.0 \
 		--app-icon duckIcon \
 		--output-partial-info-plist .build/icon-info.plist \
-		assets/duckIcon.icon
+		assets/duckIcon.icon > /dev/null
 
 bundle: build icon
 	@mkdir -p $(MACOS_DIR) $(RESOURCES_DIR)

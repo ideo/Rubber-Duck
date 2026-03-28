@@ -144,7 +144,7 @@ struct DuckView: View {
             } label: {
                 Label(
                     DuckConfig.evalProvider == .anthropic ? "✓ Claude Haiku" : "Claude Haiku",
-                    systemImage: "brain.head.profile"
+                    systemImage: "asterisk"
                 )
             }
             Button {
@@ -153,7 +153,7 @@ struct DuckView: View {
             } label: {
                 Label(
                     DuckConfig.evalProvider == .gemini ? "✓ Gemini" : "Gemini",
-                    systemImage: "sparkles"
+                    systemImage: "sparkle"
                 )
             }
         } label: {
@@ -181,7 +181,7 @@ struct DuckView: View {
             duckServer.stop()
             NSApp.terminate(nil)
         } label: {
-            Label("Quit Duck, Duck, Duck", systemImage: "xmark.square.fill")
+            Label("Quit", systemImage: "xmark")
         }
     }
 

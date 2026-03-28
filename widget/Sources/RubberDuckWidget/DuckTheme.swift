@@ -10,7 +10,9 @@ static let cornerRadius: CGFloat = 18
     static let eyeSpacing: CGFloat = 46
 
     // Duck palette — body #ECB947, eyes #4C2016
-    static let bodyColor = Color(red: 0.925, green: 0.725, blue: 0.278)
+    /// The duck yellow — use as app-wide accent color.
+    static let accent = Color(red: 0.925, green: 0.725, blue: 0.278)
+    static let bodyColor = accent
     static let bodyColorDark = Color(red: 0.895, green: 0.695, blue: 0.248) // subtle shade only
     static let bodyOpacity: Double = 0.75  // Yellow tint over glass — lets desktop bleed through
     static let eyeColor = Color.black

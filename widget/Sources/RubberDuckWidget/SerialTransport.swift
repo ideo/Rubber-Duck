@@ -142,6 +142,12 @@ class SerialTransport: DeviceTransport {
         }
     }
 
+    /// Human-friendly name for the connected board.
+    var displayName: String? {
+        guard connectedBoard != nil else { return nil }
+        return "Duck, Duck, Duck"
+    }
+
     /// Whether the connected device is an ESP32 (any variant).
     var isESP32: Bool {
         connectedBoard?.hasPrefix("ESP32") ?? false
