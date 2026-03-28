@@ -104,6 +104,17 @@ Full onboarding audit completed: 15 of 20 issues fixed, 5 accepted. See `docs/ON
 
 ---
 
+## Claude Cowork plugin support / hooks
+
+Explore what's possible with the Claude Cowork plugin system and hooks. Areas to investigate:
+- What new hooks or plugin capabilities does Cowork expose beyond standard Claude Code?
+- Can the duck participate as a cowork plugin (custom skills, connectors, workflows)?
+- Hook into cowork sessions — react to multi-agent collaboration, team activity, task progress
+- Plugin marketplace presence via Cowork's distribution model
+- Any new APIs or event types we could listen to for richer duck reactions
+
+---
+
 ## Foundation Models tuning — remaining
 
 - **Help vs free chat flow** — 3B model sometimes gets stuck in help mode during casual chat. Needs clearer routing.
