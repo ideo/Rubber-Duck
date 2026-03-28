@@ -129,14 +129,11 @@ Status as of 2026-03-27. Tracks every issue found during onboarding testing.
 
 ---
 
-## Priority order for remaining work
+## Audit Complete (2026-03-28)
 
-1. **Mic/speech permission UI** (#6, #7) — silent failure is the worst UX
-2. **Stale port file cleanup** (#3) — devs hit this regularly
-3. **Idempotent .zshrc** (#8) — easy fix, prevents cruft
-4. **Keychain migration** (#4) — affects existing beta testers
-5. **Claude version check** (#13) — prevents confusion on old installs
-6. **Permission log rotation** (#16) — easy fix
-7. **Better install success copy** (#11) — quick win
-8. **Widget health indicator** (#2) — nice to have
-9. **directInstall JSON safety** (#9) — defensive improvement
+**15 of 20 fixed/resolved.** Remaining 5 are accepted as-is:
+- #5 — By design (voice overlay, CLI UI always available)
+- #14 — Acceptable (zip works, edge case only)
+- #17 — Acceptable (harmless dir creation)
+- #18 — Acceptable (install is fast enough)
+- #19 — Acceptable (clipboard works, sandbox blocks osascript)

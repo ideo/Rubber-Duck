@@ -51,21 +51,9 @@ Reported on another user's Mac — the duck menu bar icon appears and disappears
 
 ---
 
-## Claude version detection + compatibility
+## ~~Claude version detection + compatibility~~ — FIXED (2026-03-28)
 
-The `StopFailure` hook broke all plugin loading on Claude 2.1.76 because it's not a valid hook event in that version. One invalid key = zero hooks loaded, silently.
-
-**Need to build:**
-- Widget detects Claude version at startup (parse `claude --version` or check binary metadata)
-- Maintain a compatibility table: which hooks are valid in which version
-- `hooks.json` generated dynamically or the widget warns about incompatible hooks
-- On plugin install, check version and warn: "Your Claude version doesn't support all features. Update recommended."
-- Session start hook could report Claude version to the widget for display in dashboard/help
-- Minimum supported version tracked in one place (currently 1.1.7714 for basic hooks)
-
-**Known hook support gaps:**
-- `StopFailure` — not in 2.1.76, present in 2.1.83
-- Need to map all hooks to the version that introduced them
+Version check implemented in `PluginInstaller.checkClaudeVersion()`. Parses `claude --version`, compares against `minimumClaudeVersion = [1, 1, 7714]`, blocks install if too old. Hook compatibility mapping (which hooks work in which version) still TBD if needed.
 
 ---
 
@@ -110,11 +98,9 @@ No way to interrupt long TTS (especially the bedtime story). Need:
 
 ---
 
-## Onboarding — remaining gaps
+## ~~Onboarding — remaining gaps~~ — RESOLVED (2026-03-28)
 
-- **CLI install helper** — for non-technical users. Commands are: `curl -fsSL https://claude.ai/install.sh | bash` then PATH setup. Need a Terminal helper with copy/paste flow, or widget opens Terminal and does it.
-- **Version warning polish** — minimum Claude 1.1.7714. Alert exists but could be more prominent.
-- **Golden path testing** — end-to-end first-launch experience needs a full walkthrough.
+Full onboarding audit completed: 15 of 20 issues fixed, 5 accepted. See `docs/ONBOARDING-AUDIT.md`. CLI install helper, version check, permission UI, idempotent shell config all shipped. Golden path testing still valuable but not blocking.
 
 ---
 
