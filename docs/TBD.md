@@ -2,65 +2,51 @@
 
 ## Active
 
-### Claude Cowork plugin support / hooks
-Explore what's possible with the Claude Cowork plugin system and hooks:
-- What new hooks or plugin capabilities does Cowork expose beyond standard Claude Code?
-- Can the duck participate as a cowork plugin (custom skills, connectors, workflows)?
-- Hook into cowork sessions — react to multi-agent collaboration, team activity, task progress
-- Plugin marketplace presence via Cowork's distribution model
-- Any new APIs or event types we could listen to for richer duck reactions
-
-### TTS interrupt — stop the duck mid-speech
-No way to interrupt long TTS (especially the bedtime story). Need:
-- Voice command: "stop", "shut up", "quiet" kills `say` process
-- Duck face tap could also interrupt
-- On interrupt, duck says a short quip: "Ok, enough of that."
-- `killall say` is the manual escape hatch for now
-
-### TTS-to-device latency — voice stream lag
-Noticeable delay when streaming TTS audio to the hardware duck (Teensy/ESP32). The voice starts late compared to the speech bubble appearing on screen. Need to investigate:
-- Buffering in the serial audio path (DMA buffer sizes, chunk sizes)
-- `say` process startup latency vs when audio actually hits the device
-- Whether pre-buffering or smaller chunks would help
-- Measure actual latency to quantify the gap
-
-### Red dot + conversation timeout — bugs
-**Red dot persistence during easter egg:**
-- During full story TTS reading, the red dot stays on the whole time
-- After backstory conversation, the dot sometimes doesn't clear on exit back to normal mode
-
-**Conversation mode drops unexpectedly:**
-- Sometimes the mic just stops listening mid-conversation — no follow-up window, just dead
-- Likely a race condition in the conversation timeout timer
-- Future polish: LLM could tag responses as final vs open and adjust the timeout accordingly
-
-### Status bar icon disappearing on some Macs
-macOS hides overflow status bar items on notch Macs when space runs out.
-- `autosaveName` applied — macOS remembers position
-- Consider `NSStatusItem.squareLength` to minimize width
-- Investigate `isVisible` to detect when hidden and warn
-- Document workaround for users
-
-### Menu + Preferences — visual polish pass
-- View menu still shows up empty — need to suppress it
-- Regression testing after all the restructuring (modes, volume, voice, launch, experimental)
+### Conversation polish — latency, red dot, timeouts
+Combined performance/UX issues in voice conversations:
+- **Mouth starts before audio**: mouth animation fires on `speak()` but `say` process has cold-start lag on first utterance. Subsequent calls are fast. Mainly noticeable on conversation start.
+- **Red dot persistence**: during easter egg TTS reading, red dot stays on. After backstory conversation, dot sometimes doesn't clear on exit.
+- **Conversation drops**: mic stops listening mid-conversation — no follow-up window. Likely race condition in conversation timeout timer (TTS finishing, STT restarting, timeout firing stepping on each other).
+- **Future**: LLM could tag responses as final vs open and adjust timeout accordingly.
 
 ### Foundation Models tuning
 - Help vs free chat flow — 3B model sometimes gets stuck in help mode
 - Easter egg sensitivity — some normal questions still trigger backstory deflection
 
+### Menu + Preferences — regression testing
+- View menu suppression working but hacky (didBecomeActiveNotification + delay)
+- Full regression test needed after all restructuring (modes, volume, voice, launch, experimental)
+
+### Status bar icon disappearing on some Macs
+macOS hides overflow status bar items on notch Macs when space runs out.
+- `autosaveName` applied — macOS remembers position
+- Settings menu and right-click cover all features — not blocking
+
+### Version check via GitHub API
+Lightweight update check — no Sparkle dependency:
+- `GET api.github.com/repos/ideo/Rubber-Duck/releases/latest`
+- Compare tag against bundle version
+- Show notification linking to release page (GitHub) or App Store
+- App Store safe — no self-update mechanism
+
 ---
 
 ## Shelved
 
+### TTS interrupt — voice command
+Wing tap stops speech. Voice command ("stop", "shut up") would be nice but not needed.
+
 ### UAC audio — S3
-Shelved. Serial streaming works and is shipping-ready. UAC is a polish item. See detailed notes in previous TBD versions or `docs/S3-FIRMWARE-GAP.md`.
+Serial streaming works and is shipping-ready. UAC is a polish item.
 
 ### C3 audio quality — chirp synthesis
-Chirps intelligible but garbled due to ESP32-C3 lacking APLL. TTS is clean. Hardware limitation — accept it or switch to FM/wavetable synthesis.
+Chirps garbled due to ESP32-C3 lacking APLL. TTS is clean. Hardware limitation.
 
 ### 3D duck viewer
-Three.js viewer at localhost:3333/viewer exists but never dialed in. Dev-only.
+Three.js viewer at localhost:3333/viewer. Dev-only.
+
+### Claude Cowork plugin support
+Researched 2026-03-28. Cowork has no hook support — it's for non-technical knowledge workers. Agent Teams (experimental) has new hooks (TeammateIdle, TaskCreated, TaskCompleted) but our value is mainly in permission blocks. Revisit when agent teams stabilize.
 
 ---
 
@@ -71,8 +57,13 @@ Three.js viewer at localhost:3333/viewer exists but never dialed in. Dev-only.
 - [x] Port: stale PID cleanup, OS auto-assign fallback, dynamic port file
 - [x] Permissions: alert icon, menu status items, settings links, refresh on menu open, skip redundant dialogs
 - [x] Install: Claude version check, idempotent .zshrc, atomic JSON, better success copy, findClaude paths
-- [x] DuckView: isolated DuckFaceView/DuckBeakView — context menu stays open during animations
+- [x] DuckView: isolated DuckFaceView/DuckBeakView/DuckWingsView/DuckStatusOverlay/DuckContextMenu
 - [x] Preferences: Behavior tab (Mode/Sound/Microphone), mic device picker with hot-plug, permission rows
 - [x] Polish: DuckTheme.accent, icon updates (asterisk/sparkle/xmark), shortened menu labels, actool silenced
-- [x] Serial: displayName "Duck, Duck, Duck" for identified boards
+- [x] Serial: displayName "Duck, Duck, Duck", phonetic pronunciation (Ayhab/Klawd)
+- [x] Wings: glass liquid SVG shape, hover animation, tap-to-stop speech with quip
+- [x] Eval: cloud fallback to Foundation Model, varied error reactions
+- [x] Privacy: 3rd party terms notice + policy links in Preferences
+- [x] View menu: killed permanently (CommandGroup replacing + didBecomeActiveNotification strip)
+- [x] Menu stripping fix: NSMenu.didAddItemNotification was breaking eval/speech pipeline
 - [x] All prior completions (permissions-only mode, wildcard voice V2, hooks, menu reorg, API keys, dynamic port, mute detection, plugin install, easter egg, TTS pronunciation, beak animation, window focus, experimental toggle)
