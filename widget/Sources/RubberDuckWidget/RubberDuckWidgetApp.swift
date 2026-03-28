@@ -73,6 +73,9 @@ struct RubberDuckWidgetApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
         .commands {
+            // Remove default View menu items
+            CommandGroup(replacing: .toolbar) {}
+            CommandGroup(replacing: .sidebar) {}
             CommandMenu("Setup") {
                 SetupMenuContent()
             }
@@ -274,16 +277,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate()
             }
         }
-        // Strip useless default menus (View, Edit) — no SwiftUI API for this.
-        // Delayed because SwiftUI rebuilds menus after applicationDidFinishLaunching.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            if let mainMenu = NSApp.mainMenu {
-                let removeNames: Set<String> = ["View", "Edit"]
-                for item in mainMenu.items where removeNames.contains(item.title) {
-                    mainMenu.removeItem(item)
-                }
-            }
-        }
+        // Strip useless default menus — SwiftUI recreates them on window focus,
+        // so we observe changes and strip continuously.
+        Self.startMenuStripping()
 
         // Disable state restoration — it recreates windows without our properties
         UserDefaults.standard.removeObject(forKey: "NSWindow Frame main")
@@ -332,14 +328,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DuckLog.log("[focus] duckWindow assigned: \(duckWin != nil)")
             NSApp.activate()
 
-            // Strip default File/Edit/View/Window menus — they're useless for a widget
-            if let mainMenu = NSApp.mainMenu {
-                for title in ["File", "Edit", "View", "Window"] {
-                    if let item = mainMenu.items.first(where: { $0.title == title }) {
-                        mainMenu.removeItem(item)
-                    }
-                }
-            }
+            // Menu stripping handled by startMenuStripping()
 
             // Check for Claude after UI is ready
             self.checkForClaude()
@@ -409,6 +398,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         speechService?.stopSpeaking()
         coordinator?.clearThinking()
         DuckLog.log("[app] Duck Duck Duck turned off")
+    }
+
+    // MARK: - Menu Stripping
+
+    private static let unwantedMenus: Set<String> = ["File", "Edit", "View", "Window"]
+
+    /// Continuously strip default menus that SwiftUI recreates on window focus changes.
+    static func startMenuStripping() {
+        // Initial strip
+        stripMenus()
+        // Observe menu bar changes — SwiftUI re-adds View/Window on focus
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didAddItemNotification, object: NSApp.mainMenu, queue: .main
+        ) { _ in stripMenus() }
+    }
+
+    private static func stripMenus() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        for item in mainMenu.items where unwantedMenus.contains(item.title) {
+            mainMenu.removeItem(item)
+        }
     }
 }
 
