@@ -404,14 +404,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let unwantedMenus: Set<String> = ["File", "Edit", "View", "Window"]
 
-    /// Continuously strip default menus that SwiftUI recreates on window focus changes.
+    /// Strip default menus on launch and when windows change focus.
+    /// Uses NSWindow notifications instead of NSMenu.didAddItemNotification
+    /// (which fires too aggressively and disrupts eval/speech pipelines).
     static func startMenuStripping() {
-        // Initial strip
         stripMenus()
-        // Observe menu bar changes — SwiftUI re-adds View/Window on focus
         NotificationCenter.default.addObserver(
-            forName: NSMenu.didAddItemNotification, object: NSApp.mainMenu, queue: .main
-        ) { _ in stripMenus() }
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { stripMenus() }
+        }
     }
 
     private static func stripMenus() {
