@@ -31,10 +31,8 @@ struct WakeWordProcessor {
     ///   - isFinal: Whether this is the final result from the recognizer
     /// - Returns: What the processor detected
     mutating func process(_ transcript: String, isFinal: Bool) -> Result {
-        let lower = transcript.lowercased()
-
-        // Look for the wake word
-        guard let range = lower.range(of: wakeWord.lowercased()) else {
+        // Case-insensitive search directly on the original transcript
+        guard let range = transcript.range(of: wakeWord, options: .caseInsensitive) else {
             return .nothing
         }
 
