@@ -46,7 +46,7 @@ class SerialTTSEngine {
         cleaned = String(cleaned.unicodeScalars.filter { scalar in
             scalar.properties.isEmoji == false || scalar.value < 0x80
         })
-        let utterance = AVSpeechUtterance(string: cleaned)
+        let utterance = Self.utteranceWithPronunciations(cleaned)
 
         // Look up the exact AVSpeechSynthesisVoice identifier from DuckVoices.
         if let voiceId = DuckVoices.voiceId(for: voice),
@@ -289,6 +289,25 @@ class SerialTTSEngine {
         }
 
         return output
+    }
+
+    // MARK: - Pronunciation Fixes
+
+    /// Words that AVSpeechSynthesizer mispronounces, mapped to phonetic spellings.
+    /// IPA notation is unreliable with novelty voices (Boing etc.), so we use
+    /// simple text substitution that reads naturally.
+    private static let pronunciations: [(word: String, phonetic: String)] = [
+        ("Ahab", "Ayhab"),
+        ("Claude", "Klawd"),
+    ]
+
+    /// Build an AVSpeechUtterance with phonetic spelling overrides for known words.
+    private static func utteranceWithPronunciations(_ text: String) -> AVSpeechUtterance {
+        var result = text
+        for entry in pronunciations {
+            result = result.replacingOccurrences(of: entry.word, with: entry.phonetic, options: .caseInsensitive)
+        }
+        return AVSpeechUtterance(string: result)
     }
 }
 

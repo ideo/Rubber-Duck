@@ -354,13 +354,12 @@ actor DuckHelpService {
                 to: question,
                 generating: HelpResponse.self
             )
-            var answer = result.content.answer
+            let answer = result.content.answer
             DuckLog.log("[help] Q: \"\(question)\" → A: \"\(answer)\"")
 
-            // First response after unlock — append the offer to read the full story
+            // Track that we've offered the full reading (the LLM prompt already includes the offer)
             if backstoryUnlocked && !offeredFullReading {
                 offeredFullReading = true
-                answer += " ... I could read you the whole story if you want. Fair warning, it'll take a few minutes."
             }
 
             return answer

@@ -398,6 +398,8 @@ class SpeechService: ObservableObject {
         // Skip TTS when Silent, or when Mac is muted with no hardware duck
         let systemMuted = audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted()
         if !isSilent && !systemMuted {
+            // Reset to false first so onChange triggers even if we were already speaking
+            if isSpeaking { isSpeaking = false }
             isSpeaking = true
             activeTTS.speak(text, skipChirpWait: skipChirpWait)
             // Poll gate.muted to detect when say finishes

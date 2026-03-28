@@ -219,10 +219,19 @@ struct RubberDuckWidgetApp: App {
             speech?.speak(LaunchGreeting.sessionConnect(mode: mode))
         }
 
-        // Poll until permissions are granted, then apply saved listen mode
+        // Wait for permissions, then apply saved listen mode + greet
         Task {
+            // Check immediately — permissions may already be granted from previous launch
+            speech.refreshPermissionStatus()
+            if speech.micPermissionGranted && speech.speechPermissionGranted {
+                speech.applyListenMode()
+                speech.speak(LaunchGreeting.pick(mode: coordinator.mode))
+                return
+            }
+            // Otherwise poll (waiting for user to grant via dialog)
             for _ in 0..<20 { // Up to 10 seconds
                 try? await Task.sleep(nanoseconds: 500_000_000)
+                speech.refreshPermissionStatus()
                 if speech.micPermissionGranted && speech.speechPermissionGranted {
                     speech.applyListenMode()
                     speech.speak(LaunchGreeting.pick(mode: coordinator.mode))

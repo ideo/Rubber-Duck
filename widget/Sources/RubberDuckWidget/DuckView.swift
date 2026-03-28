@@ -24,6 +24,18 @@ struct DuckView: View {
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         .contentShape(Rectangle())
+        .onTapGesture {
+            // Tap anywhere on the duck — stop speech or resume if paused.
+            // Uses static refs to avoid @EnvironmentObject on DuckView (which causes context menu flicker).
+            if let speech = AppDelegate.speechService, speech.isSpeaking {
+                DuckLog.log("[duck] Tap — stopping speech")
+                speech.stopSpeaking()
+                let quips = ["Nevermind.", "That's enough.", "Moving on.", "Ok ok.", "Shh."]
+                speech.speak(quips.randomElement()!, skipChirpWait: true)
+            } else if !AppDelegate.isDuckActive {
+                AppDelegate.turnOn()
+            }
+        }
         .onHover { hovering in
             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                 isHovering = hovering
@@ -159,8 +171,10 @@ private struct DuckStatusOverlay: View {
     var body: some View {
         ZStack {
             // Status indicators (top edge)
+            // Red: mic hot (wake/conversation, but NOT while duck is speaking — mic is muted then)
+            // Orange: hardware connected
             HStack(spacing: 4) {
-                if speechService.isWakeActive || speechService.isInConversation {
+                if (speechService.isWakeActive || speechService.isInConversation) && !speechService.isSpeaking {
                     Image(systemName: "square.fill")
                         .font(.system(size: 9))
                         .foregroundStyle(Color.red.opacity(0.9))
@@ -461,21 +475,20 @@ private struct DuckWingsView: View {
                 .scaleEffect(x: -1, y: 1)
                 .offset(x: 16, y: wingsVisible ? 32 : 60)
                 .opacity(wingsVisible ? 1 : 0)
-            // Tap target
-            if wingsVisible {
-                Color.clear
-                    .frame(width: DuckTheme.widgetSize - 8, height: 62)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(TapGesture().onEnded {
-                        if speechService.isSpeaking {
-                            DuckLog.log("[duck] Wing tap — stopping speech")
-                            speechService.stopSpeaking()
-                        } else if !AppDelegate.isDuckActive {
-                            AppDelegate.turnOn()
-                        }
-                    })
-                    .offset(y: 32)
-            }
+            // Tap target — covers full widget width at wing height
+            Color.clear
+                .frame(width: DuckTheme.widgetSize, height: 70)
+                .contentShape(Rectangle())
+                .allowsHitTesting(wingsVisible)
+                .onTapGesture {
+                    if speechService.isSpeaking {
+                        DuckLog.log("[duck] Wing tap — stopping speech")
+                        speechService.stopSpeaking()
+                    } else if !AppDelegate.isDuckActive {
+                        AppDelegate.turnOn()
+                    }
+                }
+                .offset(y: 20)
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovering)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: speechService.isSpeaking)
