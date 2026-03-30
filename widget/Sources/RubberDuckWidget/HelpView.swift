@@ -36,13 +36,17 @@ struct HelpView: View {
                 """)
 
                 section("Getting Started", """
-                1. Launch the app — the duck appears in your menu bar (🦆)
-                2. Click **Show Duck** to summon him
-                3. Click **Install Claude Plugin** to connect to Claude Code
-                4. Open Claude Code in any repo — he's already watching
+                1. Launch the app — the duck appears on your desktop and in the menu bar
+                2. Click **Install Plugin** from the menu bar icon or the Setup menu
+                3. Close and reopen Claude Code — he's already watching
 
-                No config files. No API keys. No signing up for anything \
-                except to duck around. Eval runs on-device for free.
+                The plugin checks your Claude version automatically. If it's too old, \
+                you'll be prompted to update.
+
+                **Using Claude Desktop instead of CLI?** Export the plugin zip from \
+                Setup → Export Plugin Zip, then upload it via Claude Desktop's plugin manager.
+
+                No config files. No API keys required. Eval runs on-device for free.
                 """)
 
                 section("Modes", """
@@ -59,11 +63,14 @@ struct HelpView: View {
                 at all. For when you want to be judged but not heard.
 
                 **Relay** — Say "ducky" followed by a command and it goes straight into \
-                Claude Code. Hands-free coding. Requires tmux — see below.
+                Claude Code. Hands-free coding. Requires tmux — see Experimental below.
+
+                Switch modes from the right-click menu, menu bar icon, or \
+                Preferences → Behavior tab.
                 """)
 
                 section("Microphone & Audio", """
-                Yes, he can hear you. He uses your Mac's built-in mic to listen for \
+                Yes, he can hear you. He uses your Mac's mic to listen for \
                 voice commands — all processed locally on your Mac. Nothing leaves the device.
 
                 **What he listens for depends on the mode:**
@@ -72,11 +79,15 @@ struct HelpView: View {
                 • Permissions Only: "yes" or "no" when Claude asks permission
                 • No Mic: nothing. Mic is completely off.
 
-                **Not hearing you?** System Settings → Privacy & Security → Microphone → \
-                make sure Duck Duck Duck is enabled. Also check that your Mac's input \
-                volume isn't muted.
+                **Microphone selection:** Open Preferences → Behavior → Microphone \
+                to see which device is active and pick a different one. When a hardware \
+                duck is connected, it switches automatically.
 
-                **Physical duck?** Audio routes through the Teensy hardware via USB. \
+                **Not hearing you?** Check the menu bar icon — if it shows a warning \
+                triangle, microphone or speech recognition permissions are missing. \
+                Click the warning items in the menu for direct links to System Settings.
+
+                **Hardware duck?** Audio routes through the device via USB. \
                 Unplug the cable and it falls back to your Mac's mic and speakers.
                 """)
 
@@ -91,20 +102,42 @@ struct HelpView: View {
 
                 Scores range from -1.0 to +1.0. His face, voice, and body language \
                 all shift based on these scores. You'll know when he disapproves.
+
+                If the cloud provider (Haiku or Gemini) fails, scoring falls back to \
+                Apple Foundation Model automatically. You won't miss a beat.
                 """)
 
-                section("The Menu Bar", """
-                Everything lives under the 🦆 icon:
+                section("Menus", """
+                **Menu bar icon (🦆)** — Quick access to Volume, Mode, Voice, \
+                Intelligence, Launch Claude Code, Pause/Resume, and Quit. \
+                Right-click the duck widget for the same menu.
 
-                **Intelligence** — Pick his brain. Foundation Models is free and private \
-                (runs entirely on your Mac). Haiku and Gemini are sharper but need API keys.
+                **Setup menu** (top menu bar) — Install Claude Code, Install/Update \
+                Plugin, Export Plugin Zip, Launch at Login, Experimental features.
 
-                **Voice** — 15+ voices, Wildcard (AI picks per mood — chaotic), \
-                or Silent (speech bubble only, for the library crowd).
+                **Help menu** — Get Started guide, Dashboard, and this manual.
+                """)
 
-                **Show / Hide Duck** — Toggle the floating widget without quitting.
+                section("Preferences", """
+                Open with **⌘,** or from the Duck Duck Duck menu.
 
-                **Launch at Login** — Because you never want to code alone.
+                **Intelligence** — Pick the eval provider. Apple Foundation Model is free \
+                and fully private (runs on your Mac). Claude Haiku and Gemini are sharper \
+                but need API keys and send data to third-party servers.
+
+                **Behavior** — Mode selection, voice picker, volume slider, and \
+                microphone settings. See which mic is active, check permission status, \
+                and pick a device if you have multiple.
+
+                **About** — Credits and GitHub link.
+                """)
+
+                section("Stopping Speech", """
+                Hover over the duck while it's speaking — wings slide up over the beak. \
+                Tap to stop. He'll say a short quip and move on.
+
+                Works for anything: eval reactions, help answers, even the bedtime story. \
+                If he's mid-sentence about your code quality, one tap shuts him up.
                 """)
 
                 section("Tips", """
@@ -112,7 +145,7 @@ struct HelpView: View {
                 • Say "ducky" and he perks up. Say nothing after and he gets impatient.
                 • Permission prompts are summarized ("Run git. Allow?") not raw tool names. \
                 Your hands stay free.
-                • If eval feels slow, switch to Foundation Models. Free, private, instant.
+                • If eval feels slow, switch to Foundation Model. Free, private, instant.
                 • Right-click the duck for quick settings.
                 • Ducks have weird hole-shaped ears. Now you know.
 
@@ -120,6 +153,19 @@ struct HelpView: View {
                 or newer**. Older versions had bugs with plugin hooks — the duck shows up \
                 in the plugin list but doesn't actually fire. Update Claude, start a fresh \
                 session, and he'll wake right up.
+                """)
+
+                section("Privacy", """
+                **Apple Foundation Model** — All scoring runs on your Mac. Your prompts, \
+                Claude's responses, and all audio stay on the device. Nothing is sent anywhere.
+
+                **Claude Haiku / Gemini** — Your prompts and Claude's responses are sent \
+                to Anthropic or Google for scoring. Subject to their usage and privacy terms. \
+                See links in Preferences → Intelligence when a cloud provider is selected.
+
+                **Audio** — Microphone input and text-to-speech are always local. \
+                Speech recognition uses Apple's on-device engine. No audio is ever \
+                sent to any server.
                 """)
 
                 Divider()
@@ -134,7 +180,8 @@ struct HelpView: View {
                 Requires `brew install tmux` and launching Claude from the duck's menu.
 
                 **Gemini CLI** — He can watch Gemini sessions too. Scoring works, \
-                permission relay doesn't — you'll approve those yourself.
+                permission relay doesn't — you'll approve those yourself. \
+                Enable via Setup → Experimental.
 
                 **Dashboard** — Open **localhost:3333** in a browser for live eval \
                 charts updating in real time via WebSocket. For the data nerds.
@@ -148,9 +195,9 @@ struct HelpView: View {
                 **Get one from IDEO** — reach out and we'll hook you up.
 
                 **Build your own** — firmware, schematics, and BOM are on GitHub. \
-                Teensy 4.0 or ESP32, a micro servo, an I2S speaker, and a weekend. \
+                Teensy 4.0 or ESP32-S3, a micro servo, an I2S speaker, and a weekend. \
                 One USB-C cable carries power, serial, and bidirectional audio. \
-                Plug in and say "well hello" to your new best friend. \
+                Plug in and the widget shows "Duck, Duck, Duck" as the audio device. \
                 Yank the cable and audio falls back to your Mac. He's resilient like that.
                 """)
 
