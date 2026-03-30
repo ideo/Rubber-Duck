@@ -6,6 +6,20 @@
 
 import Foundation
 
+enum TTSStopReason: Sendable {
+    case replaced
+    case userCancelled
+    case shutdown
+}
+
+enum TTSPlaybackResult: Sendable {
+    case finished
+    case cancelled(TTSStopReason)
+    case failed
+}
+
+typealias TTSPlaybackCompletion = @MainActor @Sendable (UUID, TTSPlaybackResult) -> Void
+
 /// Uniform interface for the active STT engine (CoreAudio or serial).
 @MainActor
 protocol STTBackend: AnyObject {
@@ -20,8 +34,8 @@ protocol STTBackend: AnyObject {
 @MainActor
 protocol TTSBackend: AnyObject {
     var isMuted: Bool { get }
-    func speak(_ text: String, skipChirpWait: Bool)
-    func stop()
+    func play(_ text: String, utteranceID: UUID, skipChirpWait: Bool, completion: @escaping TTSPlaybackCompletion)
+    func stopPlayback(reason: TTSStopReason)
 }
 
 // MARK: - Conformances
@@ -30,11 +44,6 @@ extension STTEngine: STTBackend {}
 
 extension SerialMicEngine: STTBackend {}
 
-extension TTSEngine: TTSBackend {
-    func speak(_ text: String, skipChirpWait: Bool) {
-        // Local TTS via `say` doesn't use chirp wait — ignore the flag.
-        speak(text)
-    }
-}
+extension TTSEngine: TTSBackend {}
 
 extension SerialTTSEngine: TTSBackend {}

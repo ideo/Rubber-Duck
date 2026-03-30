@@ -433,20 +433,43 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         speechService.ttsVoice = DuckVoices.wildcardSayName
         // Preview in Superstar (the default wildcard voice)
         speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
-        speechService.speak("Wildcard mode.", skipChirpWait: true)
+        speechService.scheduleSpeech(
+            "Wildcard mode.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible,
+            skipChirpWait: true
+        )
     }
 
     @objc private func selectSilent() {
         speechService.ttsVoice = DuckVoices.silentSayName
         // This triggers the speech bubble since isSilent is now true
-        speechService.speak("Silent mode. I'll use speech bubbles instead.")
+        speechService.scheduleSpeech(
+            "Silent mode. I'll use speech bubbles instead.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {
         guard let sayName = sender.representedObject as? String else { return }
         speechService.ttsVoice = sayName
         let voice = DuckVoices.all.first { $0.sayName == sayName }
-        speechService.speak(voice?.preview ?? "This is how I sound.", skipChirpWait: true)
+        speechService.scheduleSpeech(
+            voice?.preview ?? "This is how I sound.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible,
+            skipChirpWait: true
+        )
     }
 
     @objc private func setLaunchAtLogin() {

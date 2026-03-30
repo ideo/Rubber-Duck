@@ -320,12 +320,35 @@ private struct BehaviorPane: View {
                     speechService.ttsVoice = selectedVoice
                     if selectedVoice == DuckVoices.wildcardSayName {
                         speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
-                        speechService.speak("Wildcard mode.", skipChirpWait: true)
+                        speechService.scheduleSpeech(
+                            "Wildcard mode.",
+                            kind: .preview,
+                            lane: .manual,
+                            scopeID: "voice-preview",
+                            policy: .latestWins,
+                            interruptibility: .freelyInterruptible,
+                            skipChirpWait: true
+                        )
                     } else if selectedVoice == DuckVoices.silentSayName {
-                        speechService.speak("Silent mode. Speech bubbles only.")
+                        speechService.scheduleSpeech(
+                            "Silent mode. Speech bubbles only.",
+                            kind: .preview,
+                            lane: .manual,
+                            scopeID: "voice-preview",
+                            policy: .latestWins,
+                            interruptibility: .freelyInterruptible
+                        )
                     } else {
                         let voice = DuckVoices.all.first { $0.sayName == selectedVoice }
-                        speechService.speak(voice?.preview ?? "This is how I sound.", skipChirpWait: true)
+                        speechService.scheduleSpeech(
+                            voice?.preview ?? "This is how I sound.",
+                            kind: .preview,
+                            lane: .manual,
+                            scopeID: "voice-preview",
+                            policy: .latestWins,
+                            interruptibility: .freelyInterruptible,
+                            skipChirpWait: true
+                        )
                     }
                 }
 

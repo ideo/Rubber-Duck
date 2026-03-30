@@ -113,11 +113,23 @@ class DuckCoordinator: ObservableObject {
                 }
 
                 speechService.setVoiceTransient(picked.sayName)
-                speechService.speak(textToSpeak)
+                speechService.scheduleSpeech(
+                    textToSpeak,
+                    kind: .reaction,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
                 // Reset to default voice so permissions/greetings don't inherit the wildcard pick
                 speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
             } else {
-                speechService.speak(textToSpeak)
+                speechService.scheduleSpeech(
+                    textToSpeak,
+                    kind: .reaction,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
             }
         }
     }
@@ -152,7 +164,13 @@ class DuckCoordinator: ObservableObject {
         // Clear any thinking state when switching modes
         clearThinking()
 
-        speechService.speak(mode.spokenLabel)
+        speechService.scheduleSpeech(
+            mode.spokenLabel,
+            kind: .system,
+            lane: .manual,
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
     }
 
     /// Clean up thinking state (called on turn-off).
@@ -200,9 +218,7 @@ class DuckCoordinator: ObservableObject {
                 "Right-click me anytime for settings and modes.",
             ]
         }
-        // Speak each step with pauses
-        let combined = steps.joined(separator: " ... ")
-        speechService.speak(combined)
+        speechService.scheduleScript(texts: steps, scopeID: speechService.nextScriptScopeID(prefix: "setup"))
     }
 
     /// Called when a new permission request arrives.

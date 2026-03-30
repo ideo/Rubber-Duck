@@ -86,7 +86,7 @@ if [ "$DECISION" = "allow" ] || [ "$DECISION" = "deny" ]; then
     OUTPUT=$(jq -n \
       --arg behavior "$DECISION" \
       --argjson perms "$SELECTED" \
-      '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": $behavior, "updatedPermissions": $perms}}}')
+      '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": $behavior, "updatedPermissions": [$perms]}}}')
   else
     OUTPUT=$(jq -n --arg behavior "$DECISION" \
       '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": $behavior}}}')

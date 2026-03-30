@@ -36,10 +36,11 @@ struct PermissionVoiceGate {
     var fullPrompt = ""
 
     // Word sets for matching
+    // Includes common STT misrecognitions of "allow" (e.g. "aloud", "a loud")
     private let affirmatives: Set<String> = [
         "yes", "yeah", "yep", "yup", "sure", "allow", "approve", "okay",
         "proceed", "accepted", "affirmative", "correct", "fine", "granted",
-        "go", "do", "ahead",
+        "go", "do", "ahead", "aloud", "allowed", "loud",
     ]
     private let negatives: Set<String> = [
         "no", "nope", "deny", "block", "stop", "cancel", "reject",
@@ -118,15 +119,19 @@ struct PermissionVoiceGate {
         return .noMatch
     }
 
-    /// Find the first option label that contains "always allow" (case-insensitive).
+    /// Find the best "always allow" option.
+    /// Prefers the last matching label — Claude Code typically puts the broadest
+    /// (most useful) "always allow" suggestion last, and narrower read-path
+    /// rules first. Falling back to the last option if none match explicitly.
     private func findAlwaysAllowOption() -> Int? {
+        var lastMatch: Int?
         for (i, label) in optionLabels.enumerated() {
             if label.lowercased().contains("always allow") {
-                return i + 1  // 1-based
+                lastMatch = i + 1  // 1-based
             }
         }
-        // Fall back to first option if none match
-        return optionCount > 0 ? 1 : nil
+        // Fall back to last option — more likely to be the tool-level rule
+        return lastMatch ?? (optionCount > 0 ? optionCount : nil)
     }
 
     /// Begin waiting for a permission response.
