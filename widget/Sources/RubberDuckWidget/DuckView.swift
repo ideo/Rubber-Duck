@@ -42,6 +42,27 @@ private struct DuckContextMenu: View {
     @EnvironmentObject var duckServer: DuckServer
 
     var body: some View {
+        // Update notifications (top of menu)
+        if coordinator.isAppUpdateAvailable, let version = coordinator.appUpdateVersion {
+            Button {
+                if let urlStr = coordinator.appUpdateURL, let url = URL(string: urlStr) {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Label("Update Available: v\(version)", systemImage: "arrow.down.circle")
+            }
+        }
+        if coordinator.isPluginStale {
+            Button {
+                PluginInstaller.install()
+            } label: {
+                Label("Plugin Update Available", systemImage: "puzzlepiece.extension.fill")
+            }
+        }
+        if coordinator.isAppUpdateAvailable || coordinator.isPluginStale {
+            Divider()
+        }
+
         // Mode selector
         Menu {
             ForEach(DuckMode.allCases, id: \.rawValue) { mode in

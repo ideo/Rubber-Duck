@@ -13,6 +13,12 @@ class DuckCoordinator: ObservableObject {
     @Published var mode: DuckMode = DuckConfig.duckMode
     @Published var isThinking = false
 
+    // Update notifications — set by UpdateChecker callbacks
+    @Published var isAppUpdateAvailable = false
+    @Published var appUpdateVersion: String?
+    @Published var appUpdateURL: String?
+    @Published var isPluginStale = false
+
     private let evalService: EvalService
     private let speechService: SpeechService
     private let serialManager: SerialManager

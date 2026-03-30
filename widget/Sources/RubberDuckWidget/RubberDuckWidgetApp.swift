@@ -94,6 +94,7 @@ struct RubberDuckWidgetApp: App {
         Settings {
             PreferencesView()
                 .environmentObject(speechService)
+                .environmentObject(coordinator)
         }
     }
 
@@ -235,6 +236,41 @@ struct RubberDuckWidgetApp: App {
             serialManager: serial,
             duckServer: server
         )
+
+        // Update checker — polls GitHub Releases API
+        let updateChecker = UpdateChecker()
+        statusBarManager?.updateChecker = updateChecker
+        server.updateChecker = updateChecker
+
+        updateChecker.onUpdateDetected = { [weak speech, weak coordinator] release in
+            coordinator?.isAppUpdateAvailable = true
+            coordinator?.appUpdateVersion = release.version
+            coordinator?.appUpdateURL = release.dmgURL ?? release.htmlURL
+            speech?.scheduleSpeech(
+                "Hey, there's a newer version of me on GitHub!",
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
+        updateChecker.onPluginStale = { [weak speech, weak coordinator] in
+            coordinator?.isPluginStale = true
+            speech?.scheduleSpeech(
+                "My plugin needs updating. Check the menu.",
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
+
+        // Detect app version change → check plugin staleness
+        if updateChecker.detectAppVersionChange() {
+            updateChecker.detectPluginStaleness()
+        }
+
+        updateChecker.startPeriodicChecks()
 
         // Wire lifecycle hooks from DuckServer → coordinator
         let transport = server.localTransport

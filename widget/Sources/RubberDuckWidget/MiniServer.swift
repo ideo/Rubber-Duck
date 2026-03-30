@@ -381,8 +381,9 @@ final class MiniServer {
             return
         }
 
-        // Match registered route
-        for r in routes where r.method == request.method && r.path == request.path {
+        // Match registered route (strip query string for comparison)
+        let pathOnly = request.path.components(separatedBy: "?").first ?? request.path
+        for r in routes where r.method == request.method && r.path == pathOnly {
             let handler = r.handler
             Task {
                 let response = await handler(request)

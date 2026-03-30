@@ -43,15 +43,16 @@ struct HelpView: View {
                 The plugin checks your Claude version automatically. If it's too old, \
                 you'll be prompted to update.
 
-                **Using Claude Desktop instead of CLI?** Export the plugin zip from \
+                **Using Claude Desktop instead of CLI?** Fully supported. Export the plugin zip from \
                 Setup → Export Plugin Zip, then upload it via Claude Desktop's plugin manager.
 
-                No config files. No API keys required. Eval runs on-device for free.
+                No config files. No API keys required. Eval runs on-device for free. \
+                He's watching before you've finished reading this.
                 """)
 
                 section("Modes", """
                 **Permissions Only** — Silent watchdog. He only speaks up when Claude \
-                needs permission to do something. Listens for "yes" or "no" — that's it. \
+                needs permission to do something. Listens for "yes", "no", or "always allow" — that's it. \
                 The strong, silent type.
 
                 **Companion** — The full experience. Opinions, permissions, voice control. \
@@ -69,6 +70,15 @@ struct HelpView: View {
                 Preferences → Behavior tab.
                 """)
 
+                section("Talk to the Duck", """
+                Say "ducky" followed by a question about the duck itself — setup, \
+                modes, features, troubleshooting — and he'll answer in character. \
+                Powered by on-device Foundation Models, so it's free and private. \
+                He keeps context across follow-ups, so "tell me more" works.
+
+                He also has a backstory. He won't tell you willingly.
+                """)
+
                 section("Microphone & Audio", """
                 Yes, he can hear you. He uses your Mac's mic to listen for \
                 voice commands — all processed locally on your Mac. Nothing leaves the device.
@@ -76,7 +86,7 @@ struct HelpView: View {
                 **What he listens for depends on the mode:**
                 • Companion: the wake word "ducky", then your question or command
                 • Relay: "ducky" followed by commands for Claude Code
-                • Permissions Only: "yes" or "no" when Claude asks permission
+                • Permissions Only: "yes", "no", or "always allow" when Claude asks permission
                 • No Mic: nothing. Mic is completely off.
 
                 **Microphone selection:** Open Preferences → Behavior → Microphone \
@@ -107,8 +117,19 @@ struct HelpView: View {
                 Apple Foundation Model automatically. You won't miss a beat.
                 """)
 
+                section("Reading His Face", """
+                His face reacts to the scores in real time.
+
+                Wide round eyes? He's impressed. Squinting? Suspicious. \
+                Exclamation marks for eyes? Claude needs permission and the duck \
+                needs your attention. A warm amber glow means he likes what he \
+                sees. Cool blue means he doesn't.
+                """)
+
                 section("Menus", """
-                **Menu bar icon (🦆)** — Quick access to Volume, Mode, Voice, \
+                Everything you need to control a duck.
+
+                **Menu bar icon (🦆)** — Volume, Mode, Voice, \
                 Intelligence, Launch Claude Code, Pause/Resume, and Quit. \
                 Right-click the duck widget for the same menu.
 
@@ -119,7 +140,9 @@ struct HelpView: View {
                 """)
 
                 section("Preferences", """
-                Open with **⌘,** or from the Duck Duck Duck menu.
+                Open with **⌘,** or from the Duck Duck Duck menu. \
+                Most of these are set-and-forget — he has defaults and he's \
+                confident in them.
 
                 **Intelligence** — Pick the eval provider. Apple Foundation Model is free \
                 and fully private (runs on your Mac). Claude Haiku and Gemini are sharper \
@@ -127,17 +150,11 @@ struct HelpView: View {
 
                 **Behavior** — Mode selection, voice picker, volume slider, and \
                 microphone settings. See which mic is active, check permission status, \
-                and pick a device if you have multiple.
+                and pick a device if you have multiple. **Wildcard** lets the AI pick \
+                from 10 voices per reaction based on the scores — toggle it from the \
+                right-click menu or Preferences.
 
                 **About** — Credits and GitHub link.
-                """)
-
-                section("Stopping Speech", """
-                Hover over the duck while it's speaking — wings slide up over the beak. \
-                Tap to stop. He'll say a short quip and move on.
-
-                Works for anything: eval reactions, help answers, even the bedtime story. \
-                If he's mid-sentence about your code quality, one tap shuts him up.
                 """)
 
                 section("Tips", """
@@ -147,15 +164,22 @@ struct HelpView: View {
                 Your hands stay free.
                 • If eval feels slow, switch to Foundation Model. Free, private, instant.
                 • Right-click the duck for quick settings.
+                • Hear a familiar theme song? Claude is compacting context. He's thinking.
                 • Ducks have weird hole-shaped ears. Now you know.
 
                 **Plugin not working?** Make sure Claude is updated to **version 1.1.7714 \
                 or newer**. Older versions had bugs with plugin hooks — the duck shows up \
                 in the plugin list but doesn't actually fire. Update Claude, start a fresh \
                 session, and he'll wake right up.
+
+                If you updated the plugin mid-session, run `/reload-plugins` in Claude \
+                to pick up changes without restarting.
                 """)
 
                 section("Privacy", """
+                By default, nothing leaves your Mac. Not your code, not your \
+                voice, not his opinions.
+
                 **Apple Foundation Model** — All scoring runs on your Mac. Your prompts, \
                 Claude's responses, and all audio stay on the device. Nothing is sent anywhere.
 

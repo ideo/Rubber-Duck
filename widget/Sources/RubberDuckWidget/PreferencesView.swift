@@ -454,12 +454,21 @@ private struct BehaviorPane: View {
 // MARK: - About Pane
 
 private struct AboutPane: View {
+    @EnvironmentObject var coordinator: DuckCoordinator
+
+    private var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
     var body: some View {
         Form {
             Section {
                 VStack(spacing: 8) {
                     Text("Duck Duck Duck")
                         .font(.title2.bold())
+                    Text("v\(currentVersion)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     Text("Built at IDEO by some mighty ducks.")
                         .foregroundStyle(.secondary)
                     Link("GitHub", destination: URL(string: "https://github.com/ideo/Rubber-Duck")!)
@@ -467,6 +476,35 @@ private struct AboutPane: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
+            }
+
+            if coordinator.isAppUpdateAvailable, let version = coordinator.appUpdateVersion {
+                Section {
+                    HStack {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundStyle(.orange)
+                        Text("v\(version) available")
+                        Spacer()
+                        if let urlStr = coordinator.appUpdateURL, let url = URL(string: urlStr) {
+                            Link("Download", destination: url)
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                }
+            }
+
+            if coordinator.isPluginStale {
+                Section {
+                    HStack {
+                        Image(systemName: "puzzlepiece.extension.fill")
+                            .foregroundStyle(.orange)
+                        Text("Plugin update available")
+                        Spacer()
+                        Button("Update Plugin") {
+                            PluginInstaller.install()
+                        }
+                    }
+                }
             }
         }
         .formStyle(.grouped)

@@ -23,6 +23,9 @@ class DuckServer: ObservableObject {
     /// Called when a new session connects via /health. Wired to TTS greeting by the app.
     var onSessionConnect: (() -> Void)?
 
+    /// Update checker — set after init so /plugin-check route can compare versions.
+    var updateChecker: UpdateChecker?
+
     let claudeEvaluator: ClaudeEvaluator
     let geminiEvaluator: GeminiEvaluator
     let localEvaluator: LocalEvaluator
@@ -450,6 +453,21 @@ class DuckServer: ObservableObject {
                 "tmux_target": "\(DuckConfig.tmuxSession):\(DuckConfig.tmuxWindow).0",
             ]
             return .json(healthDict)
+        }
+
+        // GET /plugin-check?v=N — installed plugin reports its version
+        let checkPluginVersion: @Sendable (_ reported: Int) async -> Void = { reported in
+            await MainActor.run {
+                self.updateChecker?.checkRemotePluginVersion(reported)
+            }
+        }
+        srv.get("/plugin-check") { request in
+            let parts = request.path.components(separatedBy: "?")
+            let query = parts.count > 1 ? parts[1] : ""
+            let vStr = query.components(separatedBy: "=").last ?? "0"
+            let reported = Int(vStr) ?? 0
+            await checkPluginVersion(reported)
+            return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
         }
 
         // GET / — dashboard
