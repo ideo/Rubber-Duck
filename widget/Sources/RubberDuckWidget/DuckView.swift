@@ -159,6 +159,11 @@ private struct DuckStatusOverlay: View {
     @EnvironmentObject var serialManager: SerialManager
     @EnvironmentObject var coordinator: DuckCoordinator
 
+    // Proper @State bindings for popovers — .constant() with dynamic values
+    // causes crashes when the popover animates while the value changes underneath.
+    @State private var showVoicePopover = false
+    @State private var showSpeechBubble = false
+
     private var speechBubbleVisible: Bool {
         guard !speechService.currentUtterance.isEmpty else { return false }
         if speechService.isSilent || DuckConfig.volume <= 0 { return true }
@@ -186,15 +191,21 @@ private struct DuckStatusOverlay: View {
                 }
             }
             .animation(.easeInOut(duration: 0.15), value: speechService.isWakeActive || speechService.isInConversation)
-            .popover(isPresented: .constant(!speechService.lastHeard.isEmpty), arrowEdge: .top) {
+            .popover(isPresented: $showVoicePopover, arrowEdge: .top) {
                 VoiceCommandBubbleView(text: speechService.lastHeard)
             }
             .offset(y: -(DuckTheme.widgetSize - 8) / 2 + 10)
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
-        .popover(isPresented: .constant(speechBubbleVisible), arrowEdge: .bottom) {
+        .popover(isPresented: $showSpeechBubble, arrowEdge: .bottom) {
             SpeechBubbleView(text: speechService.currentUtterance)
                 .padding(4)
+        }
+        .onChange(of: speechService.lastHeard) {
+            showVoicePopover = !speechService.lastHeard.isEmpty
+        }
+        .onChange(of: speechBubbleVisible) {
+            showSpeechBubble = speechBubbleVisible
         }
         .allowsHitTesting(false)
         .onChange(of: evalService.evalCount) {
