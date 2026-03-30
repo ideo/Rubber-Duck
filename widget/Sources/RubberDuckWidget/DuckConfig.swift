@@ -100,6 +100,14 @@ enum DuckConfig {
         }
     }
 
+    // MARK: - Subtitles
+
+    /// Show speech bubbles even when audio is playing.
+    static var subtitlesEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "subtitles_enabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "subtitles_enabled") }
+    }
+
     // MARK: - Experimental Features
 
     static var experimentalEnabled: Bool {

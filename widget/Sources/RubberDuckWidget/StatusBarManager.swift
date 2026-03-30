@@ -119,6 +119,14 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         // --- Volume slider ---
         menu.addItem(volumeSliderItem())
 
+        // --- Subtitles toggle ---
+        let subtitleItem = NSMenuItem(title: "Show Subtitles", action: #selector(toggleSubtitles), keyEquivalent: "")
+        subtitleItem.target = self
+        subtitleItem.image = NSImage(systemSymbolName: "captions.bubble", accessibilityDescription: "Subtitles")
+        subtitleItem.subtitle = "Show speech bubbles with audio"
+        subtitleItem.state = DuckConfig.subtitlesEnabled ? .on : .off
+        menu.addItem(subtitleItem)
+
         // --- Mode submenu ---
         let currentMode = coordinator.mode
         let modeItem = NSMenuItem(title: currentMode.label, action: nil, keyEquivalent: "")
@@ -381,6 +389,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func toggleSubtitles() {
+        DuckConfig.subtitlesEnabled.toggle()
+    }
 
     @objc private func startClaudeSession() {
         CLISession.launch()

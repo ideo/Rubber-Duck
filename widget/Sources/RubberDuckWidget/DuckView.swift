@@ -121,6 +121,15 @@ private struct DuckContextMenu: View {
             Label("Voice: \(voiceLabel)", systemImage: "waveform")
         }
 
+        Button {
+            DuckConfig.subtitlesEnabled.toggle()
+        } label: {
+            Label(
+                DuckConfig.subtitlesEnabled ? "✓ Show Subtitles" : "Show Subtitles",
+                systemImage: "captions.bubble"
+            )
+        }
+
         // Intelligence picker
         Menu {
             Button {
@@ -204,6 +213,7 @@ private struct DuckStatusOverlay: View {
 
     private var speechBubbleVisible: Bool {
         guard !speechService.currentUtterance.isEmpty else { return false }
+        if DuckConfig.subtitlesEnabled { return true }
         if speechService.isSilent || DuckConfig.volume <= 0 { return true }
         if speechService.audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted() {
             return true
