@@ -118,6 +118,7 @@ plugin/          Claude Code plugin — hooks that connect to the widget
 plugin-gemini/   Gemini CLI extension — experimental
 firmware/        Arduino firmware for hardware duck (ESP32-S3, Teensy 4.0)
 scripts/         Shell scripts (tmux launcher, hook helpers)
+hardware/        CAD (SolidWorks, STEP) and EE (Eagle, Fusion 360) source files
 ```
 
 ### Widget (`widget/`)
