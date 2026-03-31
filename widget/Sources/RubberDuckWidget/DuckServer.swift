@@ -60,6 +60,17 @@ class DuckServer: ObservableObject {
                 await permissionGate.resolve(decision: decision, suggestionIndex: index)
             }
         }
+
+        // When a permission request becomes active (first in queue or queue advances),
+        // deliver it locally so the widget voice-asks about it.
+        let transport = localTransport
+        Task {
+            await permissionGate.setOnBecameActive { [weak transport] event in
+                Task { @MainActor in
+                    transport?.deliverPermission(event)
+                }
+            }
+        }
     }
 
     // MARK: - Lifecycle
@@ -244,6 +255,17 @@ class DuckServer: ObservableObject {
 
             DuckLog.log("[permission] Request: \(toolName) → \"\(summary)\" (\(suggestions.count) options)")
 
+            // AskUserQuestion: read the question aloud and auto-allow.
+            // The actual answer goes through Claude Code's UI — the duck just gives a heads-up.
+            if toolName == "AskUserQuestion" {
+                let questionSpeech = parseAskUserQuestion(toolInput)
+                DuckLog.log("[permission] AskUserQuestion — reading aloud and auto-allowing")
+                await MainActor.run {
+                    localTransport.onSpeak?(questionSpeech)
+                }
+                return .json(try! JSONSerialization.data(withJSONObject: ["decision": "allow"]))
+            }
+
             // Broadcast pending to WebSocket clients
             let pendingEvent = PermissionEvent(
                 type: "permission",
@@ -255,13 +277,9 @@ class DuckServer: ObservableObject {
             )
             await broadcaster.broadcast(pendingEvent)
 
-            // Deliver locally so widget can voice-ask
-            await MainActor.run {
-                localTransport.deliverPermission(pendingEvent)
-            }
-
-            // Wait for voice response
-            let (decision, suggestionIndex) = await permissionGate.waitForDecision()
+            // Wait for voice response (blocks until this request's turn).
+            // The gate delivers locally via onBecameActive when this request is active.
+            let (decision, suggestionIndex) = await permissionGate.waitForDecision(event: pendingEvent)
 
             if decision == "timeout" {
                 DuckLog.log("[permission] Timeout — no response")
@@ -420,10 +438,11 @@ class DuckServer: ObservableObject {
         // Signal from PostToolUse hook — user approved via CLI (not voice).
         // Resolves the PermissionGate so the original /permission curl unblocks,
         // clears the voice gate, and updates the UI.
-        srv.post("/permission-clear") { [permissionGate, localTransport] _ in
-            DuckLog.log("[permission] CLI approval — tool succeeded, clearing permission state")
-            // Resolve the gate so /permission's blocked curl returns
-            await permissionGate.resolve(decision: "allow")
+        srv.post("/permission-clear") { [localTransport] _ in
+            DuckLog.log("[permission] PostToolUse — clearing UI state")
+            // Only clear UI state (thinking indicator, expression).
+            // Do NOT resolve the gate — the PermissionRequest hook's stdout
+            // handles the actual decision, and resolve() would drain queued requests.
             await MainActor.run {
                 localTransport.onClearThinking?()
             }
@@ -626,8 +645,13 @@ func summarizePermission(toolName: String, toolInput: Any) -> String {
         return "Claude wants to launch a sub-agent"
 
     default:
-        // MCP tools: mcp__server-name__tool_name → "Use a connector"
+        // MCP tools: mcp__server-name__tool_name → extract readable tool name
         if toolName.hasPrefix("mcp__") {
+            if let range = toolName.range(of: "__", options: .backwards) {
+                let toolPart = String(toolName[range.upperBound...])
+                    .replacingOccurrences(of: "_", with: " ")
+                if !toolPart.isEmpty { return toolPart }
+            }
             return "Use a connector"
         }
         // Any other unknown tool with underscores → generic fallback
@@ -697,5 +721,38 @@ private func summarizeBashCommand(_ command: String) -> String {
     case "echo":    return "Run a command"
     default:        return "Run a command"
     }
+}
+
+/// Parse AskUserQuestion tool_input into a speakable string.
+/// Reads the first question and its option labels.
+private func parseAskUserQuestion(_ toolInput: Any) -> String {
+    let dict: [String: Any]
+    if let d = toolInput as? [String: Any] {
+        dict = d
+    } else if let str = toolInput as? String,
+              let data = str.data(using: .utf8),
+              let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        dict = d
+    } else {
+        return "Claude has a question."
+    }
+
+    guard let questions = dict["questions"] as? [[String: Any]],
+          let firstQ = questions.first,
+          let question = firstQ["question"] as? String else {
+        return "Claude has a question."
+    }
+
+    let options = (firstQ["options"] as? [[String: Any]])?
+        .compactMap { $0["label"] as? String } ?? []
+
+    if options.isEmpty {
+        return question
+    }
+
+    let numbered = options.enumerated()
+        .map { "\($0.offset + 1): \($0.element)" }
+        .joined(separator: ". ")
+    return "\(question) Options: \(numbered)."
 }
 

@@ -46,11 +46,8 @@ class DuckCoordinator: ObservableObject {
 
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
-        // Permissions-only mode: ignore evals entirely — just resolve any stale permission
+        // Permissions-only mode: ignore evals entirely
         if mode == .permissionsOnly {
-            if evalService.permissionPending {
-                evalService.permissionPending = false
-            }
             serialManager.sendCommand("P,0")
             return
         }
@@ -80,11 +77,8 @@ class DuckCoordinator: ObservableObject {
         updateExpression()
         flashReaction()
 
-        // Any new eval means the session moved on — resolve permission if pending
-        // (Belt and suspenders: Teensy firmware also auto-resolves on new eval)
-        if evalService.permissionPending {
-            evalService.permissionPending = false
-        }
+        // Permission state is managed by PermissionGate (timeout/resolve).
+        // Don't auto-clear here — evals from other sessions would wipe pending permissions.
         serialManager.sendCommand("P,0")
 
         // Send to duck via serial

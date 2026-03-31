@@ -38,6 +38,25 @@ except: print('[]')
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_NAME: $TOOL_NAME" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 
+# 3b. Smart filtering — skip noise the user doesn't need to voice-approve
+SUGGESTION_COUNT=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$PERMISSION_SUGGESTIONS")
+PERMISSION_MODE=$(json_get "$INPUT" "permission_mode" "default")
+
+# Zero suggestions + not AskUserQuestion → nothing useful to voice-ask
+if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] No suggestions, not AskUserQuestion — passing through" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
+# Plan mode (except AskUserQuestion) → auto-allow, low risk read-only exploration
+if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Plan mode — auto-allowing" >> "$LOG"
+  echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
 # Build the permission request payload
 CURL_BODY=$(python3 -c "
 import json, sys
@@ -90,7 +109,7 @@ if suggestion_index != 'null':
     try:
         idx = int(suggestion_index) - 1  # 1-based from user
         if 0 <= idx < len(suggestions):
-            result['updatedPermissions'] = suggestions[idx]
+            result['updatedPermissions'] = [suggestions[idx]]
     except: pass
 
 print(json.dumps({
