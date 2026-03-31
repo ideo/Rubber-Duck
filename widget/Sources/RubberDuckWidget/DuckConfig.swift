@@ -100,11 +100,48 @@ enum DuckConfig {
         }
     }
 
+    // MARK: - Subtitles
+
+    /// Show speech bubbles even when audio is playing.
+    static var subtitlesEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "subtitles_enabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "subtitles_enabled") }
+    }
+
     // MARK: - Experimental Features
 
     static var experimentalEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "experimentalEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "experimentalEnabled") }
+    }
+
+    // MARK: - Update Checking
+
+    /// Last app version that ran (detects post-update first launch).
+    static var lastRunAppVersion: String? {
+        get { UserDefaults.standard.string(forKey: "lastRunAppVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastRunAppVersion") }
+    }
+
+    /// Plugin version that was last successfully installed.
+    static var lastInstalledPluginVersion: Int? {
+        get {
+            let v = UserDefaults.standard.integer(forKey: "lastInstalledPluginVersion")
+            return v == 0 && !UserDefaults.standard.bool(forKey: "lastInstalledPluginVersion_set") ? nil : v
+        }
+        set {
+            UserDefaults.standard.set(newValue ?? 0, forKey: "lastInstalledPluginVersion")
+            UserDefaults.standard.set(true, forKey: "lastInstalledPluginVersion_set")
+        }
+    }
+
+    /// Unix timestamp of last GitHub update check.
+    static var lastUpdateCheckTimestamp: Double? {
+        get {
+            let v = UserDefaults.standard.double(forKey: "lastUpdateCheckTimestamp")
+            return v == 0 ? nil : v
+        }
+        set { UserDefaults.standard.set(newValue ?? 0, forKey: "lastUpdateCheckTimestamp") }
     }
 
     // MARK: - API Keys (File-based in Application Support)

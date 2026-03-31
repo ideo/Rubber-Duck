@@ -228,6 +228,8 @@ void exitPermission();
 void snapToCenter();
 void triggerDemoPreset();
 void resetAmbient();
+void updateDeadLevel();
+extern bool deadLevelActive;
 
 // Audio helpers (AudioStream.ino)
 void setupAudio();

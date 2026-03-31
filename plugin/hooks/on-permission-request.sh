@@ -38,6 +38,31 @@ except: print('[]')
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] TOOL_NAME: $TOOL_NAME" >> "$LOG"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 
+# 3b. Smart filtering — skip noise the user doesn't need to voice-approve
+SUGGESTION_COUNT=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$PERMISSION_SUGGESTIONS")
+PERMISSION_MODE=$(json_get "$INPUT" "permission_mode" "default")
+
+# Zero suggestions + not a tool the duck should voice-ask about → pass through
+if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] No suggestions, not AskUserQuestion — passing through" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
+# Plan mode (except AskUserQuestion and ExitPlanMode) → pass through to Claude Code's own UI
+if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Plan mode — passing through to Claude Code" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
+# MCP subagent tools (preview, browser automation) → pass through to Claude Code's own UI
+if echo "$TOOL_NAME" | grep -q "^mcp__"; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] MCP tool ($TOOL_NAME) — passing through to Claude Code" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
 # Build the permission request payload
 CURL_BODY=$(python3 -c "
 import json, sys
@@ -90,7 +115,7 @@ if suggestion_index != 'null':
     try:
         idx = int(suggestion_index) - 1  # 1-based from user
         if 0 <= idx < len(suggestions):
-            result['updatedPermissions'] = suggestions[idx]
+            result['updatedPermissions'] = [suggestions[idx]]
     except: pass
 
 print(json.dumps({

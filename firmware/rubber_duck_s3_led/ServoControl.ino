@@ -59,6 +59,12 @@ const char* demoLabels[] = {
 #define NUM_DEMO_PRESETS 6
 int demoStep = 0;
 
+// --- Dead Level State ---
+// Startup chirp → servo at exact 0° for 10s → resume idle hops
+bool  deadLevelActive = false;
+unsigned long deadLevelStart = 0;
+#define DEAD_LEVEL_DURATION_MS 10000
+
 // ============================================================
 // REDUCER: scores → servo target
 // ============================================================
@@ -230,10 +236,49 @@ void resetAmbient() {
 }
 
 void triggerDemoPreset() {
+  // First press after a dead level cycle (or anytime): cycle demos
+  // But if dead level is active, pressing button exits it early
+  if (deadLevelActive) {
+    deadLevelActive = false;
+    Serial.println("[demo] Dead level cancelled");
+    return;
+  }
+
+  // Every NUM_DEMO_PRESETS+1 press = dead level (after cycling all demos)
+  if (demoStep >= NUM_DEMO_PRESETS) {
+    // Dead level: startup chirp → hold at center for 10s
+    Serial.println("[demo] DEAD LEVEL — chirp + hold 10s");
+    #if ENABLE_SERVO
+      snapToCenter();
+    #endif
+    deadLevelActive = true;
+    deadLevelStart = millis();
+    demoStep = 0;  // Reset so next press cycles demos again
+    return;
+  }
+
   latestScores = demoPresets[demoStep];
   newEvalAvailable = true;
   Serial.println("[demo] " + String(demoLabels[demoStep]));
-  demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
+  demoStep = (demoStep + 1);
+}
+
+/// Call from loop() — holds servo at dead center during dead level period.
+void updateDeadLevel() {
+  if (!deadLevelActive) return;
+  if ((millis() - deadLevelStart) >= DEAD_LEVEL_DURATION_MS) {
+    deadLevelActive = false;
+    Serial.println("[demo] Dead level ended — resuming idle");
+    return;
+  }
+  // Force servo to exact center — override any ambient/spring physics
+  #if ENABLE_SERVO
+  servoTargetAngle = 0;
+  servoCurrentAngle = 0;
+  servoVelocity = 0;
+  ambientCurrentOffset = 0;
+  ambientTargetOffset = 0;
+  #endif
 }
 
 #else
@@ -244,6 +289,9 @@ float servoTargetAngle = 0;
 bool  calibrationMode = false;
 int   demoStep = 0;
 unsigned long lastEvalTime = 0;
+bool  deadLevelActive = false;
+unsigned long deadLevelStart = 0;
+#define DEAD_LEVEL_DURATION_MS 10000
 
 void setupServo() {}
 void startupServoAnimation() {}
@@ -271,10 +319,30 @@ const char* demoLabels[] = {
 #define NUM_DEMO_PRESETS 6
 
 void triggerDemoPreset() {
+  if (deadLevelActive) {
+    deadLevelActive = false;
+    Serial.println("[demo] Dead level cancelled");
+    return;
+  }
+  if (demoStep >= NUM_DEMO_PRESETS) {
+    Serial.println("[demo] DEAD LEVEL — hold 10s");
+    deadLevelActive = true;
+    deadLevelStart = millis();
+    demoStep = 0;
+    return;
+  }
   latestScores = demoPresets[demoStep];
   newEvalAvailable = true;
   Serial.println("[demo] " + String(demoLabels[demoStep]));
-  demoStep = (demoStep + 1) % NUM_DEMO_PRESETS;
+  demoStep = (demoStep + 1);
+}
+
+void updateDeadLevel() {
+  if (!deadLevelActive) return;
+  if ((millis() - deadLevelStart) >= DEAD_LEVEL_DURATION_MS) {
+    deadLevelActive = false;
+    Serial.println("[demo] Dead level ended — resuming idle");
+  }
 }
 
 #endif // ENABLE_SERVO

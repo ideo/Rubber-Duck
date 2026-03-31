@@ -24,18 +24,6 @@ struct DuckView: View {
         }
         .frame(width: DuckTheme.widgetSize - 8, height: DuckTheme.widgetSize - 8)
         .contentShape(Rectangle())
-        .onTapGesture {
-            // Tap anywhere on the duck — stop speech or resume if paused.
-            // Uses static refs to avoid @EnvironmentObject on DuckView (which causes context menu flicker).
-            if let speech = AppDelegate.speechService, speech.isSpeaking {
-                DuckLog.log("[duck] Tap — stopping speech")
-                speech.stopSpeaking()
-                let quips = ["Nevermind.", "That's enough.", "Moving on.", "Ok ok.", "Shh."]
-                speech.speak(quips.randomElement()!, skipChirpWait: true)
-            } else if !AppDelegate.isDuckActive {
-                AppDelegate.turnOn()
-            }
-        }
         .onHover { hovering in
             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                 isHovering = hovering
@@ -54,6 +42,27 @@ private struct DuckContextMenu: View {
     @EnvironmentObject var duckServer: DuckServer
 
     var body: some View {
+        // Update notifications (top of menu)
+        if coordinator.isAppUpdateAvailable, let version = coordinator.appUpdateVersion {
+            Button {
+                if let urlStr = coordinator.appUpdateURL, let url = URL(string: urlStr) {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Label("Update Available: v\(version)", systemImage: "arrow.down.circle")
+            }
+        }
+        if coordinator.isPluginStale {
+            Button {
+                PluginInstaller.install()
+            } label: {
+                Label("Plugin Update Available", systemImage: "puzzlepiece.extension.fill")
+            }
+        }
+        if coordinator.isAppUpdateAvailable || coordinator.isPluginStale {
+            Divider()
+        }
+
         // Mode selector
         Menu {
             ForEach(DuckMode.allCases, id: \.rawValue) { mode in
@@ -71,7 +80,14 @@ private struct DuckContextMenu: View {
         Menu {
             Button {
                 speechService.ttsVoice = DuckVoices.wildcardSayName
-                speechService.speak("Wildcard mode. I'll pick a voice each time.", skipChirpWait: true)
+                speechService.scheduleSpeech(
+                    "Wildcard mode. I'll pick a voice each time.",
+                    kind: .preview,
+                    lane: .manual,
+                    policy: .latestWins,
+                    interruptibility: .freelyInterruptible,
+                    skipChirpWait: true
+                )
             } label: {
                 let active = speechService.isWildcardMode
                 Label(active ? "✓ Wildcard (AI picks)" : "Wildcard (AI picks)", systemImage: "shuffle")
@@ -84,7 +100,15 @@ private struct DuckContextMenu: View {
                 ForEach([DuckVoices.main, DuckVoices.classic, DuckVoices.specialFX, DuckVoices.british][groupIdx], id: \.sayName) { voice in
                     Button {
                         speechService.ttsVoice = voice.sayName
-                        speechService.speak(voice.preview, skipChirpWait: true)
+                        speechService.scheduleSpeech(
+                            voice.preview,
+                            kind: .preview,
+                            lane: .manual,
+                            scopeID: "voice-preview",
+                            policy: .latestWins,
+                            interruptibility: .freelyInterruptible,
+                            skipChirpWait: true
+                        )
                     } label: {
                         Text(speechService.ttsVoice == voice.sayName && !speechService.isWildcardMode ? "✓ \(voice.label)" : voice.label)
                     }
@@ -95,6 +119,15 @@ private struct DuckContextMenu: View {
                 ? "Wildcard"
                 : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
             Label("Voice: \(voiceLabel)", systemImage: "waveform")
+        }
+
+        Button {
+            DuckConfig.subtitlesEnabled.toggle()
+        } label: {
+            Label(
+                DuckConfig.subtitlesEnabled ? "✓ Show Subtitles" : "Show Subtitles",
+                systemImage: "captions.bubble"
+            )
         }
 
         // Intelligence picker
@@ -139,6 +172,20 @@ private struct DuckContextMenu: View {
 
         Divider()
 
+        if AppDelegate.isDuckActive {
+            Button {
+                AppDelegate.turnOff()
+            } label: {
+                Label("Pause", systemImage: "pause.fill")
+            }
+        } else {
+            Button {
+                AppDelegate.turnOn()
+            } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+        }
+
         Button {
             duckServer.stop()
             NSApp.terminate(nil)
@@ -166,6 +213,7 @@ private struct DuckStatusOverlay: View {
 
     private var speechBubbleVisible: Bool {
         guard !speechService.currentUtterance.isEmpty else { return false }
+        if DuckConfig.subtitlesEnabled { return true }
         if speechService.isSilent || DuckConfig.volume <= 0 { return true }
         if speechService.audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted() {
             return true
@@ -486,21 +534,8 @@ private struct DuckWingsView: View {
                 .scaleEffect(x: -1, y: 1)
                 .offset(x: 16, y: wingsVisible ? 32 : 60)
                 .opacity(wingsVisible ? 1 : 0)
-            // Tap target — covers full widget width at wing height
-            Color.clear
-                .frame(width: DuckTheme.widgetSize, height: 70)
-                .contentShape(Rectangle())
-                .allowsHitTesting(wingsVisible)
-                .onTapGesture {
-                    if speechService.isSpeaking {
-                        DuckLog.log("[duck] Wing tap — stopping speech")
-                        speechService.stopSpeaking()
-                    } else if !AppDelegate.isDuckActive {
-                        AppDelegate.turnOn()
-                    }
-                }
-                .offset(y: 20)
         }
+        .allowsHitTesting(false)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: isHovering)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: speechService.isSpeaking)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: AppDelegate.isDuckActive)

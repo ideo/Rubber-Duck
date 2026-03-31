@@ -13,6 +13,12 @@ class DuckCoordinator: ObservableObject {
     @Published var mode: DuckMode = DuckConfig.duckMode
     @Published var isThinking = false
 
+    // Update notifications — set by UpdateChecker callbacks
+    @Published var isAppUpdateAvailable = false
+    @Published var appUpdateVersion: String?
+    @Published var appUpdateURL: String?
+    @Published var isPluginStale = false
+
     private let evalService: EvalService
     private let speechService: SpeechService
     private let serialManager: SerialManager
@@ -40,11 +46,8 @@ class DuckCoordinator: ObservableObject {
 
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
-        // Permissions-only mode: ignore evals entirely — just resolve any stale permission
+        // Permissions-only mode: ignore evals entirely
         if mode == .permissionsOnly {
-            if evalService.permissionPending {
-                evalService.permissionPending = false
-            }
             serialManager.sendCommand("P,0")
             return
         }
@@ -74,11 +77,8 @@ class DuckCoordinator: ObservableObject {
         updateExpression()
         flashReaction()
 
-        // Any new eval means the session moved on — resolve permission if pending
-        // (Belt and suspenders: Teensy firmware also auto-resolves on new eval)
-        if evalService.permissionPending {
-            evalService.permissionPending = false
-        }
+        // Permission state is managed by PermissionGate (timeout/resolve).
+        // Don't auto-clear here — evals from other sessions would wipe pending permissions.
         serialManager.sendCommand("P,0")
 
         // Send to duck via serial
@@ -113,11 +113,23 @@ class DuckCoordinator: ObservableObject {
                 }
 
                 speechService.setVoiceTransient(picked.sayName)
-                speechService.speak(textToSpeak)
+                speechService.scheduleSpeech(
+                    textToSpeak,
+                    kind: .reaction,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
                 // Reset to default voice so permissions/greetings don't inherit the wildcard pick
                 speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
             } else {
-                speechService.speak(textToSpeak)
+                speechService.scheduleSpeech(
+                    textToSpeak,
+                    kind: .reaction,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
             }
         }
     }
@@ -152,7 +164,13 @@ class DuckCoordinator: ObservableObject {
         // Clear any thinking state when switching modes
         clearThinking()
 
-        speechService.speak(mode.spokenLabel)
+        speechService.scheduleSpeech(
+            mode.spokenLabel,
+            kind: .system,
+            lane: .manual,
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
     }
 
     /// Clean up thinking state (called on turn-off).
@@ -200,9 +218,7 @@ class DuckCoordinator: ObservableObject {
                 "Right-click me anytime for settings and modes.",
             ]
         }
-        // Speak each step with pauses
-        let combined = steps.joined(separator: " ... ")
-        speechService.speak(combined)
+        speechService.scheduleScript(texts: steps, scopeID: speechService.nextScriptScopeID(prefix: "setup"))
     }
 
     /// Called when a new permission request arrives.

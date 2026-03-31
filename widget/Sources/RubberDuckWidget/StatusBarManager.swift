@@ -14,6 +14,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private let coordinator: DuckCoordinator
     private let serialManager: SerialManager
     private let duckServer: DuckServer
+    var updateChecker: UpdateChecker?
 
     init(speechService: SpeechService, coordinator: DuckCoordinator,
          serialManager: SerialManager, duckServer: DuckServer) {
@@ -86,8 +87,45 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
+        // --- Update notifications (top of menu for visibility) ---
+        if let checker = updateChecker {
+            if checker.isUpdateAvailable, let release = checker.latestRelease {
+                let updateItem = NSMenuItem(
+                    title: "Update Available: v\(release.version)",
+                    action: #selector(openUpdatePage),
+                    keyEquivalent: ""
+                )
+                updateItem.target = self
+                updateItem.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Update")
+                updateItem.subtitle = "Download from GitHub"
+                menu.addItem(updateItem)
+            }
+            if checker.isPluginStale {
+                let pluginItem = NSMenuItem(
+                    title: "Plugin Update Available",
+                    action: #selector(updatePlugin),
+                    keyEquivalent: ""
+                )
+                pluginItem.target = self
+                pluginItem.image = NSImage(systemSymbolName: "puzzlepiece.extension.fill", accessibilityDescription: "Plugin")
+                pluginItem.subtitle = "Reinstall to get latest hooks"
+                menu.addItem(pluginItem)
+            }
+            if checker.isUpdateAvailable || checker.isPluginStale {
+                menu.addItem(.separator())
+            }
+        }
+
         // --- Volume slider ---
         menu.addItem(volumeSliderItem())
+
+        // --- Subtitles toggle ---
+        let subtitleItem = NSMenuItem(title: "Show Subtitles", action: #selector(toggleSubtitles), keyEquivalent: "")
+        subtitleItem.target = self
+        subtitleItem.image = NSImage(systemSymbolName: "captions.bubble", accessibilityDescription: "Subtitles")
+        subtitleItem.subtitle = "Show speech bubbles with audio"
+        subtitleItem.state = DuckConfig.subtitlesEnabled ? .on : .off
+        menu.addItem(subtitleItem)
 
         // --- Mode submenu ---
         let currentMode = coordinator.mode
@@ -352,8 +390,24 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @objc private func toggleSubtitles() {
+        DuckConfig.subtitlesEnabled.toggle()
+    }
+
     @objc private func startClaudeSession() {
         CLISession.launch()
+    }
+
+    @objc private func openUpdatePage() {
+        guard let release = updateChecker?.latestRelease else { return }
+        let urlString = release.dmgURL ?? release.htmlURL
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func updatePlugin() {
+        PluginInstaller.install()
     }
 
     @objc private func installClaudeCLI() {
@@ -433,20 +487,43 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         speechService.ttsVoice = DuckVoices.wildcardSayName
         // Preview in Superstar (the default wildcard voice)
         speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
-        speechService.speak("Wildcard mode.", skipChirpWait: true)
+        speechService.scheduleSpeech(
+            "Wildcard mode.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible,
+            skipChirpWait: true
+        )
     }
 
     @objc private func selectSilent() {
         speechService.ttsVoice = DuckVoices.silentSayName
         // This triggers the speech bubble since isSilent is now true
-        speechService.speak("Silent mode. I'll use speech bubbles instead.")
+        speechService.scheduleSpeech(
+            "Silent mode. I'll use speech bubbles instead.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {
         guard let sayName = sender.representedObject as? String else { return }
         speechService.ttsVoice = sayName
         let voice = DuckVoices.all.first { $0.sayName == sayName }
-        speechService.speak(voice?.preview ?? "This is how I sound.", skipChirpWait: true)
+        speechService.scheduleSpeech(
+            voice?.preview ?? "This is how I sound.",
+            kind: .preview,
+            lane: .manual,
+            scopeID: "voice-preview",
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible,
+            skipChirpWait: true
+        )
     }
 
     @objc private func setLaunchAtLogin() {
@@ -949,6 +1026,9 @@ enum PluginInstaller {
 
     @MainActor
     private static func showResult(success: Bool, detail: String) {
+        if success {
+            UpdateChecker.recordPluginInstalled()
+        }
         showInstallResult(title: "Plugin Installed", success: success, detail: detail)
     }
 }

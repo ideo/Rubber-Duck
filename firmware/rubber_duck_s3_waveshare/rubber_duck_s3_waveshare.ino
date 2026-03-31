@@ -185,12 +185,15 @@ void loop() {
     lastExpressionTime = now;
   }
 
+  // --- Dead level hold (must run before servo update) ---
+  updateDeadLevel();
+
   // --- Fixed-rate servo update ---
   if (now - lastServoUpdate >= SERVO_UPDATE_MS) {
     lastServoUpdate = now;
 
     #if ENABLE_SERVO
-    if (!calibrationMode) {
+    if (!calibrationMode && !deadLevelActive) {
       updateServo();
     }
     #endif

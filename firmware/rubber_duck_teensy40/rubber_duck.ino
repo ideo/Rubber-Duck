@@ -158,9 +158,12 @@ void loop() {
     printEval(latestScores);
   }
 
+  // Dead level hold (must run before servo update)
+  updateDeadLevel();
+
   // Fixed-rate updates (skip spring physics during calibration)
   #if ENABLE_SERVO_DUCK
-  if (!calibrationMode && (now - lastServoUpdate >= SERVO_UPDATE_MS)) {
+  if (!calibrationMode && !deadLevelActive && (now - lastServoUpdate >= SERVO_UPDATE_MS)) {
     lastServoUpdate = now;
     updateServo();
   }

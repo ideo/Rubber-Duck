@@ -42,6 +42,52 @@ enum ListenMode: Int, CaseIterable {
     }
 }
 
+enum SpeechLane: Int {
+    case critical = 0
+    case script = 1
+    case turn = 2
+    case manual = 3
+    case ambient = 4
+}
+
+enum SpeechKind {
+    case permission
+    case answer
+    case filler
+    case acknowledgement
+    case reaction
+    case greeting
+    case preview
+    case scriptStep
+    case system
+}
+
+enum SpeechPolicy {
+    case fifo
+    case latestWins
+    case replaceScope
+    case dropIfBusy
+    case exclusiveSession
+}
+
+enum SpeechInterruptibility {
+    case byCriticalOnly
+    case byUserAction
+    case freelyInterruptible
+}
+
+private struct ScheduledSpeech {
+    let id: UUID
+    let text: String
+    let lane: SpeechLane
+    let kind: SpeechKind
+    let scopeID: String?
+    let policy: SpeechPolicy
+    let interruptibility: SpeechInterruptibility
+    let skipChirpWait: Bool
+    let onFinish: (@MainActor () -> Void)?
+}
+
 @MainActor
 class SpeechService: ObservableObject {
     // Published state
@@ -129,7 +175,19 @@ class SpeechService: ObservableObject {
     private var voiceInputTimer: Task<Void, Never>?
     private var deviceCheckTask: Task<Void, Never>?
     private var utteranceClearTimer: Task<Void, Never>?
+    private var simulatedSpeechTask: Task<Void, Never>?
 
+    // Speech scheduling
+    private var activeSpeech: ScheduledSpeech?
+    private var activePlaybackBackend: (any TTSBackend)?
+    private var criticalQueue: [ScheduledSpeech] = []
+    private var scriptQueue: [ScheduledSpeech] = []
+    private var pendingTurnSpeech: ScheduledSpeech?
+    private var pendingManualSpeech: ScheduledSpeech?
+    private var pendingAmbientSpeech: ScheduledSpeech?
+    private var turnCounter: Int = 0
+    private var scriptCounter: Int = 0
+    private(set) var currentTurnScopeID: String?
 
     init() {
         stt = STTEngine()
@@ -381,61 +439,286 @@ class SpeechService: ObservableObject {
     /// Whether the current voice is Silent (speech bubble only, no TTS).
     var isSilent: Bool { ttsVoice == DuckVoices.silentSayName }
 
-    private var speakingPollTimer: Task<Void, Never>?
-
     func speak(_ text: String, skipChirpWait: Bool = false) {
-        currentUtterance = text
-        utteranceClearTimer?.cancel()
-        utteranceClearTimer = Task {
-            // Reading time: 2s base notice time + ~50ms per character (~200 WPM).
-            // Matches comfortable reading pace with time to notice the bubble.
-            let duration = 2.0 + Double(text.count) * 0.05
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            if !Task.isCancelled {
-                await MainActor.run { self.currentUtterance = "" }
-            }
+        scheduleSpeech(
+            text,
+            kind: .system,
+            lane: .manual,
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible,
+            skipChirpWait: skipChirpWait
+        )
+    }
+
+    func scheduleSpeech(
+        _ text: String,
+        kind: SpeechKind,
+        lane: SpeechLane,
+        scopeID: String? = nil,
+        policy: SpeechPolicy,
+        interruptibility: SpeechInterruptibility,
+        skipChirpWait: Bool = false,
+        onFinish: (@MainActor () -> Void)? = nil
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let speech = ScheduledSpeech(
+            id: UUID(),
+            text: trimmed,
+            lane: lane,
+            kind: kind,
+            scopeID: scopeID,
+            policy: policy,
+            interruptibility: interruptibility,
+            skipChirpWait: skipChirpWait,
+            onFinish: onFinish
+        )
+        enqueueSpeech(speech)
+    }
+
+    func nextTurnScopeID() -> String {
+        turnCounter += 1
+        return "turn-\(turnCounter)"
+    }
+
+    func nextScriptScopeID(prefix: String = "script") -> String {
+        scriptCounter += 1
+        return "\(prefix)-\(scriptCounter)"
+    }
+
+    func scheduleScript(
+        texts: [String],
+        scopeID: String? = nil,
+        interruptibility: SpeechInterruptibility = .byUserAction
+    ) {
+        let cleaned = texts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return }
+
+        let scriptID = scopeID ?? nextScriptScopeID()
+        scriptQueue.removeAll()
+        pendingTurnSpeech = nil
+        pendingManualSpeech = nil
+        pendingAmbientSpeech = nil
+        if let activeSpeech,
+           activeSpeech.lane == .script
+            || activeSpeech.lane == .ambient
+            || activeSpeech.lane == .manual
+            || activeSpeech.interruptibility == .byUserAction {
+            replaceActiveSpeechIfNeeded()
         }
-        // Skip TTS when Silent, or when Mac is muted with no hardware duck
+
+        for (index, text) in cleaned.enumerated() {
+            let speech = ScheduledSpeech(
+                id: UUID(),
+                text: text,
+                lane: .script,
+                kind: .scriptStep,
+                scopeID: scriptID,
+                policy: index == 0 ? .exclusiveSession : .fifo,
+                interruptibility: interruptibility,
+                skipChirpWait: false,
+                onFinish: nil
+            )
+            scriptQueue.append(speech)
+        }
+        scheduleNextSpeechIfNeeded()
+    }
+
+    func stopSpeaking(reason: TTSStopReason = .userCancelled, clearQueues: Bool = true) {
+        simulatedSpeechTask?.cancel()
+        simulatedSpeechTask = nil
+        utteranceClearTimer?.cancel()
+        utteranceClearTimer = nil
+
+        if clearQueues {
+            clearNonCriticalQueuedSpeech()
+        }
+
+        if let backend = activePlaybackBackend {
+            backend.stopPlayback(reason: reason)
+        }
+
+        activeSpeech = nil
+        activePlaybackBackend = nil
+        isSpeaking = false
+        currentUtterance = ""
+        currentTurnScopeID = nil
+        exitConversation()
+    }
+
+    private func enqueueSpeech(_ speech: ScheduledSpeech) {
+        if speech.policy == .dropIfBusy,
+           activeSpeech != nil || !criticalQueue.isEmpty || !scriptQueue.isEmpty || pendingTurnSpeech != nil || pendingManualSpeech != nil {
+            return
+        }
+
+        if speech.lane != .ambient {
+            pendingAmbientSpeech = nil
+        }
+
+        switch speech.lane {
+        case .critical:
+            criticalQueue.append(speech)
+        case .script:
+            if speech.policy == .exclusiveSession {
+                scriptQueue.removeAll()
+            }
+            scriptQueue.append(speech)
+        case .turn:
+            pendingTurnSpeech = speech
+        case .manual:
+            pendingManualSpeech = speech
+        case .ambient:
+            pendingAmbientSpeech = speech
+        }
+
+        if shouldPreemptActiveSpeech(for: speech) {
+            replaceActiveSpeechIfNeeded()
+        }
+        scheduleNextSpeechIfNeeded()
+    }
+
+    private func shouldPreemptActiveSpeech(for incoming: ScheduledSpeech) -> Bool {
+        guard let activeSpeech else { return false }
+
+        switch incoming.lane {
+        case .critical:
+            return activeSpeech.lane != .critical
+        case .script:
+            return activeSpeech.lane == .ambient
+                || activeSpeech.lane == .manual
+                || activeSpeech.interruptibility == .byUserAction
+        case .turn:
+            if activeSpeech.lane == .turn, activeSpeech.scopeID == incoming.scopeID {
+                return true
+            }
+            return activeSpeech.lane == .ambient
+        case .manual:
+            if activeSpeech.lane == .manual || activeSpeech.lane == .ambient {
+                return true
+            }
+            return activeSpeech.interruptibility == .byUserAction
+        case .ambient:
+            return false
+        }
+    }
+
+    private func replaceActiveSpeechIfNeeded() {
+        guard activeSpeech != nil else { return }
+        simulatedSpeechTask?.cancel()
+        simulatedSpeechTask = nil
+        utteranceClearTimer?.cancel()
+        utteranceClearTimer = nil
+        activePlaybackBackend?.stopPlayback(reason: .replaced)
+        activeSpeech = nil
+        activePlaybackBackend = nil
+        isSpeaking = false
+    }
+
+    private func scheduleNextSpeechIfNeeded() {
+        guard activeSpeech == nil else { return }
+
+        let next: ScheduledSpeech?
+        if !criticalQueue.isEmpty {
+            next = criticalQueue.removeFirst()
+        } else if !scriptQueue.isEmpty {
+            next = scriptQueue.removeFirst()
+        } else if let pendingTurnSpeech {
+            next = pendingTurnSpeech
+            self.pendingTurnSpeech = nil
+        } else if let pendingManualSpeech {
+            next = pendingManualSpeech
+            self.pendingManualSpeech = nil
+        } else if let pendingAmbientSpeech {
+            next = pendingAmbientSpeech
+            self.pendingAmbientSpeech = nil
+        } else {
+            next = nil
+        }
+
+        guard let next else { return }
+        startSpeech(next)
+    }
+
+    private func startSpeech(_ speech: ScheduledSpeech) {
+        activeSpeech = speech
+        currentUtterance = speech.text
+        isSpeaking = true
+
         let systemMuted = audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted()
-        if !isSilent && !systemMuted {
-            // Reset to false first so onChange triggers even if we were already speaking
-            if isSpeaking { isSpeaking = false }
-            isSpeaking = true
-            activeTTS.speak(text, skipChirpWait: skipChirpWait)
-            // Poll gate.muted to detect when say finishes
-            speakingPollTimer?.cancel()
-            speakingPollTimer = Task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                    if !self.activeTTS.isMuted {
-                        await MainActor.run { self.isSpeaking = false }
-                        break
+        if isSilent || systemMuted {
+            let duration = estimatedSpeechDuration(for: speech.text)
+            simulatedSpeechTask = Task {
+                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.handleSpeechCompletion(for: speech.id, result: .finished)
                     }
                 }
             }
-        } else if isSilent || systemMuted {
-            // Mouth should still animate when showing speech bubble
-            isSpeaking = true
-            speakingPollTimer?.cancel()
-            speakingPollTimer = Task {
-                // Simulate speaking duration based on text length
-                let duration = 2.0 + Double(text.count) * 0.05
-                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-                if !Task.isCancelled {
-                    await MainActor.run { self.isSpeaking = false }
-                }
+            return
+        }
+
+        let playbackBackend = activeTTS
+        activePlaybackBackend = playbackBackend
+        playbackBackend.play(
+            speech.text,
+            utteranceID: speech.id,
+            skipChirpWait: speech.skipChirpWait
+        ) { [weak self] utteranceID, result in
+            self?.handleSpeechCompletion(for: utteranceID, result: result)
+        }
+    }
+
+    private func handleSpeechCompletion(for utteranceID: UUID, result: TTSPlaybackResult) {
+        guard activeSpeech?.id == utteranceID else { return }
+
+        simulatedSpeechTask?.cancel()
+        simulatedSpeechTask = nil
+        utteranceClearTimer?.cancel()
+        utteranceClearTimer = nil
+
+        let completion = activeSpeech?.onFinish
+        let finishedLane = activeSpeech?.lane
+        activeSpeech = nil
+        activePlaybackBackend = nil
+        isSpeaking = false
+        currentUtterance = ""
+        if finishedLane == .turn && pendingTurnSpeech == nil {
+            currentTurnScopeID = nil
+        }
+
+        if case .finished = result {
+            completion?()
+        }
+
+        scheduleNextSpeechIfNeeded()
+    }
+
+    private func estimatedSpeechDuration(for text: String) -> Double {
+        2.0 + Double(text.count) * 0.05
+    }
+
+    func makeListeningCompletionAction(enterConversation: Bool = false) -> (@MainActor () -> Void) {
+        { [weak self] in
+            guard let self else { return }
+            self.activeSTT.resetRestartAttempts()
+            self.startListening()
+            if enterConversation {
+                self.enterConversation()
             }
         }
     }
 
-    func stopSpeaking() {
-        activeTTS.stop()
-        speakingPollTimer?.cancel()
-        speakingPollTimer = nil
-        isSpeaking = false
-        utteranceClearTimer?.cancel()
-        currentUtterance = ""
-        exitConversation()
+    private func clearNonCriticalQueuedSpeech() {
+        scriptQueue.removeAll()
+        pendingTurnSpeech = nil
+        pendingManualSpeech = nil
+        pendingAmbientSpeech = nil
+        currentTurnScopeID = nil
     }
 
     /// Set master volume (0.0–1.0). Propagates to both TTS engines.
@@ -447,24 +730,24 @@ class SpeechService: ObservableObject {
     func askPermission(toolName: String, summary: String = "", options: [String] = []) {
         let label = summary.isEmpty ? toolName : summary
 
-        // One-sentence prompt: "Edit DuckView. Allow, always allow, or deny?"
+        // Use STT-friendly words: "yes/no/always" instead of "allow/deny"
+        // which Apple Speech frequently misrecognizes as "a lot", "aloud", etc.
         let shortPrompt: String
         let fullPrompt: String
 
         if options.count == 1 {
-            // Single option → "Allow, always allow, or deny?"
-            shortPrompt = "\(label). Allow, always allow, or deny?"
-            fullPrompt = "\(label). Allow, always allow to \(options[0]), or deny?"
+            shortPrompt = "\(label). Yes, always, or no?"
+            fullPrompt = "\(label). Yes, always to \(options[0]), or no?"
         } else if options.count == 2 {
-            shortPrompt = "\(label). Allow, always allow, or deny?"
-            fullPrompt = "\(label). Allow, always allow to \(options[0]), or say second to \(options[1]), or deny?"
+            shortPrompt = "\(label). Yes, always, or no?"
+            fullPrompt = "\(label). Yes, always to \(options[0]), or say second to \(options[1]), or no?"
         } else if options.count > 2 {
-            shortPrompt = "\(label). Allow or deny? Say repeat for options."
+            shortPrompt = "\(label). Yes or no? Say repeat for options."
             let numbered = options.enumerated().map { "\($0.offset + 1): \($0.element)" }.joined(separator: ". ")
-            fullPrompt = "\(label). Your options are: \(numbered). Or just allow or deny."
+            fullPrompt = "\(label). Your options are: \(numbered). Or just yes or no."
         } else {
             // No options
-            shortPrompt = "\(label). Allow or deny?"
+            shortPrompt = "\(label). Yes or no?"
             fullPrompt = shortPrompt
         }
 
@@ -474,8 +757,15 @@ class SpeechService: ObservableObject {
             prompt: shortPrompt,
             fullPrompt: fullPrompt
         )
-        speak(shortPrompt)
-        restartAfterTTS()  // Ensure STT is fresh after the prompt finishes
+        scheduleSpeech(
+            shortPrompt,
+            kind: .permission,
+            lane: .critical,
+            scopeID: "permission-active",
+            policy: .fifo,
+            interruptibility: .byCriticalOnly,
+            onFinish: makeListeningCompletionAction()
+        )
     }
 
     /// Clear the voice permission gate (permission resolved externally — CLI, timeout, etc.)
@@ -616,8 +906,15 @@ class SpeechService: ObservableObject {
                         await MainActor.run {
                             guard self.permissionGate.isWaiting else { return }
                             guard let decision = classified else {
-                                self.speak("Sorry, I didn't catch that. Say yes or no.")
-                                self.restartAfterTTS()
+                                self.scheduleSpeech(
+                                    "Didn't catch that. Yes or no?",
+                                    kind: .permission,
+                                    lane: .critical,
+                                    scopeID: "permission-active",
+                                    policy: .fifo,
+                                    interruptibility: .byCriticalOnly,
+                                    onFinish: self.makeListeningCompletionAction()
+                                )
                                 return
                             }
                             self.handlePermissionDecision(decision)
@@ -669,7 +966,15 @@ class SpeechService: ObservableObject {
             log("[speech] Wake word detected!")
 
             // Immediate acknowledgment — duck perks up (skip chirp for speed)
-            speak(["Yeah?", "Hmm?", "Yep?", "What's up?"].randomElement()!, skipChirpWait: true)
+            scheduleSpeech(
+                ["Yeah?", "Hmm?", "Yep?", "What's up?"].randomElement()!,
+                kind: .acknowledgement,
+                lane: .turn,
+                scopeID: "wake",
+                policy: .latestWins,
+                interruptibility: .freelyInterruptible,
+                skipChirpWait: true
+            )
 
             // Tell hardware to perk up (servo tilt)
             serialTransport?.sendCommand("W,1")
@@ -680,7 +985,14 @@ class SpeechService: ObservableObject {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if !Task.isCancelled && self.wakeWordProcessor.isAwake && self.wakeWordProcessor.pendingText.isEmpty {
                     self.log("[speech] No command after wake word, restarting...")
-                    self.speak("Never mind.")
+                    self.scheduleSpeech(
+                        "Never mind.",
+                        kind: .acknowledgement,
+                        lane: .turn,
+                        scopeID: "wake",
+                        policy: .latestWins,
+                        interruptibility: .freelyInterruptible
+                    )
                     self.isWakeActive = false
                     self.hasAcknowledgedWake = false
                     self.serialTransport?.sendCommand("W,0")
@@ -718,8 +1030,15 @@ class SpeechService: ObservableObject {
             lastHeard = ""
             voiceInputTimer?.cancel()
             wakeWordProcessor.reset()
-            speak("Quack! See you later.")
-            restartAfterTTS()
+            scheduleSpeech(
+                "Quack! See you later.",
+                kind: .acknowledgement,
+                lane: .turn,
+                scopeID: "wake",
+                policy: .latestWins,
+                interruptibility: .freelyInterruptible,
+                onFinish: makeListeningCompletionAction()
+            )
         }
     }
 
@@ -727,25 +1046,61 @@ class SpeechService: ObservableObject {
     private func handlePermissionDecision(_ decision: PermissionVoiceGate.Decision) {
         switch decision {
         case .allow:
-            speak(["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!)
+            scheduleSpeech(
+                ["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!,
+                kind: .permission,
+                lane: .critical,
+                scopeID: "permission-active",
+                policy: .fifo,
+                interruptibility: .byCriticalOnly,
+                onFinish: makeListeningCompletionAction()
+            )
             onPermissionResponse?(0)
-            restartAfterTTS()
         case .deny:
-            speak(["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!)
+            scheduleSpeech(
+                ["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!,
+                kind: .permission,
+                lane: .critical,
+                scopeID: "permission-active",
+                policy: .fifo,
+                interruptibility: .byCriticalOnly,
+                onFinish: makeListeningCompletionAction()
+            )
             onPermissionResponse?(-1)
-            restartAfterTTS()
         case .selectOption(let index):
             if index > 0 && index <= permissionGate.optionLabels.count {
                 let label = permissionGate.optionLabels[index - 1]
-                speak("Got it. \(label.capitalized(with: nil)).")
+                scheduleSpeech(
+                    "Got it. \(label.capitalized(with: nil)).",
+                    kind: .permission,
+                    lane: .critical,
+                    scopeID: "permission-active",
+                    policy: .fifo,
+                    interruptibility: .byCriticalOnly,
+                    onFinish: makeListeningCompletionAction()
+                )
             } else {
-                speak(["Got it.", "Done."].randomElement()!)
+                scheduleSpeech(
+                    ["Got it.", "Done."].randomElement()!,
+                    kind: .permission,
+                    lane: .critical,
+                    scopeID: "permission-active",
+                    policy: .fifo,
+                    interruptibility: .byCriticalOnly,
+                    onFinish: makeListeningCompletionAction()
+                )
             }
             onPermissionResponse?(index)
-            restartAfterTTS()
         case .repeatPrompt:
-            speak(permissionGate.fullPrompt)
-            restartAfterTTS()
+            scheduleSpeech(
+                permissionGate.fullPrompt,
+                kind: .permission,
+                lane: .critical,
+                scopeID: "permission-active",
+                policy: .fifo,
+                interruptibility: .byCriticalOnly,
+                onFinish: makeListeningCompletionAction()
+            )
         case .noMatch:
             break  // Should not reach here
         }
@@ -763,7 +1118,16 @@ class SpeechService: ObservableObject {
         serialTransport?.sendCommand("W,0")
 
         log("[speech] Sending: \(text)")
-        speak(["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!)
+        currentTurnScopeID = nextTurnScopeID()
+        scheduleSpeech(
+            ["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!,
+            kind: .acknowledgement,
+            lane: .turn,
+            scopeID: currentTurnScopeID,
+            policy: .replaceScope,
+            interruptibility: .freelyInterruptible,
+            onFinish: makeListeningCompletionAction()
+        )
         onVoiceInput?(text)
 
         // Clear the displayed text after a beat so user sees it was sent
@@ -771,8 +1135,6 @@ class SpeechService: ObservableObject {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             self.lastHeard = ""
         }
-
-        restartAfterTTS()
     }
 
     // MARK: - Conversation Mode
@@ -806,8 +1168,8 @@ class SpeechService: ObservableObject {
 
     func restartAfterTTS(thenEnterConversation: Bool = false) {
         Task {
-            // Wait for the active TTS engine to finish
-            while activeTTS.isMuted {
+            // Wait for the currently active speech request to drain.
+            while activeSpeech != nil {
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
             activeSTT.resetRestartAttempts()

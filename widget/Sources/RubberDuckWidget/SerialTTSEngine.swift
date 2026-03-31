@@ -8,6 +8,12 @@ import AVFoundation
 
 @MainActor
 class SerialTTSEngine {
+    private struct PlaybackSession {
+        let id: UUID
+        let completion: TTSPlaybackCompletion
+        var stopReason: TTSStopReason?
+    }
+
     /// Shared gate for muting mic input during TTS playback.
     let gate = TTSGate()
 
@@ -20,7 +26,8 @@ class SerialTTSEngine {
     private let synth = AVSpeechSynthesizer()
     private weak var transport: SerialTransport?
     private var streamingTask: Task<Void, Never>?
-    private var isStopping = false
+    private var activeSessionID: UUID?
+    private var sessions: [UUID: PlaybackSession] = [:]
 
     private func log(_ msg: String) { DuckLog.log(msg) }
 
@@ -30,11 +37,9 @@ class SerialTTSEngine {
 
     /// Speak text by streaming PCM to the ESP32 over serial.
     /// Set `skipChirpWait` to true when no chirp was triggered (e.g. voice preview).
-    func speak(_ text: String, skipChirpWait: Bool = false) {
+    func play(_ text: String, utteranceID: UUID, skipChirpWait: Bool = false, completion: @escaping TTSPlaybackCompletion) {
         guard !text.isEmpty, let transport = transport else { return }
         log("[serial-tts] \(text)")
-
-        stop()
 
         var cleaned = text
             .replacingOccurrences(of: "**", with: "")
@@ -59,12 +64,12 @@ class SerialTTSEngine {
         }
 
         gate.muted = true
-        isStopping = false
+        activeSessionID = utteranceID
+        sessions[utteranceID] = PlaybackSession(id: utteranceID, completion: completion, stopReason: nil)
 
         // DON'T enter audio mode yet — let the chirp play first.
         // Audio mode entry happens in the streaming task after a delay.
 
-        let g = gate
         let transportRef = transport
 
         let engine = self
@@ -77,8 +82,14 @@ class SerialTTSEngine {
             if shouldWaitForChirp {
                 await SerialTTSEngine.waitForChirpDone(transport: transportRef)
             }
+            if let stopReason = await engine.stopReason(for: utteranceID) {
+                await MainActor.run { engine.sendEndOfStream() }
+                await engine.finishSession(utteranceID, defaultResult: .cancelled(stopReason))
+                return
+            }
             guard !Task.isCancelled else {
                 await MainActor.run { engine.sendEndOfStream() }
+                await engine.finishSession(utteranceID, defaultResult: .cancelled(.replaced))
                 return
             }
 
@@ -152,22 +163,41 @@ class SerialTTSEngine {
 
             // Brief delay for ESP32 ring buffer to drain, then unmute mic
             try? await Task.sleep(nanoseconds: 300_000_000)
-            g.muted = false
+            if let stopReason = await engine.stopReason(for: utteranceID) {
+                await engine.finishSession(utteranceID, defaultResult: .cancelled(stopReason))
+            } else {
+                await engine.finishSession(utteranceID, defaultResult: .finished)
+            }
         }
     }
 
     /// Stop current speech.
-    func stop() {
-        isStopping = true
+    func stopPlayback(reason: TTSStopReason) {
+        guard let activeSessionID, var session = sessions[activeSessionID] else { return }
+        session.stopReason = reason
+        sessions[activeSessionID] = session
         streamingTask?.cancel()
         streamingTask = nil
         synth.stopSpeaking(at: .immediate)
         sendEndOfStream()
-        gate.muted = false
     }
 
     /// Whether TTS is currently muting the mic.
     var isMuted: Bool { gate.muted }
+
+    private func stopReason(for sessionID: UUID) -> TTSStopReason? {
+        sessions[sessionID]?.stopReason
+    }
+
+    private func finishSession(_ sessionID: UUID, defaultResult: TTSPlaybackResult) {
+        guard let session = sessions.removeValue(forKey: sessionID) else { return }
+        let result = session.stopReason.map(TTSPlaybackResult.cancelled) ?? defaultResult
+        if activeSessionID == sessionID {
+            activeSessionID = nil
+            gate.muted = false
+        }
+        session.completion(sessionID, result)
+    }
 
     // MARK: - Chirp Wait
 

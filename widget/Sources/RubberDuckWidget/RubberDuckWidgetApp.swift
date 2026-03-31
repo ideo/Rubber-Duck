@@ -94,6 +94,7 @@ struct RubberDuckWidgetApp: App {
         Settings {
             PreferencesView()
                 .environmentObject(speechService)
+                .environmentObject(coordinator)
         }
     }
 
@@ -139,22 +140,41 @@ struct RubberDuckWidgetApp: App {
             // Everything else → duck handles it (help, chat, anything)
             Task {
                 await MainActor.run {
-                    speech.speak(["Hmm...", "Let me think...", "One sec..."].randomElement()!, skipChirpWait: true)
+                    let turnScope = speech.currentTurnScopeID ?? speech.nextTurnScopeID()
+                    speech.scheduleSpeech(
+                        ["Hmm...", "Let me think...", "One sec..."].randomElement()!,
+                        kind: .filler,
+                        lane: .turn,
+                        scopeID: turnScope,
+                        policy: .replaceScope,
+                        interruptibility: .freelyInterruptible,
+                        skipChirpWait: true
+                    )
                 }
                 let answer = await helpService.ask(text)
                 await MainActor.run {
                     speech.isWakeActive = false
+                    let turnScope = speech.currentTurnScopeID ?? speech.nextTurnScopeID()
                     if answer == DuckHelpService.fullStoryReadingSentinel {
                         // Fully shut down conversation state before the long story read
                         speech.exitConversation()
-                        // Read the full Moby Duck story via TTS — no LLM, just reading aloud
-                        speech.speak("Alright. Settle in. ... " + DuckHelpService.fullStoryText)
-                        speech.restartAfterTTS(thenEnterConversation: false)
+                        let storyChunks = ["Alright. Settle in."] + DuckHelpService.fullStoryText
+                            .components(separatedBy: " ... ")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        speech.scheduleScript(texts: storyChunks, scopeID: speech.nextScriptScopeID(prefix: "story"))
                         // Story told — fully reset backstory so next question goes back to normal help
                         Task { await helpService.resetBackstoryCompletely() }
                     } else {
-                        speech.speak(answer ?? "Not sure about that one.")
-                        speech.restartAfterTTS(thenEnterConversation: true)
+                        speech.scheduleSpeech(
+                            answer ?? "Not sure about that one.",
+                            kind: .answer,
+                            lane: .turn,
+                            scopeID: turnScope,
+                            policy: .replaceScope,
+                            interruptibility: .byCriticalOnly,
+                            onFinish: speech.makeListeningCompletionAction(enterConversation: true)
+                        )
                     }
                 }
             }
@@ -195,7 +215,15 @@ struct RubberDuckWidgetApp: App {
         }
 
         // Wire plugin installer voice feedback
-        PluginInstaller.onSpeak = { [weak speech] text in speech?.speak(text) }
+        PluginInstaller.onSpeak = { [weak speech] text in
+            speech?.scheduleSpeech(
+                text,
+                kind: .system,
+                lane: .manual,
+                policy: .latestWins,
+                interruptibility: .freelyInterruptible
+            )
+        }
 
         // Store service refs so AppDelegate can turn off the companion
         AppDelegate.speechService = speech
@@ -209,9 +237,52 @@ struct RubberDuckWidgetApp: App {
             duckServer: server
         )
 
+        // Update checker — polls GitHub Releases API
+        let updateChecker = UpdateChecker()
+        statusBarManager?.updateChecker = updateChecker
+        server.updateChecker = updateChecker
+
+        updateChecker.onUpdateDetected = { [weak speech, weak coordinator] release in
+            coordinator?.isAppUpdateAvailable = true
+            coordinator?.appUpdateVersion = release.version
+            coordinator?.appUpdateURL = release.dmgURL ?? release.htmlURL
+            speech?.scheduleSpeech(
+                "Hey, there's a newer version of me on GitHub!",
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
+        updateChecker.onPluginStale = { [weak speech, weak coordinator] in
+            coordinator?.isPluginStale = true
+            speech?.scheduleSpeech(
+                "My plugin needs updating. Check the menu.",
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
+
+        // Detect app version change → check plugin staleness
+        if updateChecker.detectAppVersionChange() {
+            updateChecker.detectPluginStaleness()
+        }
+
+        updateChecker.startPeriodicChecks()
+
         // Wire lifecycle hooks from DuckServer → coordinator
         let transport = server.localTransport
-        transport.onSpeak = { [weak speech] text in speech?.speak(text) }
+        transport.onSpeak = { [weak speech] text in
+            speech?.scheduleSpeech(
+                text,
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
         transport.onClearThinking = { [weak coordinator] in coordinator?.clearThinking() }
         transport.onMelodyStart = { [weak coordinator] in coordinator?.startMelody() }
         transport.onMelodyStop = { [weak coordinator] in coordinator?.stopMelody() }
@@ -219,7 +290,13 @@ struct RubberDuckWidgetApp: App {
         // TTS greeting when a Claude session connects via /health
         server.onSessionConnect = { [weak speech, weak coordinator] in
             let mode = coordinator?.mode ?? .companion
-            speech?.speak(LaunchGreeting.sessionConnect(mode: mode))
+            speech?.scheduleSpeech(
+                LaunchGreeting.sessionConnect(mode: mode),
+                kind: .greeting,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
         }
 
         // Wait for permissions, then apply saved listen mode + greet
@@ -228,7 +305,13 @@ struct RubberDuckWidgetApp: App {
             speech.refreshPermissionStatus()
             if speech.micPermissionGranted && speech.speechPermissionGranted {
                 speech.applyListenMode()
-                speech.speak(LaunchGreeting.pick(mode: coordinator.mode))
+                speech.scheduleSpeech(
+                    LaunchGreeting.pick(mode: coordinator.mode),
+                    kind: .greeting,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
                 return
             }
             // Otherwise poll (waiting for user to grant via dialog)
@@ -237,7 +320,13 @@ struct RubberDuckWidgetApp: App {
                 speech.refreshPermissionStatus()
                 if speech.micPermissionGranted && speech.speechPermissionGranted {
                     speech.applyListenMode()
-                    speech.speak(LaunchGreeting.pick(mode: coordinator.mode))
+                    speech.scheduleSpeech(
+                        LaunchGreeting.pick(mode: coordinator.mode),
+                        kind: .greeting,
+                        lane: .ambient,
+                        policy: .dropIfBusy,
+                        interruptibility: .freelyInterruptible
+                    )
                     return
                 }
             }
@@ -277,12 +366,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate()
             }
         }
+        // Mark any new windows as non-restorable (Help, Settings created on demand)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { notif in
+            (notif.object as? NSWindow)?.isRestorable = false
+        }
+
         // Strip useless default menus — SwiftUI recreates them on window focus,
         // so we observe changes and strip continuously.
         Self.startMenuStripping()
 
-        // Disable state restoration — it recreates windows without our properties
-        UserDefaults.standard.removeObject(forKey: "NSWindow Frame main")
+        // Disable state restoration — it recreates windows without our properties.
+        // Clear ALL window frame autosaves, not just "main".
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         UserDefaults.standard.removeObject(forKey: "NSWindowAutosaveFrames")
 
         // Ensure app is a regular dock app (not background agent)
@@ -364,8 +463,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Kill any lingering TTS — say process outlives the app
-        Process.launchedProcess(launchPath: "/usr/bin/killall", arguments: ["say"])
+        // Stop owned TTS sessions cleanly before shutdown.
+        Task { @MainActor in
+            Self.speechService?.stopSpeaking(reason: .shutdown)
+        }
         // Clean up port file so hooks don't try a stale port
         DuckConfig.removePortFile()
     }
@@ -395,7 +496,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard isDuckActive else { return }
         isDuckActive = false
         speechService?.stopListening()
-        speechService?.stopSpeaking()
+        speechService?.stopSpeaking(reason: .userCancelled)
         coordinator?.clearThinking()
         DuckLog.log("[app] Duck Duck Duck turned off")
     }

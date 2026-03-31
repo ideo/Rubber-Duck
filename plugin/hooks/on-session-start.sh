@@ -63,6 +63,10 @@ if ! curl -sf "${DUCK_SERVICE_URL}/health" > /dev/null 2>&1; then
     exit 0
 fi
 
+# --- Report plugin version so widget can detect staleness ---
+PLUGIN_VERSION=$(python3 -c "import json; print(json.load(open('${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json')).get('version','0'))" 2>/dev/null || echo "0")
+curl -sf "${DUCK_SERVICE_URL}/plugin-check?v=${PLUGIN_VERSION}" > /dev/null 2>&1 &
+
 MSG="Duck Duck Duck is watching this session. Time: ${TIME_VIBE}. Recency: ${RECENCY}. Greet the user with personality — pick a tone that fits the context. Be brief (one sentence). Examples by vibe: late_night: 'Burning the midnight oil, huh?' / morning+first_ever: 'First time! Let's see what you've got.' / back_immediately: 'Miss me already?' / recent: 'Back so soon — what broke?' / hours_away: 'Been a minute. What are we getting into?' / days_away: 'Long time no quack.' / friday evening: 'Friday night coding? Respect.' Do NOT use these examples verbatim — improvise something fresh each time."
 
 cat <<EOF
