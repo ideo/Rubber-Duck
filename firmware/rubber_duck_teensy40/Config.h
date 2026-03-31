@@ -181,6 +181,8 @@ void snapToCenter();
 void triggerDemoPreset();
 void kickAmbient(float range, float kick);
 void resetAmbient();
+void updateDeadLevel();
+extern bool deadLevelActive;
 
 // Audio functions (defined in I2SAudio.ino)
 void playPermissionChirp();
