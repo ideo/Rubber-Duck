@@ -42,15 +42,15 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 SUGGESTION_COUNT=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$PERMISSION_SUGGESTIONS")
 PERMISSION_MODE=$(json_get "$INPUT" "permission_mode" "default")
 
-# Zero suggestions + not AskUserQuestion → nothing useful to voice-ask
-if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
+# Zero suggestions + not a tool the duck should voice-ask about → pass through
+if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] No suggestions, not AskUserQuestion — passing through" >> "$LOG"
   echo "========================================" >> "$LOG"
   exit 0
 fi
 
-# Plan mode (except AskUserQuestion) → pass through to Claude Code's own UI
-if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
+# Plan mode (except AskUserQuestion and ExitPlanMode) → pass through to Claude Code's own UI
+if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Plan mode — passing through to Claude Code" >> "$LOG"
   echo "========================================" >> "$LOG"
   exit 0
