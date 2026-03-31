@@ -259,11 +259,13 @@ class DuckServer: ObservableObject {
             // The actual answer goes through Claude Code's UI — the duck just gives a heads-up.
             if toolName == "AskUserQuestion" {
                 let questionSpeech = parseAskUserQuestion(toolInput)
-                DuckLog.log("[permission] AskUserQuestion — reading aloud and auto-allowing")
+                DuckLog.log("[permission] AskUserQuestion — reading aloud, passing through to Claude Code")
                 await MainActor.run {
                     localTransport.onSpeak?(questionSpeech)
                 }
-                return .json(try! JSONSerialization.data(withJSONObject: ["decision": "allow"]))
+                // Return empty — duck reads the question but doesn't grant permission.
+                // Claude Code's own permission system handles the actual allow/deny.
+                return .json("{}".data(using: .utf8)!)
             }
 
             // Broadcast pending to WebSocket clients

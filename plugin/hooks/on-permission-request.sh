@@ -49,10 +49,16 @@ if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
   exit 0
 fi
 
-# Plan mode (except AskUserQuestion) → auto-allow, low risk read-only exploration
+# Plan mode (except AskUserQuestion) → pass through to Claude Code's own UI
 if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Plan mode — auto-allowing" >> "$LOG"
-  echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Plan mode — passing through to Claude Code" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
+# MCP subagent tools (preview, browser automation) → pass through to Claude Code's own UI
+if echo "$TOOL_NAME" | grep -q "^mcp__"; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] MCP tool ($TOOL_NAME) — passing through to Claude Code" >> "$LOG"
   echo "========================================" >> "$LOG"
   exit 0
 fi
