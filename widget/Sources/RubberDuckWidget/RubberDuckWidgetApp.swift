@@ -366,12 +366,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate()
             }
         }
+        // Mark any new windows as non-restorable (Help, Settings created on demand)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { notif in
+            (notif.object as? NSWindow)?.isRestorable = false
+        }
+
         // Strip useless default menus — SwiftUI recreates them on window focus,
         // so we observe changes and strip continuously.
         Self.startMenuStripping()
 
-        // Disable state restoration — it recreates windows without our properties
-        UserDefaults.standard.removeObject(forKey: "NSWindow Frame main")
+        // Disable state restoration — it recreates windows without our properties.
+        // Clear ALL window frame autosaves, not just "main".
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         UserDefaults.standard.removeObject(forKey: "NSWindowAutosaveFrames")
 
         // Ensure app is a regular dock app (not background agent)
