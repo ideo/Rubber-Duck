@@ -9,16 +9,19 @@ A companion for Claude Code on Mac. It watches your coding sessions, scores ever
 
 ## Requirements
 
-- **macOS 26** (Tahoe) or later, Apple Silicon
+- **macOS 26** (Tahoe) or later, **Apple Silicon** (M1 or later)
 - **Claude Code** or **Claude Desktop** — [get Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+
+> **On-device scoring is designed for M3+ Apple Silicon.** It works on M1/M2 but runs slowly (~30-60s per eval). For instant reactions on older hardware, add a cloud API key — see [Evaluation](#evaluation) below.
 
 ## Install
 
 1. Download `DuckDuckDuck.dmg` from [GitHub Releases](https://github.com/ideo/Rubber-Duck/releases)
 2. Drag to Applications, launch
 3. Grant **Microphone** and **Speech Recognition** when prompted — all audio stays on-device
-4. Right-click the duck → **Install Claude Plugin**
-5. Open a Claude Code session (CLI or Desktop) — the duck is watching
+4. Accept the **Terms of Use**
+5. Follow the **Get Started** checklist to install Claude and the plugin
+6. Open a Claude Code session (CLI or Desktop) — the duck is watching
 
 <details>
 <summary>Build from source</summary>
@@ -50,7 +53,7 @@ You  ──►  🦆 Hardware Duck  ──►  Duck Widget (SwiftUI)  ◄── 
 ```
 
 1. **Hooks** fire on Claude Code events and POST to the widget's embedded server
-2. **Eval engine** scores text on-device via Apple Foundation Models (free, sub-second) — returns scores + a spoken reaction
+2. **Eval engine** scores text on-device via Apple Foundation Models (free, sub-second on M3+) — returns scores + a spoken reaction
 3. **Widget** animates the duck face, speaks the reaction, optionally drives hardware via USB serial
 4. **Voice permissions** — the duck summarizes what Claude wants to do and asks. Say "yes", "always allow", "deny". Foundation Models classifies ambiguous responses.
 5. **Voice commands** — say "ducky [command]" to inject text into Claude Code via tmux
@@ -77,7 +80,25 @@ Each prompt and response is scored from -1.0 to +1.0:
 | **elegance** | Clean/clear vs hacky/convoluted |
 | **risk** | Could break things vs safe |
 
-Defaults to Apple Foundation Models (on-device, free). Switch to Claude Haiku or Gemini Flash from the menu bar for higher-quality scoring. See [Data & Privacy](#data--privacy) for details.
+Defaults to Apple Foundation Models (on-device, free, **designed for M3+**). Switch to Claude Haiku or Gemini Flash from the menu bar for higher-quality scoring. See [Data & Privacy](#data--privacy) for details.
+
+<details>
+<summary>M1/M2 Mac? Use a cloud API key for snappy reactions</summary>
+
+On-device scoring runs slowly on M1/M2 (~30-60 seconds per eval). For instant results:
+
+**Gemini Flash (free tier, no credit card):**
+1. Go to [aistudio.google.com](https://aistudio.google.com/apikey) and sign in with Google
+2. Click Get API Key → Create API Key
+3. Paste it into Preferences → Intelligence → Gemini
+
+**Claude Haiku (~$0.001 per eval):**
+1. Go to [console.anthropic.com](https://console.anthropic.com/settings/keys) and create an account
+2. Add a payment method (pay-as-you-go)
+3. Go to API Keys → Create Key
+4. Paste it into Preferences → Intelligence → Anthropic
+
+</details>
 
 ## Voice
 

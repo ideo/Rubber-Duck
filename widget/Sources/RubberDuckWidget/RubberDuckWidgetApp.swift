@@ -147,13 +147,6 @@ struct RubberDuckWidgetApp: App {
         container.addSubview(scrollView)
 
         // Wire checkbox to enable/disable the Agree button
-        @MainActor class CheckboxDelegate: NSObject {
-            let agreeButton: NSButton
-            init(agreeButton: NSButton) { self.agreeButton = agreeButton }
-            @objc func toggled(_ sender: NSButton) {
-                agreeButton.isEnabled = (sender.state == .on)
-            }
-        }
 
         let checkbox = NSButton(checkboxWithTitle: "I have read and agree to these terms", target: nil, action: nil)
         checkbox.frame = NSRect(x: 0, y: 8, width: 460, height: 20)
@@ -460,6 +453,19 @@ struct RubberDuckWidgetApp: App {
     }
 }
 
+// MARK: - Checkbox Delegate (disclaimer agree button)
+
+/// Target/action helper for the disclaimer checkbox → agree button binding.
+/// Top-level class (not local) to avoid Swift Concurrency isolation issues
+/// with @objc selectors in future Swift versions.
+private class CheckboxDelegate: NSObject {
+    let agreeButton: NSButton
+    init(agreeButton: NSButton) { self.agreeButton = agreeButton }
+    @objc func toggled(_ sender: NSButton) {
+        agreeButton.isEnabled = (sender.state == .on)
+    }
+}
+
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -548,13 +554,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Window Configuration
 
+    static let duckWindowTag = "com.duckduckduck.widget.main"
+
     /// Idempotent: configures a window as the borderless floating duck widget.
     /// Safe to call multiple times — skips windows already configured.
     private func configureDuckWindow(_ window: NSWindow) {
         // Skip if already borderless (already configured)
         guard window.styleMask != [.borderless] else { return }
-        // Skip non-SwiftUI windows (panels, alerts, etc.)
-        guard window.contentView != nil else { return }
+        // Only configure windows tagged as the duck window
+        guard window.identifier?.rawValue == Self.duckWindowTag else { return }
 
         window.styleMask = [.borderless]
         window.isMovable = true
@@ -709,7 +717,24 @@ struct DuckWindowContent: View {
             .onAppear {
                 AppDelegate.openWindow = { id in openWindow(id: id) }
             }
+            .background(WindowTagger(tag: AppDelegate.duckWindowTag))
     }
+}
+
+// MARK: - Window Tagger (positive duck window identification)
+
+/// Sets the NSWindow.identifier from inside SwiftUI so AppDelegate can
+/// positively identify the duck window without heuristics.
+struct WindowTagger: NSViewRepresentable {
+    let tag: String
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            view.window?.identifier = NSUserInterfaceItemIdentifier(tag)
+        }
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 // MARK: - Always-Active Window (Glass Tint Fix)
