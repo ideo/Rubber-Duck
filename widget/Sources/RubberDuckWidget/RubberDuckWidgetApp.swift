@@ -421,6 +421,8 @@ struct RubberDuckWidgetApp: App {
                         return
                     }
                 }
+                // Check for Claude after all modals are done, before greeting
+                AppDelegate.checkForClaude()
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),
@@ -532,7 +534,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.configureDuckWindow(window)
             }
             NSApp.activate()
-            self.checkForClaude()
         }
     }
 
@@ -574,29 +575,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Claude detection on launch
 
-    private func checkForClaude() {
-        // Give the window a moment to render before showing alerts
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            let hasCLI = PluginInstaller.findClaude() != nil
+    /// Check if Claude CLI or Desktop is installed. Shows install guide if neither found.
+    /// Called synchronously on @MainActor — the modal blocks until dismissed.
+    @MainActor
+    static func checkForClaude() {
+        let hasCLI = PluginInstaller.findClaude() != nil
 
-            let hasDesktop: Bool = {
-                if let urls = LSCopyApplicationURLsForBundleIdentifier(
-                    "com.anthropic.claudefordesktop" as CFString, nil
-                )?.takeRetainedValue() as? [URL] {
-                    return !urls.isEmpty
-                }
-                return false
-            }()
-
-            if !hasCLI && !hasDesktop {
-                DuckLog.log("[startup] No Claude CLI or Desktop found — showing install guide")
-                PluginInstaller.onSpeak?(
-                    "Hey! You'll need Claude installed for me to work. Let me help you set that up."
-                )
-                PluginInstaller.showClaudeNotFound()
-            } else {
-                DuckLog.log("[startup] Claude detected — CLI: \(hasCLI), Desktop: \(hasDesktop)")
+        let hasDesktop: Bool = {
+            if let urls = LSCopyApplicationURLsForBundleIdentifier(
+                "com.anthropic.claudefordesktop" as CFString, nil
+            )?.takeRetainedValue() as? [URL] {
+                return !urls.isEmpty
             }
+            return false
+        }()
+
+        if !hasCLI && !hasDesktop {
+            DuckLog.log("[startup] No Claude CLI or Desktop found — showing install guide")
+            PluginInstaller.onSpeak?(
+                "Hey! You'll need Claude installed for me to work. Let me help you set that up."
+            )
+            PluginInstaller.showClaudeNotFound()
+        } else {
+            DuckLog.log("[startup] Claude detected — CLI: \(hasCLI), Desktop: \(hasDesktop)")
         }
     }
 
