@@ -1066,10 +1066,13 @@ enum PluginInstaller {
         }
     }
 
+    static let pluginDidInstallNotification = Notification.Name("PluginDidInstall")
+
     @MainActor
     private static func showResult(success: Bool, detail: String) {
         if success {
             UpdateChecker.recordPluginInstalled()
+            NotificationCenter.default.post(name: pluginDidInstallNotification, object: nil)
         }
         showInstallResult(title: "Plugin Installed", success: success, detail: detail)
     }

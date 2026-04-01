@@ -8,7 +8,11 @@ import SwiftUI
 struct SetupChecklistView: View {
     @Environment(\.dismiss) private var dismiss
 
+    // Toggled to force SwiftUI to re-evaluate computed properties
+    @State private var refreshTick = false
+
     private var hasClaude: Bool {
+        _ = refreshTick // depend on tick so SwiftUI re-evaluates
         let hasCLI = PluginInstaller.findClaude() != nil
         let hasDesktop: Bool = {
             if let urls = LSCopyApplicationURLsForBundleIdentifier(
@@ -22,6 +26,7 @@ struct SetupChecklistView: View {
     }
 
     private var hasPlugin: Bool {
+        _ = refreshTick
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let pluginDir = "\(home)/.claude/plugins/cache/duck-duck-duck-marketplace/duck-duck-duck"
         var isDir: ObjCBool = false
@@ -108,6 +113,12 @@ struct SetupChecklistView: View {
             } else {
                 PluginInstaller.onSpeak?("Let's get you set up.")
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshTick.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PluginInstaller.pluginDidInstallNotification)) { _ in
+            refreshTick.toggle()
         }
     }
 }
