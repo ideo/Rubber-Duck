@@ -260,7 +260,7 @@ enum DuckConfig {
         ensureKey(
             currentKey: anthropicAPIKey,
             title: "Anthropic API Key",
-            message: "Enter your Anthropic API key to use Claude for evaluation.\n\nGet one at console.anthropic.com → API Keys.",
+            message: "1. Go to console.anthropic.com and create an account\n2. Add a payment method (pay-as-you-go)\n3. Go to API Keys → Create Key\n4. Copy the key and paste it below\n\nHaiku costs ~$0.001 per eval — pennies for a full day of coding.",
             placeholder: "sk-ant-...",
             save: saveAPIKey
         )
@@ -287,7 +287,7 @@ enum DuckConfig {
         ensureKey(
             currentKey: geminiAPIKey,
             title: "Gemini API Key",
-            message: "Enter your Google Gemini API key for evaluation.\n\nGet one at aistudio.google.com → API Keys.",
+            message: "1. Go to aistudio.google.com and sign in with Google\n2. Click Get API Key → Create API Key\n3. Copy the key and paste it below\n\nNo credit card needed. Gemini Flash has a free tier.",
             placeholder: "AIza...",
             save: saveGeminiAPIKey
         )

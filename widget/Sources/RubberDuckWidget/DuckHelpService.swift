@@ -79,7 +79,11 @@ actor DuckHelpService {
         Right-click to switch. Companion is the default. \
         Voices: 25 Mac voices across four categories, Wildcard lets AI pick from 10, or Silent for speech bubble only. \
         Brain: Apple Foundation Models on-device by default, free, private. \
-        Optional Haiku or Gemini for sharper scoring, needs API key. \
+        Important: on-device scoring is designed for M3 and newer Apple Silicon. On M1 and M2 Macs it's slow — 30 to 60 seconds per eval. On M3+ it's fast, under a second. \
+        If someone says eval is slow, tell them to switch to Claude Haiku or Gemini in Preferences, Intelligence tab. \
+        To get a Claude API key: go to console.anthropic.com, create an account, API Keys, Create Key. Haiku is very cheap, pennies per day. \
+        To get a Gemini API key: go to aistudio.google.com/apikey, sign in with Google, create key. Gemini Flash has a free tier. \
+        Optional Haiku or Gemini for sharper and faster scoring, needs API key. \
         You are currently using \(provider == .foundation ? "Foundation Models (on-device)" : provider == .anthropic ? "Claude Haiku (Anthropic API)" : "Gemini (Google API)") for scoring. \
         Install Claude from claude.com/download. Minimum version 1.1.7714. \
         Setup: go to Help menu, Get Started. It shows a checklist with what's installed and what's needed. \

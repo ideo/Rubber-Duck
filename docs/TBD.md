@@ -56,6 +56,28 @@ The duck should respond to "Ishmael", "Ahab", and "Moby Duck" as wake words in a
 - TTS pronunciation: "Ahab" already has a phoneme fix, but STT needs to *recognize* it correctly from speech input too.
 - Each name could unlock a slightly different personality response (Ishmael = wistful, Ahab = intense, Moby Duck = dramatic).
 
+### 11. OTA firmware update for ESP32-S3 hardware duck
+Ship precompiled firmware in the app bundle and flash the hardware duck over USB without Arduino IDE.
+- ESP32-S3 uses a well-documented serial bootloader protocol
+- `esptool` ships as a standalone binary (no Python) — bundle it in the .app
+- Flow: detect device via serial → check firmware version → "Update Firmware" button → send serial command to enter bootloader → esptool flashes bundled .bin → reboot
+- Could trigger bootloader mode via a serial command from existing firmware (no physical button press)
+- **Sandbox concern**: App Sandbox may block spawning bundled executables. GitHub release (unsandboxed) would work. App Store version would need a workaround or entitlement.
+- **Bonus**: could version-check on every USB connect and prompt automatically
+
+---
+
+## Investigated, Not Viable
+
+### Embedded API key in release build
+Explored shipping a bundled Haiku key so M1/M2 users get fast eval out of the box. Not viable:
+- Any key in the binary is extractable (strings, Hopper, reverse engineering)
+- Obfuscation (XOR, split) stops `strings` but not a determined attacker
+- IDEO would eat all API costs (~$20/month at 100 users, scales linearly)
+- Proxy server would secure the key but adds infrastructure to maintain
+- Spend caps limit exposure but a rotated key breaks all existing installs
+- Conclusion: users bring their own key. Gemini free tier is the best zero-cost option for M1/M2 users.
+
 ---
 
 ## Shelved

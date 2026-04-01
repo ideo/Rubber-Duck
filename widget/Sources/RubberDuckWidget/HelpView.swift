@@ -46,8 +46,13 @@ struct HelpView: View {
                 **Using Claude Desktop instead of CLI?** Fully supported. Export the plugin zip from \
                 Setup → Export Plugin Zip, then upload it via Claude Desktop's plugin manager.
 
-                No config files. No API keys required. Eval runs on-device for free. \
+                No config files. No API keys required by default. Eval runs on-device for free. \
                 He's watching before you've finished reading this.
+
+                **On an M1 or M2 Mac?** On-device scoring is designed for M3+ and runs \
+                slowly on older hardware (~30-60 seconds per eval). For a snappy experience, \
+                add a Claude API key in Preferences → Intelligence. \
+                See the Intelligence section below for how to get one.
                 """)
 
                 section("Modes", """
@@ -145,8 +150,17 @@ struct HelpView: View {
                 confident in them.
 
                 **Intelligence** — Pick the eval provider. Apple Foundation Model is free \
-                and fully private (runs on your Mac). Claude Haiku and Gemini are sharper \
-                but need API keys and send data to third-party servers.
+                and fully private (runs on your Mac), but can be slow on M1/M2 Macs. \
+                Claude Haiku and Gemini are faster and sharper but need API keys \
+                and send data to third-party servers.
+
+                **Getting an API key:**
+                • **Claude Haiku** — Go to [console.anthropic.com](https://console.anthropic.com), \
+                create an account, then go to API Keys → Create Key. Copy it into \
+                Preferences → Intelligence. Haiku is the cheapest model — a full day of \
+                coding costs pennies.
+                • **Gemini** — Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey), \
+                sign in with Google, and create an API key. Gemini Flash has a generous free tier.
 
                 **Behavior** — Mode selection, voice picker, volume slider, and \
                 microphone settings. See which mic is active, check permission status, \
@@ -162,7 +176,8 @@ struct HelpView: View {
                 • Say "ducky" and he perks up. Say nothing after and he gets impatient.
                 • Permission prompts are summarized ("Run git. Allow?") not raw tool names. \
                 Your hands stay free.
-                • If eval feels slow, switch to Foundation Model. Free, private, instant.
+                • **Eval slow?** On M1/M2 Macs, Foundation Model can take 30-60 seconds. \
+                Switch to Claude Haiku or Gemini in Preferences → Intelligence for instant results.
                 • Right-click the duck for quick settings.
                 • Hear a familiar theme song? Claude is compacting context. He's thinking.
                 • Ducks have weird hole-shaped ears. Now you know.
