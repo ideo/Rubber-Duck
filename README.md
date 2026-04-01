@@ -3,7 +3,11 @@
 [![Software License: MIT](https://img.shields.io/badge/software-MIT-a31f34.svg)](LICENSE)
 [![Hardware License: CERN-OHL-P-2.0](https://img.shields.io/badge/hardware-CERN--OHL--P--2.0-000000.svg)](firmware/LICENSE)
 
-A companion for Claude Code on Mac. It watches your coding sessions, scores every prompt and response, speaks opinionated reactions, and handles permissions by voice. Optionally connects to a [physical duck](https://duck-duck-duck.web.app/) for hardware reactions.
+<a href="https://duck-duck-duck.edges.ideo.com/"><img src="docs/hero.jpg" alt="Duck Duck Duck — all four colorways" width="100%"></a>
+
+A companion for Claude Code on Mac. It watches your coding sessions, scores every prompt and response, speaks opinionated reactions, and handles permissions by voice. Optionally connects to a [physical duck](https://duck-duck-duck.edges.ideo.com/) for hardware reactions.
+
+**[Learn more at duck-duck-duck.edges.ideo.com](https://duck-duck-duck.edges.ideo.com/)**
 
 🔒 [**Default intelligence is fully on-device and private.**](#data--privacy) No cloud audio. Your data is not used for training.
 
@@ -176,7 +180,7 @@ Hooks fire on Claude Code events and POST to the widget.
 
 ### Hardware (Optional)
 
-Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.web.app/) or build your own. The widget auto-detects boards via USB.
+Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB.
 
 <details>
 <summary>Supported boards and serial protocol</summary>
