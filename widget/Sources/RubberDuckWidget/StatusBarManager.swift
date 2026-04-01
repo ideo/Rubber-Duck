@@ -415,19 +415,30 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     }
 
     /// Install Claude Code CLI via Terminal — callable from both NSMenu and SwiftUI.
+    /// Uses a .command file instead of osascript so no Automation permission is needed.
     @MainActor
     static func installClaudeCLIAction() {
         PluginInstaller.onSpeak?("Installing Claude Code. Watch the Terminal.")
-        let installCmd = """
-            RC="$HOME/.$(basename "$SHELL")rc"; \
-            grep -qF '.local/bin' "$RC" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC" 2>/dev/null; \
-            export PATH="$HOME/.local/bin:$PATH"; \
-            curl -fsSL https://claude.ai/install.sh | bash; \
-            echo ''; \
-            echo '✅ Claude Code installed! You can close this window.'; \
+        let script = """
+            #!/bin/bash
+            RC="$HOME/.$(basename "$SHELL")rc"
+            grep -qF '.local/bin' "$RC" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC" 2>/dev/null
+            export PATH="$HOME/.local/bin:$PATH"
+            curl -fsSL https://claude.ai/install.sh | bash
+            echo ''
+            echo '✅ Claude Code installed! You can close this window.'
             echo 'Go back to Duck Duck Duck and click Install Plugin.'
+            read -p 'Press Enter to close...'
             """
-        CLISession.launchPlain(installCmd)
+        let tmpPath = "/tmp/install-claude.command"
+        do {
+            try script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpPath)
+            NSWorkspace.shared.open(URL(fileURLWithPath: tmpPath))
+        } catch {
+            // Fallback: open download page
+            NSWorkspace.shared.open(URL(string: "https://claude.com/download")!)
+        }
     }
 
     @objc private func startGeminiSession() {
