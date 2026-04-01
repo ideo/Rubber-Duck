@@ -675,7 +675,7 @@ enum PluginInstaller {
         } else {
             Task { @MainActor in
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
-                showClaudeNotFound()
+                showSetupChecklist(hasClaude: false, hasPlugin: DuckConfig.lastInstalledPluginVersion != nil)
             }
         }
     }
@@ -894,31 +894,62 @@ enum PluginInstaller {
     // MARK: - Claude not found
 
     @MainActor
-    static func showClaudeNotFound() {
+    static func showSetupChecklist(hasClaude: Bool, hasPlugin: Bool) {
         NSApp.activate()
         let alert = NSAlert()
-        alert.messageText = "Claude Code Not Found"
+        alert.messageText = "Get Started with Duck Duck Duck"
+
+        let claudeCheck = hasClaude ? "☑" : "☐"
+        let pluginCheck = hasPlugin ? "☑" : "☐"
+
         alert.informativeText = """
-            Duck Duck Duck works with Claude Code (CLI) or Claude Desktop.
+            \(claudeCheck)  Step 1 — Install Claude
+            Duck Duck Duck watches your Claude sessions and reacts. \
+            Install Claude Code (terminal) or Claude Desktop (app).
 
-            If you have Claude Desktop, you can install the plugin as a zip file — \
-            go to Settings → Plugins → Upload local plugin.
-
-            If you need Claude Code (CLI), grab it from claude.com/download.
+            \(pluginCheck)  Step 2 — Install the Plugin
+            Connect your duck to Claude so it can watch your sessions. \
+            Use Setup → Install Plugin from the menu bar.
             """
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Export Plugin Zip")
-        alert.addButton(withTitle: "Open Download Page")
-        alert.addButton(withTitle: "I Have CLI (Copy Command)")
-        alert.addButton(withTitle: "Cancel")
 
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            exportPluginZip()
-        } else if response == .alertSecondButtonReturn {
-            showCLIInstallHelper()
-        } else if response == .alertThirdButtonReturn {
-            clipboardInstall()
+        // Duck reacts to the setup state
+        if hasClaude && hasPlugin {
+            onSpeak?("You're all set! Everything's installed.")
+        } else if hasClaude {
+            onSpeak?("Almost there! Just need the plugin.")
+        } else {
+            onSpeak?("Let's get you set up.")
+        }
+
+        if !hasClaude {
+            alert.addButton(withTitle: "Install Claude Code")
+            alert.addButton(withTitle: "Download Claude Desktop")
+            alert.addButton(withTitle: "Skip for Now")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                showCLIInstallHelper()
+            } else if response == .alertSecondButtonReturn {
+                NSWorkspace.shared.open(URL(string: "https://claude.com/download")!)
+            }
+        } else if !hasPlugin {
+            alert.addButton(withTitle: "Install Plugin Now")
+            alert.addButton(withTitle: "Later")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                install()
+            }
+        } else {
+            // Everything installed — offer maintenance actions
+            alert.addButton(withTitle: "Update Plugin")
+            alert.addButton(withTitle: "Done")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                install()
+            }
         }
     }
 

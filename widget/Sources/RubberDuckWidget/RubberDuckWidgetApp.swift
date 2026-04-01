@@ -421,8 +421,8 @@ struct RubberDuckWidgetApp: App {
                         return
                     }
                 }
-                // Check for Claude after all modals are done, before greeting
-                AppDelegate.checkForClaude()
+                // Setup checklist after all modals — before greeting
+                AppDelegate.checkSetup()
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),
@@ -575,12 +575,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Claude detection on launch
 
-    /// Check if Claude CLI or Desktop is installed. Shows install guide if neither found.
+    /// Check if Claude and the plugin are installed. Shows setup guide if anything is missing.
     /// Called synchronously on @MainActor — the modal blocks until dismissed.
     @MainActor
-    static func checkForClaude() {
+    static func checkSetup() {
         let hasCLI = PluginInstaller.findClaude() != nil
-
         let hasDesktop: Bool = {
             if let urls = LSCopyApplicationURLsForBundleIdentifier(
                 "com.anthropic.claudefordesktop" as CFString, nil
@@ -589,15 +588,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return false
         }()
+        let hasClaude = hasCLI || hasDesktop
+        let hasPlugin: Bool = {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let pluginDir = "\(home)/.claude/plugins/cache/duck-duck-duck-marketplace/duck-duck-duck"
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: pluginDir, isDirectory: &isDir), isDir.boolValue else {
+                return false
+            }
+            // Directory exists — check it's non-empty (has at least one version subfolder)
+            return (try? FileManager.default.contentsOfDirectory(atPath: pluginDir))?.isEmpty == false
+        }()
 
-        if !hasCLI && !hasDesktop {
-            DuckLog.log("[startup] No Claude CLI or Desktop found — showing install guide")
-            PluginInstaller.onSpeak?(
-                "Hey! You'll need Claude installed for me to work. Let me help you set that up."
-            )
-            PluginInstaller.showClaudeNotFound()
+        if !hasClaude || !hasPlugin {
+            DuckLog.log("[startup] Setup incomplete — Claude: \(hasClaude), plugin: \(hasPlugin)")
+            if !hasClaude {
+                PluginInstaller.onSpeak?(
+                    "Let's get you set up. You'll need Claude installed first."
+                )
+            } else {
+                PluginInstaller.onSpeak?(
+                    "Almost there! Just need to install the plugin."
+                )
+            }
+            PluginInstaller.showSetupChecklist(hasClaude: hasClaude, hasPlugin: hasPlugin)
         } else {
-            DuckLog.log("[startup] Claude detected — CLI: \(hasCLI), Desktop: \(hasDesktop)")
+            DuckLog.log("[startup] Setup complete — CLI: \(hasCLI), Desktop: \(hasDesktop), plugin: \(hasPlugin)")
         }
     }
 
@@ -616,6 +632,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         false // Prevent state restoration from recreating stale windows
+    }
+
+    /// Open the setup checklist with live status — callable from menus.
+    @MainActor
+    static func showSetupChecklist() {
+        let hasCLI = PluginInstaller.findClaude() != nil
+        let hasDesktop: Bool = {
+            if let urls = LSCopyApplicationURLsForBundleIdentifier(
+                "com.anthropic.claudefordesktop" as CFString, nil
+            )?.takeRetainedValue() as? [URL] {
+                return !urls.isEmpty
+            }
+            return false
+        }()
+        let hasClaude = hasCLI || hasDesktop
+        let hasPlugin: Bool = {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let pluginDir = "\(home)/.claude/plugins/cache/duck-duck-duck-marketplace/duck-duck-duck"
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: pluginDir, isDirectory: &isDir), isDir.boolValue else {
+                return false
+            }
+            return (try? FileManager.default.contentsOfDirectory(atPath: pluginDir))?.isEmpty == false
+        }()
+        PluginInstaller.showSetupChecklist(hasClaude: hasClaude, hasPlugin: hasPlugin)
     }
 
     // MARK: - Window Management
@@ -841,7 +882,7 @@ struct HelpMenuContent: View {
 
     var body: some View {
         Button {
-            AppDelegate.coordinator?.runSetupGuide()
+            AppDelegate.showSetupChecklist()
         } label: {
             Label("Get Started", systemImage: "sparkles")
         }
