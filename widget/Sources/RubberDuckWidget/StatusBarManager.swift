@@ -963,7 +963,7 @@ enum PluginInstaller {
         """
 
     @MainActor
-    private static func showCLIInstallHelper() {
+    static func showCLIInstallHelper() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(cliInstallCommand, forType: .string)
 

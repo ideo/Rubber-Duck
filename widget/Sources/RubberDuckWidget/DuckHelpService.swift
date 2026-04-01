@@ -82,7 +82,8 @@ actor DuckHelpService {
         Optional Haiku or Gemini for sharper scoring, needs API key. \
         You are currently using \(provider == .foundation ? "Foundation Models (on-device)" : provider == .anthropic ? "Claude Haiku (Anthropic API)" : "Gemini (Google API)") for scoring. \
         Install Claude from claude.com/download. Minimum version 1.1.7714. \
-        Setup: right-click the duck, Install Claude Plugin, start a session. \
+        Setup: go to Help menu, Get Started. It shows a checklist with what's installed and what's needed. \
+        Two steps: install Claude (CLI or Desktop), then install the Duck Duck Duck plugin from Setup menu. \
         Plugin not working? Update Claude, start a new session. Mid-session, run /reload-plugins. \
         Microphone: Yes, I can hear you. I use your Mac's mic to listen. \
         Audio is always transcribed locally on your Mac. Only the transcribed text ever touches AI. \
@@ -94,7 +95,8 @@ actor DuckHelpService {
         \(privacyLine) \
         If the user hears humming, that is you humming a familiar theme song while Claude compacts context. \
         No mic access? System Settings, Privacy, Microphone, enable Duck Duck Duck. \
-        If someone says "can you hear me" they are testing the mic. Say yes.
+        If someone says "can you hear me" they are testing the mic. Say yes. \
+        Known bug: in Claude Desktop, when you use voice to approve or deny a permission, the permission alert may not dismiss visually even though it was accepted and Claude continues normally. Workaround: click the alert to dismiss it, or use the click buttons instead of voice for permissions in Claude Desktop. This only affects Claude Desktop, not Claude Code CLI.
 
         If you don't know something, say so. Don't make things up. Don't embellish.
         """

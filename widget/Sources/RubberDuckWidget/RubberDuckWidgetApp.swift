@@ -59,15 +59,12 @@ struct RubberDuckWidgetApp: App {
 
     var body: some Scene {
         WindowGroup {
-            DuckView()
+            DuckWindowContent()
                 .environmentObject(coordinator)
                 .environmentObject(duckServer)
                 .environmentObject(evalService)
                 .environmentObject(speechService)
                 .environmentObject(serialManager)
-                .frame(width: DuckTheme.widgetSize - 8)
-                .background(WindowDragArea())
-                .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -96,6 +93,13 @@ struct RubberDuckWidgetApp: App {
 
         Window("Duck Duck Duck Help", id: "help") {
             HelpView()
+        }
+        .windowStyle(.automatic)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
+        Window("Get Started", id: "setup") {
+            SetupChecklistView()
         }
         .windowStyle(.automatic)
         .windowResizability(.contentSize)
@@ -421,9 +425,11 @@ struct RubberDuckWidgetApp: App {
                         return
                     }
                 }
-                // Setup checklist available via Help → Get Started.
-                // Not auto-shown: modal alerts can appear behind the floating
-                // duck window and hang the app.
+                // Setup checklist — after greeting starts, with duck lowered
+                // so the alert doesn't hide behind the floating window.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    AppDelegate.checkSetup()
+                }
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),
@@ -467,6 +473,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Service references for turn on/off. Set during wireServices().
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
+    /// Stored so non-SwiftUI code can open named windows.
+    static var openWindow: ((String) -> Void)?
 
     // NOTE: applicationDidResignActive removed — it was stealing focus from
     // Settings/Help windows, preventing sidebar clicks. Glass saturation is
@@ -612,7 +620,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "Almost there! Just need to install the plugin."
                 )
             }
-            PluginInstaller.showSetupChecklist(hasClaude: hasClaude, hasPlugin: hasPlugin)
+            openWindow?("setup")
         } else {
             DuckLog.log("[startup] Setup complete — CLI: \(hasCLI), Desktop: \(hasDesktop), plugin: \(hasPlugin)")
         }
@@ -635,29 +643,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         false // Prevent state restoration from recreating stale windows
     }
 
-    /// Open the setup checklist with live status — callable from menus.
+    /// Open the setup checklist window — callable from menus.
     @MainActor
     static func showSetupChecklist() {
-        let hasCLI = PluginInstaller.findClaude() != nil
-        let hasDesktop: Bool = {
-            if let urls = LSCopyApplicationURLsForBundleIdentifier(
-                "com.anthropic.claudefordesktop" as CFString, nil
-            )?.takeRetainedValue() as? [URL] {
-                return !urls.isEmpty
-            }
-            return false
-        }()
-        let hasClaude = hasCLI || hasDesktop
-        let hasPlugin: Bool = {
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
-            let pluginDir = "\(home)/.claude/plugins/cache/duck-duck-duck-marketplace/duck-duck-duck"
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: pluginDir, isDirectory: &isDir), isDir.boolValue else {
-                return false
-            }
-            return (try? FileManager.default.contentsOfDirectory(atPath: pluginDir))?.isEmpty == false
-        }()
-        PluginInstaller.showSetupChecklist(hasClaude: hasClaude, hasPlugin: hasPlugin)
+        NSApp.activate()
+        openWindow?("setup")
     }
 
     // MARK: - Window Management
@@ -702,6 +692,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for item in mainMenu.items where unwantedMenus.contains(item.title) {
             mainMenu.removeItem(item)
         }
+    }
+}
+
+// MARK: - Duck Window Content (captures openWindow for non-SwiftUI use)
+
+struct DuckWindowContent: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        DuckView()
+            .frame(width: DuckTheme.widgetSize - 8)
+            .background(WindowDragArea())
+            .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
+            .onAppear {
+                AppDelegate.openWindow = { id in openWindow(id: id) }
+            }
     }
 }
 
