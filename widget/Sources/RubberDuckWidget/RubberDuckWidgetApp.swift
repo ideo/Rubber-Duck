@@ -673,7 +673,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Stripping
 
-    private static let unwantedMenus: Set<String> = ["File", "Edit", "View", "Format", "Window"]
+    // NOTE: Edit is NOT stripped — removing it kills Cmd+V/C/X in text fields.
+    private static let unwantedMenus: Set<String> = ["File", "View", "Format", "Window"]
 
     /// Strip default menus on launch and when windows change focus.
     /// Uses NSWindow notifications instead of NSMenu.didAddItemNotification
@@ -790,10 +791,7 @@ struct SuppressDefaultMenus: Commands {
         CommandGroup(replacing: .saveItem) {}
         CommandGroup(replacing: .importExport) {}
         CommandGroup(replacing: .printItem) {}
-        // Edit
-        CommandGroup(replacing: .undoRedo) {}
-        CommandGroup(replacing: .pasteboard) {}
-        CommandGroup(replacing: .textEditing) {}
+        // Edit — NOT suppressed. Removing these kills Cmd+V/C/X in text fields.
         // Format
         CommandGroup(replacing: .textFormatting) {}
         // View
