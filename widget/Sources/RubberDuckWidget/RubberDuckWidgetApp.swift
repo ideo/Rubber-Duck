@@ -421,8 +421,9 @@ struct RubberDuckWidgetApp: App {
                         return
                     }
                 }
-                // Setup checklist after all modals — before greeting
-                AppDelegate.checkSetup()
+                // Setup checklist available via Help → Get Started.
+                // Not auto-shown: modal alerts can appear behind the floating
+                // duck window and hang the app.
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),
