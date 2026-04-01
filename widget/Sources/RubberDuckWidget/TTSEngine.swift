@@ -75,14 +75,15 @@ class TTSEngine {
 
     // MARK: - Pronunciation fixes
 
-    /// Words that macOS `say` mangles. Maps plain text to `say` phoneme markup.
-    /// Add entries here whenever TTS mispronounces a word.
+    /// Words that macOS `say` mangles. Uses simple respelling (not SAMPA phoneme
+    /// markup) because many voices don't support [[inpt PHON]] and read the
+    /// markup literally. Same approach as SerialTTSEngine.
     private static let pronunciations: [(word: String, phoneme: String)] = [
-        ("Ahab", "[[inpt PHON]]EY1hAEb[[inpt TEXT]]"),
-        ("Claude", "[[inpt PHON]]klAOd[[inpt TEXT]]"),
+        ("Ahab", "Ayhab"),
+        ("Claude", "Klawd"),
     ]
 
-    /// Replace known mispronounced words with phoneme markup before passing to `say`.
+    /// Replace known mispronounced words with phonetic spelling before passing to `say`.
     private func applyPronunciations(_ text: String) -> String {
         var result = text
         for entry in Self.pronunciations {
