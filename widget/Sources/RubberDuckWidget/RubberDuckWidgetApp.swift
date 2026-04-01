@@ -433,6 +433,10 @@ struct RubberDuckWidgetApp: App {
                     policy: .dropIfBusy,
                     interruptibility: .freelyInterruptible
                 )
+                // Setup checklist — non-blocking SwiftUI window, after greeting starts
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    AppDelegate.checkSetup()
+                }
             }
 
             // Check immediately — permissions may already be granted from previous launch
