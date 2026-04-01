@@ -56,7 +56,16 @@ The duck should respond to "Ishmael", "Ahab", and "Moby Duck" as wake words in a
 - TTS pronunciation: "Ahab" already has a phoneme fix, but STT needs to *recognize* it correctly from speech input too.
 - Each name could unlock a slightly different personality response (Ishmael = wistful, Ahab = intense, Moby Duck = dramatic).
 
-### 11. OTA firmware update for ESP32-S3 hardware duck
+### 11. Sparkle auto-updater — one-click app updates
+Replace manual DMG download with Sparkle (SPM: `sparkle-project/Sparkle`).
+- User clicks "Install Update" → app downloads, replaces itself, relaunches
+- Appcast XML can auto-generate from GitHub Releases (already have the infrastructure)
+- Sandboxed builds need Sparkle's XPC helper service for write access to /Applications
+- First external dependency — but it's the industry standard (VS Code, Discord, Sublime all use it)
+- Unlocks: once in place, any future capability (firmware flashing, new providers) ships via auto-update
+- Estimate: ~1 day integration
+
+### 12. OTA firmware update for ESP32-S3 hardware duck
 Ship precompiled firmware in the app bundle and flash the hardware duck over USB without Arduino IDE.
 - ESP32-S3 uses a well-documented serial bootloader protocol
 - `esptool` ships as a standalone binary (no Python) — bundle it in the .app
