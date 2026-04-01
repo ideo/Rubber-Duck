@@ -2,51 +2,41 @@
 
 ## Active (priority order)
 
-### 1. Double "Hmm, let me think" in conversation
-When the user speaks to the duck, the filler speech ("Hmm...", "Let me think...", "One sec...") fires twice. Likely the voice input callback or the filler scheduling runs twice — either STT sends the transcript twice (partial + final both triggering it), or the `scheduleSpeech` for the filler is called from two code paths. Reproduces consistently in conversation mode.
-
-### 2. Foundation Models extremely slow on M1
+### 1. Foundation Models extremely slow on M1
 On-device eval via Apple Foundation Models takes ~60 seconds on base M1 (vs sub-second on M4). Makes the duck nearly unusable in default config on older Apple Silicon. Workaround: switch to Claude API key in Preferences → Intelligence. Consider: auto-detect slow eval and suggest switching providers, or show a warning on first slow eval.
 
-### 3. Conversation polish — latency, red dot, timeouts
+### 2. Conversation polish — latency, red dot, timeouts
 Combined performance/UX issues in voice conversations:
 - **Mouth starts before audio**: mouth animation fires on `speak()` but `say` process has cold-start lag on first utterance. Subsequent calls are fast. Mainly noticeable on conversation start.
 - **Red dot persistence**: during easter egg TTS reading, red dot stays on. After backstory conversation, dot sometimes doesn't clear on exit.
 - **Conversation drops**: mic stops listening mid-conversation — no follow-up window. Likely race condition in conversation timeout timer (TTS finishing, STT restarting, timeout firing stepping on each other).
 - **Future**: LLM could tag responses as final vs open and adjust timeout accordingly.
 
-### 4. Foundation Models tuning
+### 3. Foundation Models tuning
 - Help vs free chat flow — 3B model sometimes gets stuck in help mode
 - Easter egg sensitivity — some normal questions still trigger backstory deflection
 
-### 3. Version check via GitHub API
-Lightweight update check — no Sparkle dependency:
-- `GET api.github.com/repos/ideo/Rubber-Duck/releases/latest`
-- Compare tag against bundle version
-- Show notification linking to release page (GitHub) or App Store
-- App Store safe — no self-update mechanism
-
-### 6. Window identity — duck detection by heuristic
+### 4. Window identity — duck detection by heuristic
 `configureDuckWindow` identifies the duck as "first non-borderless window with a contentView." Two edge cases:
 - If SwiftUI creates Settings/Help before the duck window on some launch path, the wrong window gets configured as the duck. Low probability but no positive identification.
 - `duckWindow` is a `weak` reference — if SwiftUI recreates the window (state restoration, memory pressure), the ref goes nil and `applicationWillUpdate` starts hunting again, potentially grabbing the wrong window.
 - **Fix**: tag the duck window positively, e.g., walk the NSView hierarchy for a known SwiftUI hosting view class or set a custom `identifier` on the WindowGroup window.
 
-### 7. CheckboxDelegate — @MainActor local class in static func
+### 5. CheckboxDelegate — @MainActor local class in static func
 The `CheckboxDelegate` inside `showDisclaimer()` is a `@MainActor class` defined locally with an `@objc` target/action method. Works today, but if Swift Concurrency isolation rules tighten (Swift 7+), the `@objc` selector dispatch crossing into `@MainActor` context during `runModal()` could become a warning or error. Low risk for now — monitor on future Swift/Xcode betas.
 
-### 8. Menu flickering — accept residual menus
+### 6. Menu flickering — accept residual menus
 - `applicationWillUpdate` + `stripMenus()` caused visible flickering during subtitles and any frequent `@Published` updates. Removed entirely.
 - `CommandGroup(replacing:)` handles the SwiftUI side. Edit menu intentionally kept (needed for Cmd+V).
 - Residual AppKit menus (Edit, occasional Format/View) are harmless — accept them.
 - Future: if a clean solution exists that doesn't flicker, revisit. For now, the menu bar shows Duck Duck Duck, Edit, Setup, Help.
 
-### 9. Status bar icon disappearing on some Macs
+### 7. Status bar icon disappearing on some Macs
 macOS hides overflow status bar items on notch Macs when space runs out.
 - `autosaveName` applied — macOS remembers position
 - Settings menu and right-click cover all features — not blocking
 
-### 10. Alternate wake word names
+### 8. Alternate wake word names
 The duck should respond to "Ishmael", "Ahab", and "Moby Duck" as wake words in addition to "ducky". These are character names from the backstory — using them as invocations adds personality and rewards players who unlocked the easter egg.
 
 **Needs testing:**
@@ -56,7 +46,7 @@ The duck should respond to "Ishmael", "Ahab", and "Moby Duck" as wake words in a
 - TTS pronunciation: "Ahab" already has a phoneme fix, but STT needs to *recognize* it correctly from speech input too.
 - Each name could unlock a slightly different personality response (Ishmael = wistful, Ahab = intense, Moby Duck = dramatic).
 
-### 11. Sparkle auto-updater — one-click app updates
+### 9. Sparkle auto-updater — one-click app updates
 Replace manual DMG download with Sparkle (SPM: `sparkle-project/Sparkle`).
 - User clicks "Install Update" → app downloads, replaces itself, relaunches
 - Appcast XML can auto-generate from GitHub Releases (already have the infrastructure)
@@ -65,7 +55,7 @@ Replace manual DMG download with Sparkle (SPM: `sparkle-project/Sparkle`).
 - Unlocks: once in place, any future capability (firmware flashing, new providers) ships via auto-update
 - Estimate: ~1 day integration
 
-### 12. OTA firmware update for ESP32-S3 hardware duck
+### 10. OTA firmware update for ESP32-S3 hardware duck
 Ship precompiled firmware in the app bundle and flash the hardware duck over USB without Arduino IDE.
 - ESP32-S3 uses a well-documented serial bootloader protocol
 - `esptool` ships as a standalone binary (no Python) — bundle it in the .app
@@ -73,6 +63,7 @@ Ship precompiled firmware in the app bundle and flash the hardware duck over USB
 - Could trigger bootloader mode via a serial command from existing firmware (no physical button press)
 - **Sandbox concern**: App Sandbox may block spawning bundled executables. GitHub release (unsandboxed) would work. App Store version would need a workaround or entitlement.
 - **Bonus**: could version-check on every USB connect and prompt automatically
+- **Alternative**: Web Serial API via ESP Web Tools on duck-duck-duck.web.app — Chrome/Edge only but zero install, could ship before Sparkle
 
 ---
 
@@ -108,8 +99,18 @@ Researched 2026-03-28. Cowork has no hook support — it's for non-technical kno
 
 ---
 
-## Completed (2026-03-28)
+## Completed
 
+- [x] Double filler speech — removed redundant acknowledgement from sendVoiceCommand (v0.9.2)
+- [x] Permission feedback loop — ignore transcripts while TTS is playing (v0.9.1)
+- [x] Plugin install — direct file copy first, no git/xcode-select needed (v0.9.1)
+- [x] Version check via GitHub API — polls releases/latest, 30s delay then every 12h, force-check on About (v0.9.1)
+- [x] Menu suppression: CommandGroup(replacing:) for all standard groups
+- [x] Legal disclaimer: NSAlert modal after permissions, re-triggers on version change, Terms of Use in app menu
+- [x] About pane: version, credits, View Open Source Project link
+- [x] Setup checklist: non-blocking SwiftUI window, live refresh, Help → Get Started
+- [x] Window launch race: configureDuckWindow + applicationWillUpdate fallback
+- [x] Install Claude Code: .command file via NSWorkspace (no Automation permission needed)
 - [x] Onboarding audit — 15/20 fixed, 5 accepted. See `docs/ONBOARDING-AUDIT.md`
 - [x] Hooks: jq → python3, silent when widget off, log rotation, repo name removed from greeting
 - [x] Port: stale PID cleanup, OS auto-assign fallback, dynamic port file
@@ -122,8 +123,4 @@ Researched 2026-03-28. Cowork has no hook support — it's for non-technical kno
 - [x] Wings: glass liquid SVG shape, hover animation, tap-to-stop speech with quip
 - [x] Eval: cloud fallback to Foundation Model, varied error reactions
 - [x] Privacy: 3rd party terms notice + policy links in Preferences
-- [x] Menu suppression: CommandGroup(replacing:) for all standard groups + applicationWillUpdate safety net
-- [x] Legal disclaimer: NSAlert modal after permissions, re-triggers on version change, Terms of Use in app menu
-- [x] About pane: version, credits, View Open Source Project link
-- [x] Window launch race: configureDuckWindow + applicationWillUpdate fallback
 - [x] All prior completions (permissions-only mode, wildcard voice V2, hooks, menu reorg, API keys, dynamic port, mute detection, plugin install, easter egg, TTS pronunciation, beak animation, window focus, experimental toggle)
