@@ -182,7 +182,7 @@ struct HelpView: View {
                 • Hear a familiar theme song? Claude is compacting context. He's thinking.
                 • Ducks have weird hole-shaped ears. Now you know.
 
-                **Plugin not working?** Make sure Claude is updated to **version 1.1.7714 \
+                **Plugin not working?** Make sure Claude is updated to **version 1.1.9669 \
                 or newer**. Older versions had bugs with plugin hooks — the duck shows up \
                 in the plugin list but doesn't actually fire. Update Claude, start a fresh \
                 session, and he'll wake right up.

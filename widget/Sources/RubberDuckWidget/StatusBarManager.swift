@@ -618,7 +618,7 @@ enum PluginInstaller {
     private static let installCommand = "claude plugin marketplace add ideo/Rubber-Duck && claude plugin install duck-duck-duck"
 
     /// Minimum Claude version that supports plugin hooks.
-    static let minimumClaudeVersion = [1, 1, 7714]
+    static let minimumClaudeVersion = [1, 1, 9669]
     static var minimumClaudeVersionString: String { minimumClaudeVersion.map(String.init).joined(separator: ".") }
 
     /// Callback for voice feedback during install. Set by the app on launch.
