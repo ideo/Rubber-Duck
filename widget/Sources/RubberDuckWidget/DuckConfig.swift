@@ -108,6 +108,21 @@ enum DuckConfig {
         set { UserDefaults.standard.set(newValue, forKey: "subtitles_enabled") }
     }
 
+    // MARK: - Legal Disclaimer
+
+    /// App version when the disclaimer was last accepted. Nil = never accepted.
+    /// Re-shows on every app update (any version change).
+    static var disclaimerAcceptedVersion: String? {
+        get { UserDefaults.standard.string(forKey: "disclaimerAcceptedVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "disclaimerAcceptedVersion") }
+    }
+
+    /// Whether the disclaimer needs to be shown (first launch or post-update).
+    static var needsDisclaimer: Bool {
+        let running = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        return disclaimerAcceptedVersion != running
+    }
+
     // MARK: - Experimental Features
 
     static var experimentalEnabled: Bool {

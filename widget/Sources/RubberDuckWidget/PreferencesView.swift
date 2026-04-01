@@ -471,8 +471,13 @@ private struct AboutPane: View {
                         .foregroundStyle(.secondary)
                     Text("Built at IDEO by some mighty ducks.")
                         .foregroundStyle(.secondary)
-                    Link("GitHub", destination: URL(string: "https://github.com/ideo/Rubber-Duck")!)
-                        .foregroundColor(.accentColor)
+                    Button {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/ideo/Rubber-Duck")!)
+                    } label: {
+                        Label("View Open Source Project", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)

@@ -73,9 +73,19 @@ struct RubberDuckWidgetApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
         .commands {
-            // Remove default View menu items
-            CommandGroup(replacing: .toolbar) {}
-            CommandGroup(replacing: .sidebar) {}
+            // Suppress all default menus (File, Edit, View, Format, Window)
+            // by replacing their CommandGroups with empty content.
+            SuppressDefaultMenus()
+            SuppressWindowMenus()
+            // "Terms of Use" + "View Open Source Project" right after "About Duck Duck Duck"
+            CommandGroup(after: .appInfo) {
+                Button("Terms of Use") {
+                    RubberDuckWidgetApp.showDisclaimerReadOnly()
+                }
+                Button("View Open Source Project") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/ideo/Rubber-Duck")!)
+                }
+            }
             CommandMenu("Setup") {
                 SetupMenuContent()
             }
@@ -96,6 +106,107 @@ struct RubberDuckWidgetApp: App {
                 .environmentObject(speechService)
                 .environmentObject(coordinator)
         }
+    }
+
+    // MARK: - Legal Disclaimer
+
+    /// Show the legal disclaimer. Returns true if accepted, false if declined.
+    @MainActor
+    static func showDisclaimer() -> Bool {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Duck Duck Duck — Terms of Use"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Agree & Continue")
+        alert.addButton(withTitle: "Quit")
+
+        // Accessory view: scrollable disclaimer text + checkbox
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 280))
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 40, width: 460, height: 230))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 440, height: 0))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = .systemFont(ofSize: 11)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.string = """
+        THE ITEM AND THE SOFTWARE ARE PROVIDED AS-IS, AND IDEO MAKES NO WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, NON-INFRINGEMENT OF INTELLECTUAL PROPERTY RIGHTS, PRODUCT LIFE OR LONGEVITY, OR FITNESS FOR A PARTICULAR PURPOSE, ALL OF WHICH ARE EXPRESSLY DISCLAIMED. USE OF THE ITEM AND THE SOFTWARE IS AT YOUR OWN RISK.
+
+        TO THE FULLEST EXTENT ALLOWED UNDER APPLICABLE LAW, IN NO EVENT SHALL IDEO BE LIABLE FOR ANY INCIDENTAL, CONSEQUENTIAL, SPECIAL, OR INDIRECT DAMAGES OF ANY KIND, INCLUDING WITHOUT LIMITATION THOSE RELATING TO LOSS OF USE, LOST PROFITS OR REVENUES, INTERRUPTION OF BUSINESS, AND/OR COST OF PROCUREMENT OF SUBSTITUTE GOODS, REGARDLESS OF (A) THE FORM OF ACTION, WHETHER IN CONTRACT, TORT OR OTHERWISE, (B) WHETHER OR NOT FORESEEABLE, AND (C) EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. IDEO'S AGGREGATE LIABILITY FOR ANY DAMAGES OR LIABILITY CAUSED BY THE ITEM OR THE SOFTWARE SHALL NOT EXCEED $50 IN EACH CASE.
+        """
+        textView.sizeToFit()
+
+        scrollView.documentView = textView
+        container.addSubview(scrollView)
+
+        // Wire checkbox to enable/disable the Agree button
+        @MainActor class CheckboxDelegate: NSObject {
+            let agreeButton: NSButton
+            init(agreeButton: NSButton) { self.agreeButton = agreeButton }
+            @objc func toggled(_ sender: NSButton) {
+                agreeButton.isEnabled = (sender.state == .on)
+            }
+        }
+
+        let checkbox = NSButton(checkboxWithTitle: "I have read and agree to these terms", target: nil, action: nil)
+        checkbox.frame = NSRect(x: 0, y: 8, width: 460, height: 20)
+        checkbox.state = .off
+        container.addSubview(checkbox)
+
+        alert.accessoryView = container
+
+        let agreeButton = alert.buttons[0]
+        agreeButton.isEnabled = false
+
+        let delegate = CheckboxDelegate(agreeButton: agreeButton)
+        checkbox.target = delegate
+        checkbox.action = #selector(CheckboxDelegate.toggled(_:))
+
+        let response = alert.runModal()
+        _ = delegate // prevent ARC from deallocating before modal ends
+
+        if response == .alertFirstButtonReturn && checkbox.state == .on {
+            let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+            DuckConfig.disclaimerAcceptedVersion = version
+            DuckLog.log("[legal] Disclaimer accepted for version \(version)")
+            return true
+        }
+
+        DuckLog.log("[legal] Disclaimer declined — quitting")
+        return false
+    }
+
+    /// Read-only disclaimer viewer — no checkbox, no agree button. Just "OK".
+    @MainActor
+    static func showDisclaimerReadOnly() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Duck Duck Duck — Terms of Use"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 260))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 440, height: 0))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = .systemFont(ofSize: 11)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.string = """
+        THE ITEM AND THE SOFTWARE ARE PROVIDED AS-IS, AND IDEO MAKES NO WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, NON-INFRINGEMENT OF INTELLECTUAL PROPERTY RIGHTS, PRODUCT LIFE OR LONGEVITY, OR FITNESS FOR A PARTICULAR PURPOSE, ALL OF WHICH ARE EXPRESSLY DISCLAIMED. USE OF THE ITEM AND THE SOFTWARE IS AT YOUR OWN RISK.
+
+        TO THE FULLEST EXTENT ALLOWED UNDER APPLICABLE LAW, IN NO EVENT SHALL IDEO BE LIABLE FOR ANY INCIDENTAL, CONSEQUENTIAL, SPECIAL, OR INDIRECT DAMAGES OF ANY KIND, INCLUDING WITHOUT LIMITATION THOSE RELATING TO LOSS OF USE, LOST PROFITS OR REVENUES, INTERRUPTION OF BUSINESS, AND/OR COST OF PROCUREMENT OF SUBSTITUTE GOODS, REGARDLESS OF (A) THE FORM OF ACTION, WHETHER IN CONTRACT, TORT OR OTHERWISE, (B) WHETHER OR NOT FORESEEABLE, AND (C) EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. IDEO'S AGGREGATE LIABILITY FOR ANY DAMAGES OR LIABILITY CAUSED BY THE ITEM OR THE SOFTWARE SHALL NOT EXCEED $50 IN EACH CASE.
+        """
+        textView.sizeToFit()
+        scrollView.documentView = textView
+
+        alert.accessoryView = scrollView
+        alert.runModal()
     }
 
     // MARK: - Service Wiring
@@ -299,11 +410,17 @@ struct RubberDuckWidgetApp: App {
             )
         }
 
-        // Wait for permissions, then apply saved listen mode + greet
+        // Wait for permissions → show disclaimer → greet
         Task {
-            // Check immediately — permissions may already be granted from previous launch
-            speech.refreshPermissionStatus()
-            if speech.micPermissionGranted && speech.speechPermissionGranted {
+            // Helper: disclaimer + listen mode + greeting
+            @MainActor func onPermissionsGranted() {
+                // Legal disclaimer — after permissions, before greeting
+                if DuckConfig.needsDisclaimer {
+                    if !RubberDuckWidgetApp.showDisclaimer() {
+                        NSApp.terminate(nil)
+                        return
+                    }
+                }
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),
@@ -312,6 +429,12 @@ struct RubberDuckWidgetApp: App {
                     policy: .dropIfBusy,
                     interruptibility: .freelyInterruptible
                 )
+            }
+
+            // Check immediately — permissions may already be granted from previous launch
+            speech.refreshPermissionStatus()
+            if speech.micPermissionGranted && speech.speechPermissionGranted {
+                onPermissionsGranted()
                 return
             }
             // Otherwise poll (waiting for user to grant via dialog)
@@ -319,14 +442,7 @@ struct RubberDuckWidgetApp: App {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 speech.refreshPermissionStatus()
                 if speech.micPermissionGranted && speech.speechPermissionGranted {
-                    speech.applyListenMode()
-                    speech.scheduleSpeech(
-                        LaunchGreeting.pick(mode: coordinator.mode),
-                        kind: .greeting,
-                        lane: .ambient,
-                        policy: .dropIfBusy,
-                        interruptibility: .freelyInterruptible
-                    )
+                    onPermissionsGranted()
                     return
                 }
             }
@@ -352,6 +468,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // NOTE: applicationDidResignActive removed — it was stealing focus from
     // Settings/Help windows, preventing sidebar clicks. Glass saturation is
     // now handled solely by canBecomeKey override on the duck window.
+
+    func applicationWillUpdate(_ notification: Notification) {
+        // Strip unwanted menus before every render pass. The CommandGroup(replacing:)
+        // declarations handle the SwiftUI side; this catches anything AppKit adds
+        // directly (Services, Dictation, etc.). Runs at render cadence but the
+        // body is O(n) over ~6 menu items — trivially cheap.
+        Self.stripMenus()
+
+        // Only hunt for the duck window until it's found. Once assigned,
+        // stop — otherwise we turn Settings/Help/alerts into borderless widgets.
+        if Self.duckWindow == nil {
+            for window in NSApp.windows {
+                configureDuckWindow(window)
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // When Settings/Help closes, re-key the duck window
@@ -388,49 +520,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
 
         // Hide windows immediately to prevent one-frame flash of title bar chrome.
-        // SwiftUI renders .hiddenTitleBar first; we override to borderless on next tick.
         for window in NSApp.windows {
             window.alphaValue = 0
         }
 
+        // Configure any windows that already exist (normal fast-launch path).
+        // The rare case where SwiftUI creates the window later is caught by
+        // applicationWillUpdate, which runs configureDuckWindow on every pass.
         DispatchQueue.main.async {
-            // At launch there's only one window — the duck.
-            // Grab it before Settings or Help can create more.
-            let duckWin = NSApp.windows.first
-            Self.duckWindow = duckWin
-
             for window in NSApp.windows {
-                // Fully borderless — no titlebar, no chrome
-                window.styleMask = [.borderless]
-                window.isMovable = true
-                window.isMovableByWindowBackground = true
-                window.level = .floating
-                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                window.hasShadow = true
-                window.backgroundColor = .clear
-                window.isOpaque = false
-                window.isRestorable = false
-
-                // Match content view clip to duck glass corner radius
-                window.contentView?.wantsLayer = true
-                window.contentView?.layer?.backgroundColor = .clear
-                window.contentView?.layer?.cornerRadius = DuckTheme.cornerRadius
-                window.contentView?.layer?.masksToBounds = true
-
-                // Keep glass tint saturated even when app isn't frontmost
-                AlwaysActiveWindowHelper.apply(to: window)
-                window.invalidateShadow()
-
-                // Reveal now that chrome is gone
-                window.alphaValue = 1
+                self.configureDuckWindow(window)
             }
-            DuckLog.log("[focus] duckWindow assigned: \(duckWin != nil)")
             NSApp.activate()
-
-            // Menu stripping handled by startMenuStripping()
-
-            // Check for Claude after UI is ready
             self.checkForClaude()
+        }
+    }
+
+    // MARK: - Window Configuration
+
+    /// Idempotent: configures a window as the borderless floating duck widget.
+    /// Safe to call multiple times — skips windows already configured.
+    private func configureDuckWindow(_ window: NSWindow) {
+        // Skip if already borderless (already configured)
+        guard window.styleMask != [.borderless] else { return }
+        // Skip non-SwiftUI windows (panels, alerts, etc.)
+        guard window.contentView != nil else { return }
+
+        window.styleMask = [.borderless]
+        window.isMovable = true
+        window.isMovableByWindowBackground = true
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.hasShadow = true
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.isRestorable = false
+
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = .clear
+        window.contentView?.layer?.cornerRadius = DuckTheme.cornerRadius
+        window.contentView?.layer?.masksToBounds = true
+
+        AlwaysActiveWindowHelper.apply(to: window)
+        window.invalidateShadow()
+        window.alphaValue = 1
+
+        // First window configured = the duck
+        if Self.duckWindow == nil {
+            Self.duckWindow = window
+            DuckLog.log("[focus] duckWindow assigned")
         }
     }
 
@@ -503,21 +641,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Stripping
 
-    private static let unwantedMenus: Set<String> = ["File", "Edit", "View", "Window"]
+    private static let unwantedMenus: Set<String> = ["File", "Edit", "View", "Format", "Window"]
 
     /// Strip default menus on launch and when windows change focus.
     /// Uses NSWindow notifications instead of NSMenu.didAddItemNotification
     /// (which fires too aggressively and disrupts eval/speech pipelines).
     static func startMenuStripping() {
         stripMenus()
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { stripMenus() }
-        }
+        // Primary defence: CommandGroup(replacing:) in .commands{} empties
+        // all standard groups. This applicationWillUpdate callback is the
+        // safety net — it fires before every render, catching anything AppKit
+        // re-adds (Services, Dictation, etc.) with zero race conditions.
     }
 
-    private static func stripMenus() {
+    static func stripMenus() {
         guard let mainMenu = NSApp.mainMenu else { return }
         for item in mainMenu.items where unwantedMenus.contains(item.title) {
             mainMenu.removeItem(item)
@@ -591,6 +728,40 @@ struct WindowDragArea: NSViewRepresentable {
 
 class DraggableView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
+}
+
+// MARK: - Suppress Default Menus
+
+/// Replaces every standard CommandGroup with empty content so SwiftUI never
+/// renders File / Edit / View / Format / Window menus. Extracted into its own
+/// Commands struct to stay within CommandsBuilder's 10-item limit.
+struct SuppressDefaultMenus: Commands {
+    var body: some Commands {
+        // File
+        CommandGroup(replacing: .newItem) {}
+        CommandGroup(replacing: .saveItem) {}
+        CommandGroup(replacing: .importExport) {}
+        CommandGroup(replacing: .printItem) {}
+        // Edit
+        CommandGroup(replacing: .undoRedo) {}
+        CommandGroup(replacing: .pasteboard) {}
+        CommandGroup(replacing: .textEditing) {}
+        // Format
+        CommandGroup(replacing: .textFormatting) {}
+        // View
+        CommandGroup(replacing: .toolbar) {}
+        CommandGroup(replacing: .sidebar) {}
+    }
+}
+
+/// Window menu suppressions — separate struct because SuppressDefaultMenus
+/// is already at the 10-item CommandsBuilder limit.
+struct SuppressWindowMenus: Commands {
+    var body: some Commands {
+        CommandGroup(replacing: .windowSize) {}
+        CommandGroup(replacing: .windowArrangement) {}
+        CommandGroup(replacing: .windowList) {}
+    }
 }
 
 // MARK: - Setup Menu
@@ -688,5 +859,6 @@ struct HelpMenuContent: View {
         } label: {
             Label("User Manual", systemImage: "book.fill")
         }
+
     }
 }
