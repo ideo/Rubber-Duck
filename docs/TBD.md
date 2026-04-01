@@ -35,9 +35,11 @@ Lightweight update check — no Sparkle dependency:
 ### 7. CheckboxDelegate — @MainActor local class in static func
 The `CheckboxDelegate` inside `showDisclaimer()` is a `@MainActor class` defined locally with an `@objc` target/action method. Works today, but if Swift Concurrency isolation rules tighten (Swift 7+), the `@objc` selector dispatch crossing into `@MainActor` context during `runModal()` could become a warning or error. Low risk for now — monitor on future Swift/Xcode betas.
 
-### 8. Menu + Preferences — regression testing
-- Menu suppression now uses CommandGroup(replacing:) + applicationWillUpdate safety net (solid)
-- Full regression test needed after all restructuring (modes, volume, voice, launch, experimental)
+### 8. Menu flickering — accept residual menus
+- `applicationWillUpdate` + `stripMenus()` caused visible flickering during subtitles and any frequent `@Published` updates. Removed entirely.
+- `CommandGroup(replacing:)` handles the SwiftUI side. Edit menu intentionally kept (needed for Cmd+V).
+- Residual AppKit menus (Edit, occasional Format/View) are harmless — accept them.
+- Future: if a clean solution exists that doesn't flicker, revisit. For now, the menu bar shows Duck Duck Duck, Edit, Setup, Help.
 
 ### 9. Status bar icon disappearing on some Macs
 macOS hides overflow status bar items on notch Macs when space runs out.

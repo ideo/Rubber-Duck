@@ -483,11 +483,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // now handled solely by canBecomeKey override on the duck window.
 
     func applicationWillUpdate(_ notification: Notification) {
-        // Strip unwanted menus before every render pass. The CommandGroup(replacing:)
-        // declarations handle the SwiftUI side; this catches anything AppKit adds
-        // directly (Services, Dictation, etc.). Runs at render cadence but the
-        // body is O(n) over ~6 menu items — trivially cheap.
-        Self.stripMenus()
+        // Menu stripping removed from here — it caused visible flickering during
+        // subtitles and any frequent @Published updates. CommandGroup(replacing:)
+        // in .commands{} handles the SwiftUI side. Any residual AppKit menus
+        // (Edit, occasional Format) are harmless. See TBD.
 
         // Only hunt for the duck window until it's found. Once assigned,
         // stop — otherwise we turn Settings/Help/alerts into borderless widgets.
@@ -518,9 +517,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             (notif.object as? NSWindow)?.isRestorable = false
         }
 
-        // Strip useless default menus — SwiftUI recreates them on window focus,
-        // so we observe changes and strip continuously.
-        Self.startMenuStripping()
+        // Menu stripping removed — CommandGroup(replacing:) handles it.
+        // Residual AppKit menus are harmless. See TBD.
 
         // Disable state restoration — it recreates windows without our properties.
         // Clear ALL window frame autosaves, not just "main".

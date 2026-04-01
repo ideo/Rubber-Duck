@@ -1121,15 +1121,9 @@ class SpeechService: ObservableObject {
 
         log("[speech] Sending: \(text)")
         currentTurnScopeID = nextTurnScopeID()
-        scheduleSpeech(
-            ["On it.", "Sure thing.", "You got it.", "Working on it."].randomElement()!,
-            kind: .acknowledgement,
-            lane: .turn,
-            scopeID: currentTurnScopeID,
-            policy: .replaceScope,
-            interruptibility: .freelyInterruptible,
-            onFinish: makeListeningCompletionAction()
-        )
+        // Don't schedule an acknowledgement here — the onVoiceInput callback
+        // schedules its own filler ("Hmm...", "Let me think..."). Scheduling
+        // both causes overlapping speech (two fillers playing simultaneously).
         onVoiceInput?(text)
 
         // Clear the displayed text after a beat so user sees it was sent
