@@ -666,9 +666,13 @@ enum PluginInstaller {
 
     /// Install the plugin. Tries automatic install first, falls back to clipboard if sandboxed.
     static func install() {
-        // Try automatic install via CLI (works in dev, fails in sandbox)
-        if let claude = findClaude() {
-            // Check version before attempting install
+        // Direct file copy is the most reliable path — no git, no network,
+        // no xcode-select. Works for both CLI and Desktop users.
+        if desktopPluginDirExists() {
+            Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
+            directInstall()
+        } else if let claude = findClaude() {
+            // ~/.claude/plugins doesn't exist yet — use CLI to bootstrap it
             let (versionOK, foundVersion) = checkClaudeVersion(claude)
             if !versionOK {
                 Task { @MainActor in
@@ -679,10 +683,6 @@ enum PluginInstaller {
             }
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
-        } else if desktopPluginDirExists() {
-            // Claude Desktop is installed but no CLI — direct file copy
-            Task { @MainActor in onSpeak?("Found Claude Desktop. Installing the plugin directly.") }
-            directInstall()
         } else {
             Task { @MainActor in
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
@@ -880,25 +880,26 @@ enum PluginInstaller {
             let (mpOk, mpOut) = run(claude, args: ["plugin", "marketplace", "add", "ideo/Rubber-Duck"])
             print("[plugin] Marketplace add: ok=\(mpOk) output=\(mpOut)")
             if !mpOk {
-                Task { @MainActor in
-                    onSpeak?("Something went wrong with the install.")
-                    showResult(success: false, detail: "Marketplace add failed:\n\(mpOut)")
-                }
+                // GitHub clone failed (no git / no xcode-select) — direct file copy
+                print("[plugin] GitHub marketplace failed, falling back to direct file copy...")
+                directInstall()
                 return
             }
 
             print("[plugin] Installing plugin...")
             let (installOk, installOut) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
             print("[plugin] Plugin install: ok=\(installOk) output=\(installOut)")
-            Task { @MainActor in
-                if installOk {
+            if installOk {
+                Task { @MainActor in
                     onSpeak?("Plugin installed. Start a Claude session and I'll be watching.")
                     showResult(success: true, detail: "Close and reopen Claude Code to activate the hooks.")
-                } else {
-                    onSpeak?("Something went wrong with the install.")
-                    showResult(success: false, detail: "Plugin install failed:\n\(installOut)")
                 }
+                return
             }
+
+            // CLI install command failed — direct file copy as last resort
+            print("[plugin] CLI install failed, falling back to direct file copy...")
+            directInstall()
         }
     }
 
