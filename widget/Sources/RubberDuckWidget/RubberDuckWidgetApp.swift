@@ -425,11 +425,6 @@ struct RubberDuckWidgetApp: App {
                         return
                     }
                 }
-                // Setup checklist — after greeting starts, with duck lowered
-                // so the alert doesn't hide behind the floating window.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    AppDelegate.checkSetup()
-                }
                 speech.applyListenMode()
                 speech.scheduleSpeech(
                     LaunchGreeting.pick(mode: coordinator.mode),

@@ -50,7 +50,7 @@ struct SetupChecklistView: View {
                     if !hasClaude {
                         HStack(spacing: 8) {
                             Button("Install Claude Code") {
-                                PluginInstaller.showCLIInstallHelper()
+                                StatusBarManager.installClaudeCLIAction()
                             }
                             Button("Download Claude Desktop") {
                                 NSWorkspace.shared.open(URL(string: "https://claude.com/download")!)
