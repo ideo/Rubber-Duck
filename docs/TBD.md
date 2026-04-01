@@ -2,14 +2,20 @@
 
 ## Active (priority order)
 
-### 1. Conversation polish — latency, red dot, timeouts
+### 1. Double "Hmm, let me think" in conversation
+When the user speaks to the duck, the filler speech ("Hmm...", "Let me think...", "One sec...") fires twice. Likely the voice input callback or the filler scheduling runs twice — either STT sends the transcript twice (partial + final both triggering it), or the `scheduleSpeech` for the filler is called from two code paths. Reproduces consistently in conversation mode.
+
+### 2. Foundation Models extremely slow on M1
+On-device eval via Apple Foundation Models takes ~60 seconds on base M1 (vs sub-second on M4). Makes the duck nearly unusable in default config on older Apple Silicon. Workaround: switch to Claude API key in Preferences → Intelligence. Consider: auto-detect slow eval and suggest switching providers, or show a warning on first slow eval.
+
+### 3. Conversation polish — latency, red dot, timeouts
 Combined performance/UX issues in voice conversations:
 - **Mouth starts before audio**: mouth animation fires on `speak()` but `say` process has cold-start lag on first utterance. Subsequent calls are fast. Mainly noticeable on conversation start.
 - **Red dot persistence**: during easter egg TTS reading, red dot stays on. After backstory conversation, dot sometimes doesn't clear on exit.
 - **Conversation drops**: mic stops listening mid-conversation — no follow-up window. Likely race condition in conversation timeout timer (TTS finishing, STT restarting, timeout firing stepping on each other).
 - **Future**: LLM could tag responses as final vs open and adjust timeout accordingly.
 
-### 2. Foundation Models tuning
+### 4. Foundation Models tuning
 - Help vs free chat flow — 3B model sometimes gets stuck in help mode
 - Easter egg sensitivity — some normal questions still trigger backstory deflection
 
@@ -20,25 +26,25 @@ Lightweight update check — no Sparkle dependency:
 - Show notification linking to release page (GitHub) or App Store
 - App Store safe — no self-update mechanism
 
-### 4. Window identity — duck detection by heuristic
+### 6. Window identity — duck detection by heuristic
 `configureDuckWindow` identifies the duck as "first non-borderless window with a contentView." Two edge cases:
 - If SwiftUI creates Settings/Help before the duck window on some launch path, the wrong window gets configured as the duck. Low probability but no positive identification.
 - `duckWindow` is a `weak` reference — if SwiftUI recreates the window (state restoration, memory pressure), the ref goes nil and `applicationWillUpdate` starts hunting again, potentially grabbing the wrong window.
 - **Fix**: tag the duck window positively, e.g., walk the NSView hierarchy for a known SwiftUI hosting view class or set a custom `identifier` on the WindowGroup window.
 
-### 5. CheckboxDelegate — @MainActor local class in static func
+### 7. CheckboxDelegate — @MainActor local class in static func
 The `CheckboxDelegate` inside `showDisclaimer()` is a `@MainActor class` defined locally with an `@objc` target/action method. Works today, but if Swift Concurrency isolation rules tighten (Swift 7+), the `@objc` selector dispatch crossing into `@MainActor` context during `runModal()` could become a warning or error. Low risk for now — monitor on future Swift/Xcode betas.
 
-### 6. Menu + Preferences — regression testing
+### 8. Menu + Preferences — regression testing
 - Menu suppression now uses CommandGroup(replacing:) + applicationWillUpdate safety net (solid)
 - Full regression test needed after all restructuring (modes, volume, voice, launch, experimental)
 
-### 7. Status bar icon disappearing on some Macs
+### 9. Status bar icon disappearing on some Macs
 macOS hides overflow status bar items on notch Macs when space runs out.
 - `autosaveName` applied — macOS remembers position
 - Settings menu and right-click cover all features — not blocking
 
-### 8. Alternate wake word names
+### 10. Alternate wake word names
 The duck should respond to "Ishmael", "Ahab", and "Moby Duck" as wake words in addition to "ducky". These are character names from the backstory — using them as invocations adds personality and rewards players who unlocked the easter egg.
 
 **Needs testing:**
