@@ -513,5 +513,8 @@ private struct AboutPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            Task { await AppDelegate.updateChecker?.forceCheck() }
+        }
     }
 }

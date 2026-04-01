@@ -890,8 +890,10 @@ class SpeechService: ObservableObject {
     // MARK: - Transcript Processing
 
     private func processTranscript(_ transcript: String, isFinal: Bool) {
-        // Permission mode takes priority
-        if permissionGate.isWaiting {
+        // Permission mode takes priority — but ignore transcripts while TTS is
+        // playing to prevent the mic from picking up the duck's own speech and
+        // accidentally approving permissions.
+        if permissionGate.isWaiting && !isSpeaking {
             let decision = permissionGate.process(transcript)
             if case .noMatch = decision {
                 // Final transcript with no keyword match → try Foundation Models classifier

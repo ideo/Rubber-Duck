@@ -356,6 +356,7 @@ struct RubberDuckWidgetApp: App {
         let updateChecker = UpdateChecker()
         statusBarManager?.updateChecker = updateChecker
         server.updateChecker = updateChecker
+        AppDelegate.updateChecker = updateChecker
 
         updateChecker.onUpdateDetected = { [weak speech, weak coordinator] release in
             coordinator?.isAppUpdateAvailable = true
@@ -474,6 +475,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var coordinator: DuckCoordinator?
     /// Stored so non-SwiftUI code can open named windows.
     static var openWindow: ((String) -> Void)?
+    /// Update checker — accessible from About pane for force-check on appear.
+    static var updateChecker: UpdateChecker?
 
     // NOTE: applicationDidResignActive removed — it was stealing focus from
     // Settings/Help windows, preventing sidebar clicks. Glass saturation is

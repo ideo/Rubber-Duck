@@ -98,6 +98,12 @@ final class UpdateChecker {
 
     // MARK: - GitHub API
 
+    /// Force an update check, bypassing the rate limit. Called when About pane appears.
+    func forceCheck() async {
+        DuckConfig.lastUpdateCheckTimestamp = nil
+        await checkForUpdate()
+    }
+
     func checkForUpdate() async {
         // Rate limit: skip if checked recently
         if let last = DuckConfig.lastUpdateCheckTimestamp,
