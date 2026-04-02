@@ -149,38 +149,6 @@ scripts/         Shell scripts (tmux launcher, hook helpers)
 hardware/        CAD (SolidWorks, STEP) and EE (Eagle, Fusion 360) source files
 ```
 
-### Widget (`widget/`)
-
-Self-contained SwiftUI app. Zero external dependencies — Network.framework for HTTP/WS, CryptoKit for WebSocket, Foundation Models for eval.
-
-<details>
-<summary>Key components</summary>
-
-**Server:** DuckServer (HTTP+WS on :3333), LocalEvaluator (Foundation Models), ClaudeEvaluator (Haiku), GeminiEvaluator (Flash), PermissionGate, WebSocketBroadcaster, TmuxBridge
-
-**Speech:** SpeechService (orchestrator), STTEngine (Apple Speech), TTSEngine (macOS `say`), SerialMicEngine/SerialTTSEngine (ESP32 audio streaming), WakeWordProcessor, PermissionVoiceGate, PermissionClassifier (Foundation Models fallback), AudioDeviceDiscovery
-
-**UI:** DuckView (liquid glass + animated face), ExpressionEngine (scores → expressions), DuckCoordinator (side effects), MelodyEngine (Jeopardy thinking hum)
-
-**Hardware bridge:** SerialManager (USB serial), SerialTransport (binary framing), EvalService (transport-agnostic)
-
-</details>
-
-### Plugin (`plugin/`)
-
-Hooks fire on Claude Code events and POST to the widget.
-
-| Hook | What it does |
-|------|-------------|
-| **SessionStart** | Health check — tells Claude if the duck is active |
-| **UserPromptSubmit** | Sends your prompt for eval |
-| **Stop** | Sends Claude's response for eval |
-| **PermissionRequest** | Voice-confirmed permission gate |
-| **SessionEnd** | Duck acknowledges session close |
-| **PreCompact / PostCompact** | Jeopardy thinking melody during context compaction |
-| **StopFailure** | Duck reacts to API errors |
-| **PostToolUse** | Clears permission state after CLI approval |
-
 ### Hardware (Optional)
 
 Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB. All parts print without supports — pop off the bed and assemble.
@@ -197,26 +165,7 @@ cd widget && make debug     # debug build in terminal
 cd widget && make dmg       # notarized DMG for distribution
 ```
 
-### Reducer Pattern
-
-Each output target has its own reducer mapping eval dimensions to what it can express:
-
-| Dimension | Widget | Hardware |
-|-----------|--------|----------|
-| soundness | eye shape | servo base angle |
-| elegance | transition speed | easing smoothness |
-| creativity | hue shift + eye widening | frequency range |
-| ambition | scale | servo speed |
-| risk | rotation angle | oscillation/wiggle |
-| thinking | eye darting + Jeopardy hum | — |
-| permission | exclamation mark eyes | alert chirp |
-
-<details>
-<summary>Gemini CLI support (experimental)</summary>
-
-The duck can also watch [Gemini CLI](https://github.com/google-gemini/gemini-cli) sessions. Install via **Experimental → Install Gemini Extension** in the menu bar. Observe-only — scores and speaks but cannot relay permission decisions.
-
-</details>
+See [`plugin/README.md`](plugin/README.md) for hook details and [`CLAUDE.md`](CLAUDE.md) for architecture notes.
 
 ## License
 
