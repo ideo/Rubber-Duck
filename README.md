@@ -9,7 +9,7 @@ A companion for Claude Code on Mac. It watches your coding sessions, scores ever
 
 **[Learn more at duck-duck-duck.edges.ideo.com](https://duck-duck-duck.edges.ideo.com/)**
 
-🔒 [**Default intelligence is fully on-device and private.**](#data--privacy) No cloud audio. Your data is not used for training.
+🔒 [**Default intelligence is fully on-device and private**](#data--privacy) on M3+ Macs. M1/M2 users get the best experience with a cloud API key ([free options available](#evaluation)). No cloud audio regardless — your voice never leaves your machine.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ A companion for Claude Code on Mac. It watches your coding sessions, scores ever
 2. Drag to Applications, launch
 3. Grant **Microphone** and **Speech Recognition** when prompted — all audio stays on-device
 4. Accept the **Terms of Use**
-5. Follow the **Get Started** checklist to install Claude and the plugin
+5. The app walks you through installing Claude and the plugin
 6. Open a Claude Code session (CLI or Desktop) — the duck is watching
 
 <details>
@@ -36,7 +36,7 @@ cd Rubber-Duck/widget
 make run
 ```
 
-Then right-click the duck → **Install Claude Plugin**.
+Then use **Setup → Install Plugin** from the menu bar.
 
 Requires Xcode with Swift 6.2+ (macOS 26 SDK).
 
@@ -117,7 +117,8 @@ On-device scoring runs slowly on M1/M2 (~30-60 seconds per eval). For instant re
 
 - **"Claude Code not found"** — [Install Claude Code](https://claude.com/download), then retry the plugin install.
 - **No mic permission dialog** — System Settings → Privacy & Security → Microphone → enable Duck Duck Duck.
-- **Duck not reacting** — Make sure the widget is running (duck in menu bar) and you have an active Claude session. Try `/reload-plugins`. On M1/M2, on-device scoring takes 30-60s — the duck IS reacting, just slowly. Switch to Gemini or Haiku in Preferences → Intelligence.
+- **Duck not reacting** — Make sure the widget is running (duck in menu bar) and you have an active Claude session. Try `/reload-plugins`.
+- **Duck reacting slowly** — On M1/M2, on-device scoring takes 30-60s per eval. The duck IS working, just thinking. Switch to Gemini or Haiku in Preferences → Intelligence for instant reactions.
 - **Plugin not loading** — Start a new session. Hooks are cached at session start.
 
 ## Data & Privacy
@@ -132,6 +133,8 @@ By default, Duck Duck Duck's intelligence is **fully contained to your machine**
 | **Gemini Flash eval** (opt-in) | Google API | Prompts/responses sent to Google for scoring. |
 
 In Foundation Models mode (the default), the entire experience — eval scoring, voice recognition, text-to-speech, and the help system — runs privately on your machine at zero cost. [Apple does not use your interactions to train Foundation Models.](https://machinelearning.apple.com/research/introducing-apple-foundation-models)
+
+**M1/M2 note:** On-device scoring is designed for M3+ and runs slowly on older hardware. The app detects this and recommends switching to a cloud provider. If you do, your prompts and responses will be sent externally for scoring (see below). Voice and audio always stay on-device regardless.
 
 **Optional cloud eval:** If you switch to Haiku or Gemini, your prompts and responses are sent directly to the respective API for evaluation. You provide your own API key at your own discretion. Keys are stored locally in `~/Library/Application Support/DuckDuckDuck/` and are never shared. Costs are between you and the API provider. There is no intermediary server — the widget calls the APIs directly.
 
