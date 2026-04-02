@@ -183,27 +183,10 @@ Hooks fire on Claude Code events and POST to the widget.
 
 ### Hardware (Optional)
 
-Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB. No supports needed — print, pop off the bed, and assemble.
+Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB. All parts print without supports — pop off the bed and assemble.
 
-See [`hardware/README.md`](hardware/README.md) for CAD files, 3D print settings, assembly instructions, and PCB design.
-
-<details>
-<summary>Supported boards and serial protocol</summary>
-
-**Boards:**
-- **ESP32-S3** — primary board. Serial audio streaming (TTS + mic over serial binary frames), servo, speaker, I2S DAC. Firmware: `firmware/rubber_duck_s3/`
-- **Teensy 4.0** — DIY option. USB Audio Class (mic + TTS routed as a USB audio interface), servo, I2S DAC. Firmware: `firmware/rubber_duck_teensy40/`
-- **ESP32-S3 LED** — LED bar variant. Firmware: `firmware/rubber_duck_s3_led/`
-
-**Serial protocol** (newline-terminated, all boards):
-```
-I                              → identity request
-U,0.20,0.70,0.00,0.60,-0.30   → user eval scores
-C,-0.80,0.90,0.30,-0.50,0.80  → claude eval scores
-P,1 / P,0                     → permission pending / resolved
-```
-
-</details>
+- [`hardware/README.md`](hardware/README.md) — enclosure CAD, 3D print settings, assembly instructions, PCB design
+- [`firmware/README.md`](firmware/README.md) — supported boards, wiring, flashing, serial protocol
 
 ## Development
 
