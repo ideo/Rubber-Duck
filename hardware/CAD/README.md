@@ -36,7 +36,7 @@ Ready-to-print 3MF files are in the `3MF Files/` folder:
 - **Material:** Bambu Matte PLA (recommended) or standard PLA
 - **Nozzle:** 0.4mm
 - **Layer height:** 0.2mm works well for all parts
-- **Supports:** May be needed for overhangs on the face and lips
+- **Supports:** None — all parts are designed to print without supports. Pop off the bed and assemble.
 
 ### Assembly Notes
 
