@@ -40,9 +40,9 @@ Ready-to-print 3MF files are in the `3MF Files/` folder:
 
 ### Assembly Notes
 
-**Servo mount:** The servo fits snugly into the mount with the chamfer facing toward the duck's front. It may require a rubber mallet to seat fully — tap carefully to avoid cracking the print.
+**Servo mount plate:** The mount plate press-fits into the enclosure with the chamfer facing toward the duck's front. It may require a rubber mallet to seat fully — tap carefully to avoid cracking the print. The servo itself screws onto the plate easily.
 
-**Fasteners:** M2.5 x 16mm countersunk screws capture the servo mount and PCB to the enclosure.
+**Fasteners:** M2.5 x 16mm countersunk screws capture the mount plate and PCB to the enclosure.
 
 **USB cable clearance:** The USB-C port opening is **12mm x 6.25mm**. Verify your cable's plug dimensions before ordering — some cables have oversized housings that won't fit.
 
