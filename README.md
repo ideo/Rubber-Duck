@@ -117,7 +117,7 @@ On-device scoring runs slowly on M1/M2 (~30-60 seconds per eval). For instant re
 
 - **"Claude Code not found"** — [Install Claude Code](https://claude.com/download), then retry the plugin install.
 - **No mic permission dialog** — System Settings → Privacy & Security → Microphone → enable Duck Duck Duck.
-- **Duck not reacting** — Make sure the widget is running (duck in menu bar) and you have an active Claude session. Try `/reload-plugins`.
+- **Duck not reacting** — Make sure the widget is running (duck in menu bar) and you have an active Claude session. Try `/reload-plugins`. On M1/M2, on-device scoring takes 30-60s — the duck IS reacting, just slowly. Switch to Gemini or Haiku in Preferences → Intelligence.
 - **Plugin not loading** — Start a new session. Hooks are cached at session start.
 
 ## Data & Privacy
