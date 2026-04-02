@@ -180,7 +180,9 @@ Hooks fire on Claude Code events and POST to the widget.
 
 ### Hardware (Optional)
 
-Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB.
+Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or build your own. The widget auto-detects boards via USB. No supports needed — print, pop off the bed, and assemble.
+
+See [`hardware/README.md`](hardware/README.md) for CAD files, 3D print settings, assembly instructions, and PCB design.
 
 <details>
 <summary>Supported boards and serial protocol</summary>
