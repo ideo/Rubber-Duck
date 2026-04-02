@@ -94,7 +94,9 @@ private struct IntelligencePane: View {
             Section("Provider") {
                 providerRow(.foundation, icon: "apple.logo",
                             title: "Apple Foundation Model",
-                            subtitle: "Private to your machine, free")
+                            subtitle: DuckConfig.isOlderAppleSilicon
+                                ? "Private, free — slow on this Mac (designed for M3+)"
+                                : "Private to your machine, free")
 
                 providerRow(.anthropic, icon: "asterisk",
                             title: "Claude Haiku",

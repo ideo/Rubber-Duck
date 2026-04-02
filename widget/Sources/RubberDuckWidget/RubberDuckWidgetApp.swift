@@ -617,17 +617,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return (try? FileManager.default.contentsOfDirectory(atPath: pluginDir))?.isEmpty == false
         }()
 
-        if !hasClaude || !hasPlugin {
-            DuckLog.log("[startup] Setup incomplete — Claude: \(hasClaude), plugin: \(hasPlugin)")
-            if !hasClaude {
-                PluginInstaller.onSpeak?(
-                    "Let's get you set up. You'll need Claude installed first."
-                )
-            } else {
-                PluginInstaller.onSpeak?(
-                    "Almost there! Just need to install the plugin."
-                )
-            }
+        let needsCloudEval = DuckConfig.isOlderAppleSilicon && DuckConfig.evalProvider == .foundation
+
+        if !hasClaude || !hasPlugin || needsCloudEval {
+            DuckLog.log("[startup] Setup incomplete — Claude: \(hasClaude), plugin: \(hasPlugin), needsCloudEval: \(needsCloudEval)")
+            // TTS is handled by SetupChecklistView.onAppear — don't duplicate here
             openWindow?("setup")
         } else {
             DuckLog.log("[startup] Setup complete — CLI: \(hasCLI), Desktop: \(hasDesktop), plugin: \(hasPlugin)")

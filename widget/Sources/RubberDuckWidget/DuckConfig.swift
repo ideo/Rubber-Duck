@@ -123,6 +123,19 @@ enum DuckConfig {
         return disclaimerAcceptedVersion != running
     }
 
+    // MARK: - Chip Detection
+
+    /// True if running on M1 or M2 Apple Silicon (including Pro/Max/Ultra variants).
+    /// On-device Foundation Models eval is ~60s on these chips vs sub-second on M3+.
+    static let isOlderAppleSilicon: Bool = {
+        var size = 0
+        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        var brand = [CChar](repeating: 0, count: size)
+        sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0)
+        let chip = String(cString: brand)
+        return chip.contains("M1") || chip.contains("M2")
+    }()
+
     // MARK: - Experimental Features
 
     static var experimentalEnabled: Bool {

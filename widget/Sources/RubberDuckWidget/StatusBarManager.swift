@@ -200,7 +200,9 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         let foundationItem = NSMenuItem(title: "Apple Foundation Model", action: #selector(setProviderFoundation), keyEquivalent: "")
         foundationItem.target = self
         foundationItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Apple")
-        foundationItem.subtitle = "Private to your machine, free"
+        foundationItem.subtitle = DuckConfig.isOlderAppleSilicon
+            ? "Private, free — slow on this Mac (designed for M3+)"
+            : "Private to your machine, free"
         foundationItem.state = currentProvider == .foundation ? .on : .off
         intellMenu.addItem(foundationItem)
 
