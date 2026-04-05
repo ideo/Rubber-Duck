@@ -1,27 +1,26 @@
 // ============================================================
-// RUBBER DUCK C3 — Main Firmware
+// DUCK DUCK DUCK — ESP32-S3 Firmware
 // ============================================================
-// Audio duck: Seeed XIAO ESP32-C3 (or S3) + MAX98357 I2S DAC
-// + servo. Receives eval scores AND streamed TTS audio from
-// the widget over USB CDC serial.
+// Seeed XIAO ESP32-S3 + MAX98357 I2S DAC + ICS-43434 mic + servo.
+// Receives eval scores and streamed TTS audio from the widget
+// over USB CDC serial.
 //
 // Serial protocol:
-//   Text mode: same as Teensy/S3 ducks (newline-terminated)
+//   Text mode: newline-terminated (same as all duck variants)
 //   Audio mode: binary framing (entered via A,16000,16,1\n)
 //
-// Board: Seeed XIAO ESP32-C3 or XIAO ESP32-S3 Sense
-//        (select the correct board in Arduino IDE)
+// Board: Seeed XIAO ESP32-S3 (select ESP32S3 Dev Module in Arduino)
 //
-// Wiring (S3 with ICS-43434 I2S mic):
-//   D0  → Servo signal
-//   D1  → ICS-43434 SD (data out)
-//   D2  → MAX98357 BCLK
-//   D3  → MAX98357 LRC (WS)
-//   D4  → MAX98357 DIN
-//   D5  → (free — was analog mic)
-//   D8  → Button (internal pullup)
-//   D9  → ICS-43434 SCK (bit clock)
-//   D10 → ICS-43434 WS (word select)
+// Wiring:
+//   D0  → MAX98357 LRC (WS)
+//   D1  → MAX98357 BCLK
+//   D2  → MAX98357 DIN
+//   D3  → Servo signal
+//   D4  → (free)
+//   D5  → Button (internal pullup)
+//   D8  → ICS-43434 BCLK (bit clock)
+//   D9  → ICS-43434 DOUT (data out)
+//   D10 → ICS-43434 LRCL (word select)
 //   3V3 → MAX98357 VIN + SD (enable) + ICS-43434 VDD
 //   GND → MAX98357 GND + Servo GND + ICS-43434 GND + L/R
 //   5V  → Servo VCC (if available, otherwise 3V3)

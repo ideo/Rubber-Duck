@@ -42,9 +42,9 @@
 // --- I2S Mic Config (MIC_TYPE 2) ---
 // Adafruit ICS-43434 I2S MEMS mic. 24-bit, wired to free XIAO pins.
 // L/R pin tied to GND = left channel.
-#define MIC_I2S_SCK        D9      // GPIO8 — bit clock
-#define MIC_I2S_WS         D10     // GPIO9 — word select
-#define MIC_I2S_SD         D1      // GPIO2 — serial data in
+#define MIC_I2S_SCK        D8      // GPIO7 — bit clock (BCLK)
+#define MIC_I2S_WS         D10     // GPIO9 — word select (LRCL)
+#define MIC_I2S_SD         D9      // GPIO8 — serial data in (DOUT)
 
 // --- I2S Port Assignment ---
 // S3 has 2 I2S ports. I2S/PDM mic takes I2S_NUM_0, speaker goes on I2S_NUM_1.
@@ -59,9 +59,9 @@
 // Board macros D2/D3/D4 resolve correctly on both C3 and S3.
 //   S3 Sense: D2=GPIO3, D3=GPIO4, D4=GPIO5
 //   C3:       D2=GPIO4, D3=GPIO5, D4=GPIO6
-#define I2S_BCLK_PIN       D2
-#define I2S_WS_PIN         D3
-#define I2S_DOUT_PIN       D4
+#define I2S_BCLK_PIN       D1      // BCLK
+#define I2S_WS_PIN         D0      // LRC
+#define I2S_DOUT_PIN       D2      // DIN
 
 // --- Audio Config ---
 #define AUDIO_SAMPLE_RATE  16000   // Hz — matches widget AVSpeechSynthesizer output
@@ -100,7 +100,7 @@
 #define FRAME_MAX_BYTES    1200    // Max single frame payload (keep under CDC buffer)
 
 // --- Servo Config (LEDC PWM) ---
-#define SERVO_PIN          D0      // D0 on XIAO
+#define SERVO_PIN          D3      // D3 on XIAO
 #define SERVO_CENTER       90      // Neutral position (degrees)
 #define SERVO_RANGE        80      // ±degrees from center
 #define SERVO_MIN          (SERVO_CENTER - SERVO_RANGE)
@@ -108,7 +108,7 @@
 #define SERVO_UPDATE_MS    20      // Fixed-rate update interval
 
 // --- Button Config ---
-#define BUTTON_PIN         D8      // D8 on XIAO S3 (GPIO7). D1 reserved for future use.
+#define BUTTON_PIN         D5      // D5 on XIAO S3
 #define LONG_PRESS_MS      2000    // Hold 2s for snap-to-center
 
 // --- Spring Physics (servo) ---
