@@ -131,6 +131,45 @@ struct EvalResult: Codable {
     }
 }
 
+/// Mic input level — broadcast for dashboard troubleshooting (WebSocket).
+struct MicLevelEvent: Encodable {
+    let type: String
+    let level: Double
+    let source: String
+    let listening: Bool
+    let deviceName: String?
+    let healthStatus: String
+    let healthReason: String?
+    let fallbackActive: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case type, level, source, listening
+        case deviceName = "device_name"
+        case healthStatus = "health_status"
+        case healthReason = "health_reason"
+        case fallbackActive = "fallback_active"
+    }
+
+    init(
+        level: Double,
+        source: String,
+        listening: Bool,
+        deviceName: String?,
+        healthStatus: String,
+        healthReason: String?,
+        fallbackActive: Bool
+    ) {
+        self.type = "mic_level"
+        self.level = level
+        self.source = source
+        self.listening = listening
+        self.deviceName = deviceName
+        self.healthStatus = healthStatus
+        self.healthReason = healthReason
+        self.fallbackActive = fallbackActive
+    }
+}
+
 /// Permission event broadcast from the service.
 struct PermissionEvent: Codable {
     let type: String        // "permission"

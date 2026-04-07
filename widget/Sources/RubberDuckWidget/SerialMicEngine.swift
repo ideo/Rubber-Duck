@@ -39,6 +39,13 @@ class SerialMicEngine: ObservableObject {
     // Written on start/stop from MainActor; read from the serial read thread.
     private nonisolated(unsafe) var _feedingAudio = false
 
+    private nonisolated(unsafe) var _micLevelStore: MicLevelStore?
+    private nonisolated(unsafe) var _micHealthMonitor: MicHealthMonitor?
+
+    /// RMS meter for dashboard — assigned into `_micLevelStore` on start().
+    var micLevelStore: MicLevelStore?
+    var micHealthMonitor: MicHealthMonitor?
+
     // Audio format for the 16kHz Int16 mono PCM from ESP32
     private let audioFormat: AVAudioFormat
 
@@ -116,6 +123,8 @@ class SerialMicEngine: ObservableObject {
         }
 
         isListening = true
+        _micLevelStore = micLevelStore
+        _micHealthMonitor = micHealthMonitor
         _feedingAudio = true
         // Don't reset attempts here — let the backoff accumulate across restarts.
         // Only reset on successful recognition (line 93) or explicit resetRestartAttempts().
@@ -132,6 +141,8 @@ class SerialMicEngine: ObservableObject {
         // The gate check in handleBinaryFrame prevents feeding during TTS.
 
         _feedingAudio = false
+        _micLevelStore = nil
+        _micHealthMonitor = nil
         _activeRequest = nil
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
@@ -160,7 +171,10 @@ class SerialMicEngine: ObservableObject {
         guard _feedingAudio else { return }
 
         // Drop frames while TTS is playing (prevent feedback)
-        if let gate = _gate, gate.muted { return }
+        if let gate = _gate, gate.muted {
+            _micHealthMonitor?.noteMutedFrame()
+            return
+        }
 
         // Convert raw Int16 PCM bytes to AVAudioPCMBuffer
         let sampleCount = data.count / 2
@@ -174,6 +188,8 @@ class SerialMicEngine: ObservableObject {
         // Copy Int16 samples into the buffer
         data.withUnsafeBytes { rawPtr in
             guard let srcPtr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
+            _micLevelStore?.update(fromInt16Mono: srcPtr, count: sampleCount)
+            _micHealthMonitor?.update(fromInt16Mono: srcPtr, count: sampleCount)
             guard let dstPtr = pcmBuffer.int16ChannelData?[0] else { return }
             dstPtr.update(from: srcPtr, count: sampleCount)
         }

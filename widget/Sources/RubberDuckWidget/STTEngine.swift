@@ -36,6 +36,10 @@ class STTEngine: ObservableObject {
     // Mic mute gate — owned by TTSEngine, shared here
     private var ttsGate: TTSGate?
 
+    /// Optional RMS meter for dashboard (updated from the audio tap thread).
+    var micLevelStore: MicLevelStore?
+    var micHealthMonitor: MicHealthMonitor?
+
     private func log(_ msg: String) { DuckLog.log(msg) }
 
     /// Set the TTSGate so the audio tap can mute during TTS playback.
@@ -88,14 +92,22 @@ class STTEngine: ObservableObject {
         guard recordingFormat.sampleRate > 0 else {
             log("[stt] Invalid audio format (0 sample rate). Check mic connection.")
             lastError = "Invalid audio format"
+            micHealthMonitor?.noteHardFailure("duck audio format is invalid")
             return
         }
 
         // Gate: don't feed audio to recognition while TTS is playing.
         // Captures ttsGate directly (not through self) so it's not actor-isolated.
         let gate = ttsGate
+        let levelStore = micLevelStore
+        let healthMonitor = micHealthMonitor
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
-            if let g = gate, g.muted { return }
+            if let g = gate, g.muted {
+                healthMonitor?.noteMutedFrame()
+                return
+            }
+            levelStore?.update(fromPCMBuffer: buffer)
+            healthMonitor?.update(fromPCMBuffer: buffer)
             request.append(buffer)
         }
 
@@ -139,6 +151,7 @@ class STTEngine: ObservableObject {
         } catch {
             log("[stt] Audio engine failed: \(error.localizedDescription)")
             lastError = error.localizedDescription
+            micHealthMonitor?.noteHardFailure("duck audio engine failed to start")
             isListening = false
         }
     }
@@ -205,6 +218,7 @@ class STTEngine: ObservableObject {
             } else {
                 log("[stt] Teensy not found — falling back to default mic")
                 teensyDeviceID = nil
+                micHealthMonitor?.noteHardFailure("duck input device disappeared")
                 return
             }
         }
@@ -212,6 +226,7 @@ class STTEngine: ObservableObject {
         guard status == noErr else {
             log("[stt] Failed to set Teensy device: OSStatus \(status)")
             teensyDeviceID = nil  // Clear so next attempt uses default mic
+            micHealthMonitor?.noteHardFailure("duck input device could not be opened")
             return
         }
         log("[stt] Set input device to Teensy (ID \(deviceID))")
@@ -229,6 +244,7 @@ class STTEngine: ObservableObject {
         )
         guard status == noErr else {
             log("[stt] Could not read device format: OSStatus \(status)")
+            micHealthMonitor?.noteHardFailure("duck audio format could not be read")
             return
         }
         log("[stt] Teensy hardware: \(deviceFormat.mSampleRate)Hz, \(deviceFormat.mChannelsPerFrame)ch, \(deviceFormat.mBitsPerChannel)bit")
@@ -258,6 +274,7 @@ class STTEngine: ObservableObject {
             log("[stt] Set software format to \(outputFormat.mSampleRate)Hz Float32 \(outputFormat.mChannelsPerFrame)ch")
         } else {
             log("[stt] Could not set output format: OSStatus \(status)")
+            micHealthMonitor?.noteHardFailure("duck audio format negotiation failed")
         }
     }
 }

@@ -701,6 +701,7 @@ function connectWebSocket() {
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.type !== 'eval' || !data.scores) return;
     onEvalReceived(data);
   };
 }

@@ -88,6 +88,16 @@ private struct ScheduledSpeech {
     let onFinish: (@MainActor () -> Void)?
 }
 
+struct MicDashboardSnapshot {
+    let level: Double
+    let source: String
+    let listening: Bool
+    let deviceName: String?
+    let healthState: MicHealthState
+    let healthReason: String?
+    let fallbackActive: Bool
+}
+
 @MainActor
 class SpeechService: ObservableObject {
     // Published state
@@ -168,6 +178,15 @@ class SpeechService: ObservableObject {
     private let permissionClassifier = PermissionClassifier()
     private let deviceListener = AudioDeviceDiscovery.DeviceChangeListener()
 
+    /// Shared RMS store for dashboard mic meter (CoreAudio tap + serial PCM).
+    private let micLevelStore = MicLevelStore()
+    private let micHealthMonitor = MicHealthMonitor()
+
+    @Published private(set) var micHealthState: MicHealthState = .inactive
+    @Published private(set) var micHealthReason: String?
+    @Published private(set) var duckMicFallbackActive = false
+    private var nextDuckRecoveryProbeAt = Date.distantPast
+
     // Track which path is active
     @Published private(set) var audioPath: AudioPath = .local
 
@@ -207,6 +226,8 @@ class SpeechService: ObservableObject {
 
         // Share the TTS mute gate with STT so mic mutes during playback
         stt.setTTSGate(tts.gate)
+        stt.micLevelStore = micLevelStore
+        stt.micHealthMonitor = micHealthMonitor
 
         // Watch for USB audio device plug/unplug.
         // CoreAudio fires multiple callbacks per plug event (one per endpoint),
@@ -240,6 +261,8 @@ class SpeechService: ObservableObject {
         }
         // Share the serial TTS gate with serial mic so mic mutes during playback
         sMic.setTTSGate(sTTS.gate)
+        sMic.micLevelStore = micLevelStore
+        sMic.micHealthMonitor = micHealthMonitor
         self.serialMic = sMic
 
         log("[speech] Serial audio engines created for ESP32")
@@ -268,6 +291,10 @@ class SpeechService: ObservableObject {
         } else {
             // Serial disconnected — fall back if on a serial-dependent path
             if audioPath == .esp32Serial {
+                micHealthState = .failed
+                micHealthReason = "duck serial mic disconnected"
+                duckMicFallbackActive = true
+                nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
                 switchAudioPath(.local)
             }
         }
@@ -298,19 +325,140 @@ class SpeechService: ObservableObject {
         case .teensy:
             activeSTT = stt
             activeTTS = tts
+            stt.setTTSGate(tts.gate)
             if let device = AudioDeviceDiscovery.findDuckDevice() {
+                stt.setTeensyDevice(device.deviceID)
+                tts.outputDeviceName = device.name
+                tts.volume = DuckConfig.volume
                 selectedMicName = device.name
             }
         case .local:
             activeSTT = stt
-            activeTTS = tts
-            selectMicrophone()
+            if duckMicFallbackActive {
+                configureDuckOutputForFallback()
+                selectLocalFallbackMicrophone()
+            } else {
+                activeTTS = tts
+                stt.setTTSGate(tts.gate)
+                selectMicrophone()
+            }
         }
 
         // Restart on the new path if we were listening
         if wasListening {
             startListening()
         }
+    }
+
+    /// Normalized 0...1 mic level for dashboard (RMS from the active STT path).
+    func micLevelForDashboard() -> Float {
+        min(1, micLevelStore.snapshot())
+    }
+
+    func resetMicLevelMeter() {
+        micLevelStore.reset()
+    }
+
+    func micInputSourceLabel() -> String {
+        switch audioPath {
+        case .local: return "local"
+        case .teensy: return "teensy"
+        case .esp32Serial: return "esp32_serial"
+        }
+    }
+
+    func micDashboardSnapshot() -> MicDashboardSnapshot {
+        tickMicHealth()
+
+        let level = isListening ? Double(micLevelForDashboard()) : 0
+        return MicDashboardSnapshot(
+            level: level,
+            source: micInputSourceLabel(),
+            listening: isListening,
+            deviceName: selectedMicName.isEmpty ? nil : selectedMicName,
+            healthState: dashboardMicHealthState(),
+            healthReason: dashboardMicHealthReason(),
+            fallbackActive: duckMicFallbackActive
+        )
+    }
+
+    private func tickMicHealth() {
+        let snapshot = micHealthMonitor.snapshot(suppressTimeouts: isSpeaking)
+
+        if audioPath != .local {
+            if snapshot.state == .failed && !isSpeaking {
+                engageDuckMicFallback(reason: snapshot.reason ?? "duck mic failed health checks")
+            } else if duckMicFallbackActive, snapshot.state == .healthy, snapshot.healthyBufferStreak >= 12 {
+                duckMicFallbackActive = false
+                micHealthState = .healthy
+                micHealthReason = nil
+                nextDuckRecoveryProbeAt = .distantPast
+                log("[speech] Duck mic recovered — staying on duck audio")
+            } else if !duckMicFallbackActive {
+                micHealthState = snapshot.state
+                micHealthReason = snapshot.reason
+            }
+        } else if duckMicFallbackActive {
+            micHealthState = .failed
+            if micHealthReason == nil {
+                micHealthReason = "using Mac mic until duck input recovers"
+            }
+            maybeProbeDuckMicRecovery()
+        } else {
+            micHealthState = .inactive
+            micHealthReason = nil
+        }
+    }
+
+    private func dashboardMicHealthState() -> MicHealthState {
+        if duckMicFallbackActive && audioPath == .local {
+            return .failed
+        }
+        return micHealthState
+    }
+
+    private func dashboardMicHealthReason() -> String? {
+        if duckMicFallbackActive && audioPath == .local {
+            return micHealthReason ?? "using Mac mic until duck input recovers"
+        }
+        return micHealthReason
+    }
+
+    private func engageDuckMicFallback(reason: String) {
+        micHealthState = .failed
+        micHealthReason = reason
+        duckMicFallbackActive = true
+        nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
+        log("[speech] Duck mic unhealthy (\(reason)) — falling back to Mac mic")
+        if audioPath != .local {
+            let wasListening = isListening
+            switchAudioPath(.local)
+            if !wasListening && micPermissionGranted && speechPermissionGranted && listenMode != .off {
+                startListening()
+            }
+        }
+    }
+
+    private func maybeProbeDuckMicRecovery() {
+        guard isListening else { return }
+        guard listenMode != .off else { return }
+        guard !isSpeaking else { return }
+        guard Date() >= nextDuckRecoveryProbeAt else { return }
+        guard let target = availableDuckAudioPath() else { return }
+
+        nextDuckRecoveryProbeAt = Date().addingTimeInterval(12)
+        log("[speech] Probing duck mic recovery via \(target)")
+        switchAudioPath(target)
+    }
+
+    private func availableDuckAudioPath() -> AudioPath? {
+        if let transport = serialTransport, transport.isESP32, transport.isConnected {
+            return .esp32Serial
+        }
+        if AudioDeviceDiscovery.findDuckDevice() != nil {
+            return .teensy
+        }
+        return nil
     }
 
     // MARK: - Public API
@@ -423,6 +571,10 @@ class SpeechService: ObservableObject {
             return
         }
 
+        micHealthMonitor.activate(
+            monitorDuckPath: audioPath != .local,
+            expectsContinuousBuffers: audioPath != .local
+        )
         activeSTT.start()
         isListening = activeSTT.isListening
 
@@ -433,6 +585,7 @@ class SpeechService: ObservableObject {
 
     func stopListening() {
         activeSTT.stop()
+        micHealthMonitor.deactivate()
         isListening = false
     }
 
@@ -781,6 +934,9 @@ class SpeechService: ObservableObject {
 
     /// Re-select the system default microphone (called from Preferences picker).
     func selectDefaultMicrophone() {
+        activeSTT = stt
+        activeTTS = tts
+        stt.setTTSGate(tts.gate)
         selectMicrophone()
     }
 
@@ -794,6 +950,13 @@ class SpeechService: ObservableObject {
         }
         selectedMicName = mic.name
         audioPath = .local
+        activeSTT = stt
+        activeTTS = tts
+        stt.setTTSGate(tts.gate)
+        duckMicFallbackActive = false
+        micHealthState = .inactive
+        micHealthReason = nil
+        nextDuckRecoveryProbeAt = .distantPast
         stt.clearTeensyDevice()
         tts.outputDeviceName = nil
         log("[speech] User selected mic: \(mic.name)")
@@ -834,6 +997,42 @@ class SpeechService: ObservableObject {
         }
     }
 
+    private func selectLocalFallbackMicrophone() {
+        guard let defaultMic = AVCaptureDevice.default(for: .audio) else {
+            log("[speech] No default local microphone found for fallback")
+            lastError = "No microphone found"
+            return
+        }
+
+        selectedMicName = defaultMic.localizedName
+        audioPath = .local
+        stt.clearTeensyDevice()
+        log("[speech] Selected local fallback mic: \(defaultMic.localizedName)")
+    }
+
+    private func configureDuckOutputForFallback() {
+        if let transport = serialTransport,
+           transport.isESP32,
+           transport.isConnected,
+           let serialTTS {
+            activeTTS = serialTTS
+            stt.setTTSGate(serialTTS.gate)
+            log("[speech] Keeping duck speaker via serial TTS while using local mic fallback")
+            return
+        }
+
+        activeTTS = tts
+        stt.setTTSGate(tts.gate)
+        if let device = AudioDeviceDiscovery.findDuckDevice() {
+            tts.outputDeviceName = device.name
+            tts.volume = DuckConfig.volume
+            log("[speech] Keeping duck speaker via \(device.name) while using local mic fallback")
+        } else {
+            tts.outputDeviceName = nil
+            log("[speech] Duck speaker unavailable during mic fallback — using system audio")
+        }
+    }
+
     // MARK: - Device Hot-Plug
 
     /// Debounce CoreAudio device-change callbacks.
@@ -864,6 +1063,10 @@ class SpeechService: ObservableObject {
         if wasDuckUAC && duckNow == nil {
             // Duck UAC device unplugged — switch to local audio
             log("[speech] Duck UAC device unplugged — switching to local mic + speakers")
+            micHealthState = .failed
+            micHealthReason = "duck audio device unplugged"
+            duckMicFallbackActive = true
+            nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
             stt.clearTeensyDevice()
             tts.outputDeviceName = nil
             selectMicrophone()

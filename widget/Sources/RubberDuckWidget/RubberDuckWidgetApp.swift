@@ -230,6 +230,7 @@ struct RubberDuckWidgetApp: App {
 
         // Start the embedded HTTP + WebSocket server
         server.start()
+        server.beginMicLevelBroadcast(speechService: speech)
 
         // Request mic permission on launch
         speech.requestPermissions()

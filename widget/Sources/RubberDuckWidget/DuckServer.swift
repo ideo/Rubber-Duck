@@ -39,6 +39,7 @@ class DuckServer: ObservableObject {
 
     private var server: MiniServer?
     private let port: Int
+    private var micLevelBroadcastTask: Task<Void, Never>?
 
     init(port: Int = DuckConfig.preferredPort) {
         self.port = port
@@ -551,7 +552,35 @@ class DuckServer: ObservableObject {
         }
     }
 
+    /// Push mic RMS to WebSocket clients (~20 Hz) for dashboard troubleshooting.
+    @MainActor
+    func beginMicLevelBroadcast(speechService: SpeechService) {
+        micLevelBroadcastTask?.cancel()
+        micLevelBroadcastTask = Task { @MainActor [weak self, weak speechService] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(45))
+                guard let self, let speechService else { return }
+                let mic = speechService.micDashboardSnapshot()
+                if !mic.listening {
+                    speechService.resetMicLevelMeter()
+                }
+                let event = MicLevelEvent(
+                    level: mic.level,
+                    source: mic.source,
+                    listening: mic.listening,
+                    deviceName: mic.deviceName,
+                    healthStatus: mic.healthState.rawValue,
+                    healthReason: mic.healthReason,
+                    fallbackActive: mic.fallbackActive
+                )
+                await broadcaster.broadcast(event)
+            }
+        }
+    }
+
     func stop() {
+        micLevelBroadcastTask?.cancel()
+        micLevelBroadcastTask = nil
         server?.stop()
         server = nil
         isRunning = false

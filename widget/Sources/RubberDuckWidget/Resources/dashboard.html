@@ -191,6 +191,68 @@
     font-size: 0.85rem;
     padding: 40px 0;
   }
+
+  /* --- Mic monitor (hardware troubleshooting) --- */
+  .mic-card {
+    background: #16213e;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .mic-card h2 {
+    font-size: 0.75rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .mic-meta {
+    font-size: 0.65rem;
+    color: #666;
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .mic-meta span { color: #8a8; }
+  .mic-meta .off { color: #a66; }
+  .mic-meta .health-healthy { color: #40c080; }
+  .mic-meta .health-suspect { color: #f0c040; }
+  .mic-meta .health-failed { color: #e06060; }
+  .mic-meta .health-inactive { color: #778; }
+  .mic-meter-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .mic-meter {
+    flex: 1;
+    height: 28px;
+    background: #0a0f18;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #1a2a3a;
+  }
+  .mic-meter-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 0 4px 4px 0;
+    background: linear-gradient(90deg, #2a6a4a, #40c080, #f0c040);
+    transition: width 0.06s linear;
+    box-shadow: 0 0 12px rgba(64, 192, 128, 0.35);
+  }
+  .mic-meter-fill.low {
+    background: linear-gradient(90deg, #3a3a5a, #5a5a7a);
+    box-shadow: none;
+  }
+  .mic-pct {
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    color: #9ab;
+    width: 44px;
+    text-align: right;
+    flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
@@ -199,6 +261,17 @@
 <div class="status disconnected" id="status">disconnected</div>
 
 <div class="container">
+  <div class="mic-card" id="micCard">
+    <h2>Mic input (hardware)</h2>
+    <div class="mic-meta" id="micMeta">Waiting for data…</div>
+    <div class="mic-meter-wrap">
+      <div class="mic-meter" title="Level from the duck’s active mic path (Teensy UAC, ESP32 serial, or Mac mic)">
+        <div class="mic-meter-fill low" id="micFill"></div>
+      </div>
+      <div class="mic-pct" id="micPct">—</div>
+    </div>
+  </div>
+
   <div class="eval-card" id="evalCard" style="display:none">
     <div class="eval-header">
       <span class="eval-source" id="evalSource"></span>
@@ -255,9 +328,35 @@ function connect() {
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.type === "mic_level") {
+      renderMicLevel(data);
+      return;
+    }
+    if (data.type !== "eval" || !data.scores) return;
     renderEval(data);
     addHistory(data);
   };
+}
+
+function renderMicLevel(data) {
+  const pct = Math.round(Math.min(1, Math.max(0, data.level)) * 100);
+  const fill = document.getElementById("micFill");
+  const pctEl = document.getElementById("micPct");
+  const meta = document.getElementById("micMeta");
+
+  fill.style.width = pct + "%";
+  fill.classList.toggle("low", pct < 3);
+  pctEl.textContent = pct + "%";
+
+  const src = data.source || "?";
+  const dev = data.device_name ? ` · ${data.device_name}` : "";
+  const health = data.health_status || "inactive";
+  const reason = data.health_reason ? ` · ${data.health_reason}` : "";
+  const fallback = data.fallback_active ? " · local fallback active" : "";
+  const state = data.listening
+    ? `<span>listening</span>`
+    : `<span class="off">not listening</span> (check duck mode &amp; mic menu)`;
+  meta.innerHTML = `Path: <span>${src}</span>${dev}<br>${state}<br>Health: <span class="health-${health}">${health}</span>${fallback}${reason}`;
 }
 
 function renderEval(data) {
