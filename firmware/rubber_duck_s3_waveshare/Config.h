@@ -40,11 +40,11 @@
 #define MIC_DC_OFFSET      2048    // 12-bit ADC midpoint (VDD/2)
 
 // --- I2S Mic Config (MIC_TYPE 2) ---
-// Adafruit ICS-43434 I2S MEMS mic. 24-bit, wired to Waveshare GP5-GP7.
+// INMP441 I2S MEMS mic. 24-bit, wired to Waveshare GP11-GP13.
 // L/R pin tied to GND = left channel.
-#define MIC_I2S_SCK        4       // GP4 — bit clock
-#define MIC_I2S_WS         5       // GP5 — word select
-#define MIC_I2S_SD         6       // GP6 — serial data in
+#define MIC_I2S_SCK        12      // GP12 — bit clock (SCK)
+#define MIC_I2S_WS         11      // GP11 — word select (WS)
+#define MIC_I2S_SD         13      // GP13 — serial data in (SD/DOUT)
 
 // --- I2S Port Assignment ---
 // S3 has 2 I2S ports. I2S/PDM mic takes I2S_NUM_0, speaker goes on I2S_NUM_1.
@@ -56,9 +56,9 @@
 #endif
 
 // --- I2S Pin Config ---
-// Waveshare ESP32-S3-Zero: GP2/GP3/GP4 for MAX98357 I2S DAC.
-#define I2S_BCLK_PIN       1       // GP1 — bit clock
-#define I2S_WS_PIN         2       // GP2 — word select / LRC
+// Waveshare ESP32-S3-Zero: GP1/GP2/GP3 for MAX98357 I2S DAC.
+#define I2S_BCLK_PIN       2       // GP2 — bit clock
+#define I2S_WS_PIN         1       // GP1 — word select / LRC
 #define I2S_DOUT_PIN       3       // GP3 — data out
 
 // --- Audio Config ---
@@ -110,7 +110,7 @@
 #define SERVO_UPDATE_MS    20      // Fixed-rate update interval
 
 // --- Button Config ---
-#define BUTTON_PIN         7       // GP7 on Waveshare
+#define BUTTON_PIN         10      // GP10 on Waveshare
 #define LONG_PRESS_MS      2000    // Hold 2s for snap-to-center
 
 // --- Spring Physics (servo) ---
