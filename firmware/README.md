@@ -8,6 +8,7 @@ Open hardware firmware for the Duck Duck Duck physical companion. Connects to th
 |---------|-------|--------|--------|
 | **S3** | [Seeed XIAO ESP32-S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html) | Verified | `rubber_duck_s3/` |
 | **S3 Waveshare** | [Waveshare ESP32-S3-Zero](https://www.waveshare.com/esp32-s3-zero.htm) | Verified | `rubber_duck_s3_waveshare/` |
+| **S3 Telyart** | Telyart ESP32-S3 | Verified | `rubber_duck_s3_telyart/` |
 | **S3 LED** | Seeed XIAO ESP32-S3 + NeoPixel ring | Verified | `rubber_duck_s3_led/` |
 | **S3 UAC** | Seeed XIAO ESP32-S3 (USB Audio Class) | Experimental | `rubber_duck_s3_uac/` |
 | **Teensy 4.0** | [Teensy 4.0](https://www.pjrc.com/store/teensy40.html) | Verified | `rubber_duck_teensy4.0/` |
@@ -53,6 +54,24 @@ GP6  → Mic SD (data out)
 GP7  → Button (optional, internal pullup)
 GP9  → Servo signal
 GP10 → Onboard WS2812 LED (no wiring needed)
+3V3  → MAX98357 VIN + SD (enable) + Mic VDD
+GND  → All grounds + Mic L/R (left channel)
+5V   → Servo VCC (or 3V3 if no 5V available)
+```
+
+### Telyart ESP32-S3
+
+Same as Waveshare except servo and button pins:
+
+```
+GP1  → MAX98357 LRC (WS)
+GP2  → MAX98357 BCLK
+GP3  → MAX98357 DIN
+GP4  → Button (internal pullup)
+GP5  → Servo signal
+GP11 → Mic WS
+GP12 → Mic SCK
+GP13 → Mic SD (data out)
 3V3  → MAX98357 VIN + SD (enable) + Mic VDD
 GND  → All grounds + Mic L/R (left channel)
 5V   → Servo VCC (or 3V3 if no 5V available)
