@@ -135,7 +135,16 @@ void loop() {
       buttonDownAt = now;
     }
     else if (pressed && buttonDown) {
-      if ((now - buttonDownAt) >= LONG_PRESS_MS) {
+      unsigned long held = now - buttonDownAt;
+      if (held >= 5000) {
+        Serial.println("[duck] Entering bootloader via button...");
+        Serial.flush();
+        delay(100);
+        #if defined(CONFIG_IDF_TARGET_ESP32S3)
+          chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
+        #endif
+        esp_restart();
+      } else if (held >= LONG_PRESS_MS) {
         snapToCenter();
         buttonDown = false;
       }

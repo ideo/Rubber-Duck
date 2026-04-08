@@ -151,6 +151,18 @@ void parseTextMessage(char *msg) {
     return;
   }
 
+  // --- Bootloader ---
+  if (source == 'B') {
+    Serial.println("[duck] Entering bootloader...");
+    Serial.flush();
+    delay(100);
+    #if defined(CONFIG_IDF_TARGET_ESP32S3)
+      chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
+    #endif
+    esp_restart();
+    return;
+  }
+
   // --- Test commands ---
   if (source == 'T') {
     latestScores = {0.5, 0.8, 0.3, 0.7, -0.5, 'U', true};
