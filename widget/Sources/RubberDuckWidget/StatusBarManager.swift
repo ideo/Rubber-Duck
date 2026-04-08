@@ -666,15 +666,11 @@ enum PluginInstaller {
         alert.runModal()
     }
 
-    /// Install the plugin. Tries automatic install first, falls back to clipboard if sandboxed.
+    /// Install the plugin. Prefers CLI install (properly registers with Claude Desktop),
+    /// falls back to direct file copy if CLI isn't available.
     static func install() {
-        // Direct file copy is the most reliable path — no git, no network,
-        // no xcode-select. Works for both CLI and Desktop users.
-        if desktopPluginDirExists() {
-            Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
-            directInstall()
-        } else if let claude = findClaude() {
-            // ~/.claude/plugins doesn't exist yet — use CLI to bootstrap it
+        if let claude = findClaude() {
+            // CLI found — use it to properly register the plugin with Claude Desktop
             let (versionOK, foundVersion) = checkClaudeVersion(claude)
             if !versionOK {
                 Task { @MainActor in
@@ -685,6 +681,10 @@ enum PluginInstaller {
             }
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
+        } else if desktopPluginDirExists() {
+            // No CLI but ~/.claude/plugins exists — direct file copy as best effort
+            Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
+            directInstall()
         } else {
             Task { @MainActor in
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
@@ -784,6 +784,16 @@ enum PluginInstaller {
                     let mpData = try JSONSerialization.data(withJSONObject: marketplaces, options: [.prettyPrinted, .sortedKeys])
                     try mpData.write(to: marketplacesURL, options: .atomic)
                     print("[plugin] Updated known_marketplaces.json")
+                }
+
+                // Try CLI activation to properly register with Claude Desktop
+                if let claude = findClaude() {
+                    let (activateOk, _) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
+                    if activateOk {
+                        print("[plugin] CLI activation succeeded after direct install")
+                    } else {
+                        print("[plugin] CLI activation failed — plugin may need manual activation")
+                    }
                 }
 
                 Task { @MainActor in
