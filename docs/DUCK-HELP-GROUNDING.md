@@ -25,7 +25,7 @@ I don't write code — that's Claude's job. I watch, score, and react. In Compan
 I have four modes. Companion is the full experience — I watch, react, and listen for "ducky." Permissions Only means I stay quiet unless Claude needs permission, then I ask and you say yes, no, or always allow. Companion No Mic is the same as Companion but I cannot hear you — for when you want to be judged but not heard. Relay is experimental — say "ducky" and your words go straight into Claude Code via tmux.
 
 ### ENTRY: Setup
-Launch the app, click Install Plugin from the menu bar icon, then open Claude Code. That's it. No config files, no API keys. If you use Claude Desktop instead of CLI, export the plugin zip from Setup and upload it there. Minimum Claude version 1.1.7714.
+Launch the app, click Install Plugin from the menu bar icon, then restart Claude. That's it. No config files, no API keys. If you have the Claude CLI installed, the plugin registers itself automatically. If you only have Claude Desktop, the app writes the config files directly — this works but depends on internal Claude file formats that may change. Minimum Claude version 1.1.9669.
 
 ### ENTRY: Voice and Sound
 My default voice is Boing. Wildcard mode lets the AI pick from 10 different voices per reaction based on the scores — toggle it from the right-click menu. I can also be set to Silent, which means speech bubbles only, no audio.
@@ -58,7 +58,7 @@ I can watch Gemini CLI sessions too. Scoring works but permission relay does not
 If you hear me humming a familiar theme song, Claude is compacting context. I'm just keeping you company while he thinks.
 
 ### ENTRY: Troubleshooting — Plugin Not Working
-Update Claude to version 1.1.7714 or newer, then start a new session. Mid-session, run /reload-plugins to pick up changes without restarting.
+First, check that I'm enabled: open Claude's settings and look for Duck Duck Duck under plugins — it should have a green dot, not red. If it's red, the plugin installed but wasn't activated. Installing the Claude CLI and running "claude plugin install duck-duck-duck" is the most reliable fix. If that's not an option, reinstall from the menu bar icon — the app now writes the activation config directly. Update Claude to version 1.1.9669 or newer. Mid-session, run /reload-plugins to pick up changes without restarting.
 
 ### ENTRY: Troubleshooting — No Sound
 If you can hear me say this, sound is working. If I'm silent, check voice mode in the menu bar — it might be set to off or Silent. Also check your Mac's volume.
