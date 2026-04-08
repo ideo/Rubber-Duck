@@ -786,19 +786,42 @@ enum PluginInstaller {
                     print("[plugin] Updated known_marketplaces.json")
                 }
 
-                // Try CLI activation to properly register with Claude Desktop
+                // Enable the plugin in settings.json — without this, Claude Desktop
+                // shows a red dot (installed but not activated).
+                let settingsFile = "\(home)/.claude/settings.json"
+                let settingsURL = URL(fileURLWithPath: settingsFile)
+                let pluginKey = "duck-duck-duck@duck-duck-duck-marketplace"
+                var settings: [String: Any] = [:]
+                if let data = fm.contents(atPath: settingsFile),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    settings = json
+                }
+                var enabled = settings["enabledPlugins"] as? [String: Any] ?? [:]
+                if enabled[pluginKey] == nil || !(enabled[pluginKey] as? Bool ?? false) {
+                    enabled[pluginKey] = true
+                    settings["enabledPlugins"] = enabled
+                    // Also add marketplace source so Claude knows where to look for updates
+                    var extraMPs = settings["extraKnownMarketplaces"] as? [String: Any] ?? [:]
+                    if extraMPs["duck-duck-duck-marketplace"] == nil {
+                        extraMPs["duck-duck-duck-marketplace"] = [
+                            "source": ["source": "github", "repo": "ideo/Rubber-Duck"]
+                        ]
+                        settings["extraKnownMarketplaces"] = extraMPs
+                    }
+                    let settingsData = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+                    try settingsData.write(to: settingsURL, options: .atomic)
+                    print("[plugin] Enabled plugin in settings.json")
+                }
+
+                // If CLI is available, also run plugin install for full registration
                 if let claude = findClaude() {
                     let (activateOk, _) = run(claude, args: ["plugin", "install", "duck-duck-duck"])
-                    if activateOk {
-                        print("[plugin] CLI activation succeeded after direct install")
-                    } else {
-                        print("[plugin] CLI activation failed — plugin may need manual activation")
-                    }
+                    print("[plugin] CLI activation: \(activateOk ? "succeeded" : "skipped")")
                 }
 
                 Task { @MainActor in
-                    onSpeak?("Plugin installed for Claude Desktop. Restart Claude to activate.")
-                    showResult(success: true, detail: "Plugin installed directly. Restart Claude Desktop to load the hooks.")
+                    onSpeak?("Plugin installed. Restart Claude to activate.")
+                    showResult(success: true, detail: "Plugin installed and enabled. Restart Claude Desktop to load the hooks.")
                 }
             } catch {
                 print("[plugin] Direct install failed: \(error)")
