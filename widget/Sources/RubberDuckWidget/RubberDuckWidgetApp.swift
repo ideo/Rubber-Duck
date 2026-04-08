@@ -977,7 +977,7 @@ struct HelpMenuContent: View {
         Button {
             NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.activePort)")!)
         } label: {
-            Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent")
+            Label("Debugging Dashboard", systemImage: "gauge.with.dots.needle.33percent")
         }
 
         Divider()
