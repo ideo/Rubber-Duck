@@ -258,6 +258,18 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             }
         }
 
+        // --- Hardware status ---
+        menu.addItem(.separator())
+        if serialManager.isConnected {
+            let hwItem = disabledItem("Ducky connected · \(serialManager.portName)")
+            hwItem.image = NSImage(systemSymbolName: "cable.connector", accessibilityDescription: "Hardware")
+            menu.addItem(hwItem)
+        } else {
+            let hwItem = disabledItem("No hardware connected")
+            hwItem.image = NSImage(systemSymbolName: "cable.connector.slash", accessibilityDescription: "No hardware")
+            menu.addItem(hwItem)
+        }
+
         menu.addItem(.separator())
 
         // --- Pause / Resume ---

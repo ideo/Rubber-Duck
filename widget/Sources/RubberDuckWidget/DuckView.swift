@@ -36,6 +36,13 @@ struct DuckView: View {
 
 // MARK: - Context Menu (isolated — reads coordinator/speechService/duckServer internally)
 
+private let volumePresets: [(label: String, value: Float)] = [
+    ("Quack!", 0.75),
+    ("Normal", 0.50),
+    ("Indoor Voice", 0.25),
+    ("Whisper", 0.05),
+]
+
 private struct DuckContextMenu: View {
     @EnvironmentObject var coordinator: DuckCoordinator
     @EnvironmentObject var speechService: SpeechService
@@ -69,7 +76,8 @@ private struct DuckContextMenu: View {
                 Button {
                     coordinator.setMode(mode)
                 } label: {
-                    Label(mode.label, systemImage: mode.iconName)
+                    let active = coordinator.mode == mode
+                    Label(active ? "✓ \(mode.label)" : mode.label, systemImage: mode.iconName)
                 }
             }
         } label: {
@@ -119,6 +127,25 @@ private struct DuckContextMenu: View {
                 ? "Wildcard"
                 : (DuckVoices.all.first { $0.sayName == speechService.ttsVoice }?.label ?? speechService.ttsVoice)
             Label("Voice: \(voiceLabel)", systemImage: "waveform")
+        }
+
+        // Volume picker
+        Menu {
+            ForEach(volumePresets, id: \.label) { preset in
+                Button {
+                    DuckConfig.volume = preset.value
+                    speechService.setVolume(preset.value)
+                } label: {
+                    let current = DuckConfig.volume
+                    let isActive = abs(current - preset.value) < 0.01
+                    Text(isActive ? "✓ \(preset.label)" : preset.label)
+                }
+            }
+        } label: {
+            let vol = DuckConfig.volume
+            let label = volumePresets.first { abs(vol - $0.value) < 0.01 }?.label
+                ?? "\(Int(vol * 100))%"
+            Label("Volume: \(label)", systemImage: vol <= 0 ? "speaker.slash" : "speaker.wave.2")
         }
 
         Button {

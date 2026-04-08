@@ -68,6 +68,21 @@ Last updated: 2026-04-08
 - If the build process changes or the plugin directory is renamed, `findBundledPlugin()` returns nil and installation fails with "Bundled plugin not found."
 - The sibling-directory fallback only works during development — in production (app in /Applications), there's no sibling.
 
+## 7. Hidden directory `.claude-plugin/` not copied in `directInstall()` — ACTIVE BUG
+
+**What happens:** `FileManager.contentsOfDirectory(atPath:)` on line 736 of `StatusBarManager.swift` skips hidden directories (those starting with `.`). The `.claude-plugin/` directory — which contains `plugin.json`, the plugin manifest Claude needs to load hooks — is never copied to the install directory.
+
+**Symptom:** Plugin appears in Claude Desktop's plugin browser (marketplace entry is correct) but shows a red dot / inactive state. Hooks don't fire. The user sees the plugin as "installed" but it doesn't work.
+
+**Why it matters:** This is the primary path for Desktop-only users who don't have the CLI. The CLI path (`automaticInstall`) works correctly because `claude plugin install` handles the copy internally.
+
+**Fix:** Replace `contentsOfDirectory(atPath:)` with a method that includes hidden entries. Options:
+- Use `contentsOfDirectory(at:includingPropertiesForKeys:options:)` which includes hidden items by default
+- Or explicitly copy `.claude-plugin/` after the loop
+- Or use a shell `cp -a` which preserves hidden files
+
+**Workaround:** If a user hits this, they can install the CLI (`claude.com/download`) and re-run the install from the widget menu — the CLI path handles everything correctly.
+
 ## Summary
 
 The safest path is always the CLI install (`automaticInstall`). Every piece of the direct install path is built on reverse-engineered assumptions about Claude's internal file structure. When these assumptions break, the failure mode is silent — the plugin appears installed but hooks don't fire.

@@ -17,7 +17,7 @@ void updatePermissionNag(unsigned long now);
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
-float volumeScale = 0.8f;  // Default 80%, updated by widget VOL command
+float volumeScale = 0.5f;  // Default 50%, updated by widget VOL command
 
 // --- Permission State ---
 bool          permissionPending = false;

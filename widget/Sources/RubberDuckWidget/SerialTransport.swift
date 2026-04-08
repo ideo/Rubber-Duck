@@ -174,9 +174,10 @@ class SerialTransport: DeviceTransport {
 
     // MARK: - Discovery
 
-    /// Previously-rejected ports (no DUCK identity). Cleared when a device disconnects
-    /// so we retry if the user plugs in a different device on the same port.
-    private var rejectedPorts: Set<String> = []
+    /// Previously-rejected ports (no DUCK identity) with timestamp. Entries expire after 30s
+    /// so wedged CDC ports get retried without requiring unplug/replug.
+    /// Cleared entirely when a device disconnects.
+    private var rejectedPorts: [String: Date] = [:]
 
     private func findSerialPorts() -> [String] {
         let fileManager = FileManager.default
@@ -188,12 +189,16 @@ class SerialTransport: DeviceTransport {
                 name.hasPrefix(prefix) || name.hasPrefix(cuPrefix)
             }.sorted()
 
-            // Prefer tty over cu, filter out rejected ports
+            // Expire old rejections (30s)
+            let now = Date()
+            rejectedPorts = rejectedPorts.filter { now.timeIntervalSince($0.value) < 30 }
+
+            // Prefer tty over cu, filter out recently-rejected ports
             let ttyFirst = candidates.filter { $0.hasPrefix("tty.") } +
                            candidates.filter { $0.hasPrefix("cu.") }
             return ttyFirst
                 .map { "/dev/\($0)" }
-                .filter { !rejectedPorts.contains($0) }
+                .filter { rejectedPorts[$0] == nil }
         } catch {
             return []
         }
@@ -248,20 +253,27 @@ class SerialTransport: DeviceTransport {
         requestIdentity()
     }
 
-    /// Send identity request — if no DUCK response within 500ms, reject this port.
+    /// Send identity request — retry up to 3 times with 300ms gaps before rejecting.
+    /// ESP32 USB CDC can be slow to stabilize after plug-in.
     private func requestIdentity() {
-        writeString("I\n")
-
         let port = deviceName
         Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            if self.connectedBoard == nil {
-                print("[serial] No DUCK identity from \(port) — rejecting")
-                self.rejectedPorts.insert(port)
-                self.disconnect()
-            } else {
-                self.onConnectionChange?()
+            for attempt in 1...3 {
+                self.writeString("I\n")
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if self.connectedBoard != nil {
+                    print("[serial] Identity confirmed on attempt \(attempt): \(self.connectedBoard ?? "")")
+                    self.onConnectionChange?()
+                    return
+                }
+                if attempt < 3 {
+                    print("[serial] No DUCK identity from \(port) — retry \(attempt)/3")
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
             }
+            print("[serial] No DUCK identity from \(port) after 3 attempts — rejecting")
+            self.rejectedPorts[port] = Date()
+            self.disconnect()
         }
     }
 

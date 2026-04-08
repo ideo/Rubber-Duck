@@ -33,7 +33,7 @@
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
-float volumeScale = 0.8f;  // Default 80%, updated by widget VOL command
+float volumeScale = 0.5f;  // Default 50%, updated by widget VOL command
 
 // --- Permission State ---
 bool          permissionPending = false;
@@ -91,9 +91,11 @@ void setup() {
   #endif
 
   if (Serial) {
-    Serial.println("[duck] Ready. Waveshare ESP32-S3-Zero + MAX98357");
+    Serial.println("[duck] Ready. Telyart ESP32-S3 + MAX98357");
     Serial.println("[duck] Protocol: text + binary audio framing");
+    Serial.flush();
   }
+  delay(200);
 }
 
 void loop() {

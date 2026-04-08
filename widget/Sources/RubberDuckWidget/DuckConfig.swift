@@ -356,7 +356,7 @@ enum DuckConfig {
     static var volume: Float {
         get {
             let val = UserDefaults.standard.float(forKey: "duck_volume")
-            return val == 0 && !UserDefaults.standard.bool(forKey: "duck_volume_set") ? 0.65 : val
+            return val == 0 && !UserDefaults.standard.bool(forKey: "duck_volume_set") ? 0.50 : val
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "duck_volume")

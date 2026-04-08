@@ -31,7 +31,7 @@
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
 bool newEvalAvailable = false;
-float volumeScale = 0.8f;  // Default 80%, updated by widget VOL command
+float volumeScale = 0.5f;  // Default 50%, updated by widget VOL command
 
 // --- Permission State ---
 bool          permissionPending = false;
@@ -61,7 +61,7 @@ void setup() {
 
   if (Serial) {
     Serial.println();
-    Serial.println("=== RUBBER DUCK C3 ===");
+    Serial.println("=== DUCK DUCK DUCK S3 ===");
   }
 
   // Mic must init before audio on S3 — I2S mic takes I2S_NUM_0,
@@ -90,7 +90,9 @@ void setup() {
   if (Serial) {
     Serial.println("[duck] Ready. XIAO ESP32 + MAX98357");
     Serial.println("[duck] Protocol: text + binary audio framing");
+    Serial.flush();  // Ensure CDC buffer is sent before accepting commands
   }
+  delay(200);  // Let USB CDC stabilize
 }
 
 void loop() {

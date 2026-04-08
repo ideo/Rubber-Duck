@@ -63,7 +63,7 @@ void setup() {
 
   if (Serial) {
     Serial.println();
-    Serial.println("=== RUBBER DUCK S3 WAVESHARE ===");
+    Serial.println("=== TELYART CRAB ===");
   }
 
 
@@ -91,7 +91,7 @@ void setup() {
   #endif
 
   if (Serial) {
-    Serial.println("[duck] Ready. Waveshare ESP32-S3-Zero + MAX98357");
+    Serial.println("[crab] Ready. Telyart Crab ESP32-S3 + MAX98357");
     Serial.println("[duck] Protocol: text + binary audio framing");
     Serial.flush();
   }
