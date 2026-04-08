@@ -74,17 +74,21 @@ else:
 "
 
 # 6. Remove duck app data (logs, session state, API keys)
-echo "[6/8] Removing app data..."
+echo "[6/9] Removing app data..."
 rm -rf ~/Library/Application\ Support/DuckDuckDuck/
 echo "  Done"
 
-# 7. Remove from Applications
-echo "[7/8] Removing from Applications..."
+# 7. Reset UserDefaults (eval provider, volume, mode, voice, etc.)
+echo "[7/9] Resetting UserDefaults..."
+defaults delete com.duckduckduck.widget 2>/dev/null && echo "  Done" || echo "  Already clean"
+
+# 8. Remove from Applications
+echo "[8/9] Removing from Applications..."
 rm -rf /Applications/DuckDuckDuck.app
 echo "  Done"
 
-# 8. Verify clean state
-echo "[8/8] Verifying..."
+# 9. Verify clean state
+echo "[9/9] Verifying..."
 echo ""
 CLEAN=true
 if ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q duck; then
