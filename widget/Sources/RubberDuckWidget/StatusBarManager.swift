@@ -733,7 +733,8 @@ enum PluginInstaller {
             do {
                 // Create install directory and copy plugin files
                 try fm.createDirectory(atPath: installDir, withIntermediateDirectories: true)
-                for item in try fm.contentsOfDirectory(atPath: bundledPath) {
+                let bundledURL = URL(fileURLWithPath: bundledPath)
+                for item in try fm.contentsOfDirectory(at: bundledURL, includingPropertiesForKeys: nil).map(\.lastPathComponent) {
                     let src = "\(bundledPath)/\(item)"
                     let dst = "\(installDir)/\(item)"
                     try fm.copyItem(atPath: src, toPath: dst)
