@@ -36,6 +36,8 @@ class DuckServer: ObservableObject {
 
     /// True when Foundation Models is available on this device.
     let foundationModelsAvailable: Bool
+    /// Detailed status for guiding users toward enabling Foundation Models.
+    let foundationModelsStatus: LocalEvaluator.AvailabilityStatus
 
     private var server: MiniServer?
     private let port: Int
@@ -46,6 +48,7 @@ class DuckServer: ObservableObject {
         self.geminiEvaluator = GeminiEvaluator()
         self.localEvaluator = LocalEvaluator()
         self.foundationModelsAvailable = LocalEvaluator.isAvailable
+        self.foundationModelsStatus = LocalEvaluator.availabilityStatus
         self.permissionGate = PermissionGate()
         self.broadcaster = WebSocketBroadcaster()
         self.tmuxBridge = TmuxBridge()

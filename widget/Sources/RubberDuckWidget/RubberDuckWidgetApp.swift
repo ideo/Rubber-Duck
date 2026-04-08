@@ -216,12 +216,75 @@ struct RubberDuckWidgetApp: App {
         // Wire services only once
         guard statusBarManager == nil else { return }
 
-        // If Foundation Models isn't available and no API key exists, prompt for one.
-        if !server.foundationModelsAvailable && DuckConfig.anthropicAPIKey.isEmpty {
-            DuckConfig.evalProvider = .anthropic
-            if !DuckConfig.ensureAPIKey() {
-                NSApp.terminate(nil)
-                return
+        // If Foundation Models isn't available, guide the user based on the reason.
+        if !server.foundationModelsAvailable {
+            switch server.foundationModelsStatus {
+            case .appleIntelligenceNotEnabled:
+                // User can fix this — show them how
+                let alert = NSAlert()
+                alert.messageText = "Enable Apple Intelligence"
+                alert.informativeText = """
+                    Your Mac can run free on-device scoring, but Apple Intelligence \
+                    isn't turned on yet.
+
+                    Go to System Settings → Apple Intelligence & Siri → turn on Apple Intelligence.
+
+                    Once enabled, relaunch Duck Duck Duck.
+                    """
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "Open System Settings")
+                alert.addButton(withTitle: "Use API Key Instead")
+                alert.addButton(withTitle: "Quit")
+                let response = alert.runModal()
+                if response == .alertFirstButtonReturn {
+                    // Open Apple Intelligence settings
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.appleintelligencelanguage") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    NSApp.terminate(nil)
+                    return
+                } else if response == .alertSecondButtonReturn {
+                    DuckConfig.evalProvider = .anthropic
+                    if !DuckConfig.ensureAPIKey() {
+                        NSApp.terminate(nil)
+                        return
+                    }
+                } else {
+                    NSApp.terminate(nil)
+                    return
+                }
+            case .modelNotReady:
+                // Model is downloading — let user proceed, it'll be ready soon
+                let alert = NSAlert()
+                alert.messageText = "On-Device Model Downloading"
+                alert.informativeText = """
+                    Apple Intelligence is setting up the on-device model. \
+                    This usually takes a few minutes.
+
+                    You can launch now and scoring will start working once the download finishes, \
+                    or provide an API key to use in the meantime.
+                    """
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "Launch Anyway")
+                alert.addButton(withTitle: "Use API Key Instead")
+                let response = alert.runModal()
+                if response == .alertSecondButtonReturn {
+                    DuckConfig.evalProvider = .anthropic
+                    if !DuckConfig.ensureAPIKey() {
+                        NSApp.terminate(nil)
+                        return
+                    }
+                }
+                // First button or close — proceed with foundation provider, eval will fail gracefully
+            case .deviceNotEligible, .available:
+                // Hardware can't run it — need an API key
+                if DuckConfig.anthropicAPIKey.isEmpty && DuckConfig.geminiAPIKey.isEmpty {
+                    DuckConfig.evalProvider = .anthropic
+                    if !DuckConfig.ensureAPIKey() {
+                        NSApp.terminate(nil)
+                        return
+                    }
+                }
             }
         }
 

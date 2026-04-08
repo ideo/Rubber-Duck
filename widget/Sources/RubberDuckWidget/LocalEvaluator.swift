@@ -140,6 +140,34 @@ actor LocalEvaluator {
         return false
     }
 
+    /// Detailed availability status for guiding users toward enabling Foundation Models.
+    enum AvailabilityStatus {
+        case available
+        case appleIntelligenceNotEnabled  // user can fix: System Settings → Apple Intelligence
+        case modelNotReady                // user can wait: model is downloading
+        case deviceNotEligible            // hardware can't run it — need API key
+    }
+
+    static var availabilityStatus: AvailabilityStatus {
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return .available
+        case .unavailable(let reason):
+            switch reason {
+            case .appleIntelligenceNotEnabled:
+                return .appleIntelligenceNotEnabled
+            case .modelNotReady:
+                return .modelNotReady
+            case .deviceNotEligible:
+                return .deviceNotEligible
+            @unknown default:
+                return .deviceNotEligible
+            }
+        @unknown default:
+            return .deviceNotEligible
+        }
+    }
+
     func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "", wildcardEnabled: Bool = false) async throws -> EvalScores {
         let userPrompt = EvalPromptBuilder.buildPrompt(
             text: text, source: source,
@@ -226,6 +254,15 @@ actor LocalEvaluator {
 
 actor LocalEvaluator {
     static var isAvailable: Bool { false }
+
+    enum AvailabilityStatus {
+        case available
+        case appleIntelligenceNotEnabled
+        case modelNotReady
+        case deviceNotEligible
+    }
+
+    static var availabilityStatus: AvailabilityStatus { .deviceNotEligible }
 
     func evaluate(text: String, source: String, userContext: String = "", claudeContext: String = "", wildcardEnabled: Bool = false) async throws -> EvalScores {
         EvalScores(
