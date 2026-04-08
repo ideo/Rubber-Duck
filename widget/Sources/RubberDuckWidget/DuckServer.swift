@@ -159,7 +159,25 @@ class DuckServer: ObservableObject {
                                                                 wildcardEnabled: wildcardOn)
                 }
             } catch {
-                DuckLog.log("[server] Eval error: \(error) — falling back to Foundation Model")
+                let providerName = provider == .anthropic ? "Haiku" : provider == .gemini ? "Gemini" : "Foundation"
+                DuckLog.log("[server] Eval error (\(providerName)): \(error) — falling back to Foundation Model")
+
+                // Tell the user once (not every eval)
+                if provider != .foundation {
+                    let errDesc = "\(error)".prefix(100)
+                    let spoken: String
+                    if "\(error)".lowercased().contains("key") || "\(error)".lowercased().contains("auth") || "\(error)".lowercased().contains("401") {
+                        spoken = "\(providerName) API key issue. Check your key in the Intelligence menu. Falling back to on-device."
+                    } else if "\(error)".lowercased().contains("rate") || "\(error)".lowercased().contains("429") {
+                        spoken = "\(providerName) rate limited. Falling back to on-device for now."
+                    } else {
+                        spoken = "\(providerName) scoring failed. Falling back to on-device. Error: \(errDesc)"
+                    }
+                    await MainActor.run {
+                        localTransport.onSpeak?(spoken)
+                    }
+                }
+
                 // Cloud provider failed — try Foundation Model as fallback
                 do {
                     scores = try await localEvaluator.evaluate(text: text, source: source,
@@ -168,6 +186,9 @@ class DuckServer: ObservableObject {
                                                                 wildcardEnabled: wildcardOn)
                 } catch {
                     DuckLog.log("[server] Foundation Model fallback also failed: \(error)")
+                    await MainActor.run {
+                        localTransport.onSpeak?("On-device scoring also failed. Check the Intelligence menu.")
+                    }
                     let reactions = ["Hmm.", "That's odd.", "Uh oh.", "Something broke.", "Didn't catch that."]
                     scores = EvalScores(
                         creativity: 0, soundness: 0, ambition: 0,
