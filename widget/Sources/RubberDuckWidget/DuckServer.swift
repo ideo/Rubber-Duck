@@ -121,24 +121,7 @@ class DuckServer: ObservableObject {
 
             let scores: EvalScores
             let wildcardOn = DuckVoices.isWildcardPersisted
-
-            // Check for missing API key before attempting eval
-            var provider = DuckConfig.evalProvider
-            if provider == .anthropic && DuckConfig.anthropicAPIKey.isEmpty {
-                DuckLog.log("[server] Haiku selected but no API key — switching to Foundation")
-                await MainActor.run {
-                    localTransport.onSpeak?("No Haiku API key found. Switching to on-device intelligence. You can add a key in the Intelligence menu.")
-                }
-                DuckConfig.evalProvider = .foundation
-                provider = .foundation
-            } else if provider == .gemini && DuckConfig.geminiAPIKey.isEmpty {
-                DuckLog.log("[server] Gemini selected but no API key — switching to Foundation")
-                await MainActor.run {
-                    localTransport.onSpeak?("No Gemini API key found. Switching to on-device intelligence. You can add a key in the Intelligence menu.")
-                }
-                DuckConfig.evalProvider = .foundation
-                provider = .foundation
-            }
+            let provider = DuckConfig.evalProvider
 
             do {
                 switch provider {
