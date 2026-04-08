@@ -185,6 +185,7 @@ class SpeechService: ObservableObject {
     @Published private(set) var micHealthState: MicHealthState = .inactive
     @Published private(set) var micHealthReason: String?
     @Published private(set) var duckMicFallbackActive = false
+    private var duckMicFallbackAutoRecover = false
     private var nextDuckRecoveryProbeAt = Date.distantPast
 
     // Track which path is active
@@ -281,9 +282,18 @@ class SpeechService: ObservableObject {
         guard let transport = serialTransport else { return }
 
         if transport.isESP32 && transport.isConnected {
+            if duckMicFallbackActive && !duckMicFallbackAutoRecover {
+                log("[speech] Duck serial mic still marked broken — keeping local mic fallback")
+                return
+            }
             // ESP32 connected — always use serial streaming.
             // UAC support is experimental and shelved for now.
             log("[speech] ESP32 connected (\(transport.connectedBoard ?? "?")) — using serial streaming")
+            duckMicFallbackActive = false
+            duckMicFallbackAutoRecover = false
+            micHealthState = .healthy
+            micHealthReason = nil
+            nextDuckRecoveryProbeAt = .distantPast
             switchAudioPath(.esp32Serial)
         } else if transport.isConnected {
             // Teensy or unknown — let CoreAudio handle it
@@ -294,6 +304,7 @@ class SpeechService: ObservableObject {
                 micHealthState = .failed
                 micHealthReason = "duck serial mic disconnected"
                 duckMicFallbackActive = true
+                duckMicFallbackAutoRecover = true
                 nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
                 switchAudioPath(.local)
             }
@@ -428,7 +439,8 @@ class SpeechService: ObservableObject {
         micHealthState = .failed
         micHealthReason = reason
         duckMicFallbackActive = true
-        nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
+        duckMicFallbackAutoRecover = false
+        nextDuckRecoveryProbeAt = .distantPast
         log("[speech] Duck mic unhealthy (\(reason)) — falling back to Mac mic")
         if audioPath != .local {
             let wasListening = isListening
@@ -440,6 +452,7 @@ class SpeechService: ObservableObject {
     }
 
     private func maybeProbeDuckMicRecovery() {
+        guard duckMicFallbackAutoRecover else { return }
         guard isListening else { return }
         guard listenMode != .off else { return }
         guard !isSpeaking else { return }
@@ -954,6 +967,7 @@ class SpeechService: ObservableObject {
         activeTTS = tts
         stt.setTTSGate(tts.gate)
         duckMicFallbackActive = false
+        duckMicFallbackAutoRecover = false
         micHealthState = .inactive
         micHealthReason = nil
         nextDuckRecoveryProbeAt = .distantPast
@@ -1066,6 +1080,7 @@ class SpeechService: ObservableObject {
             micHealthState = .failed
             micHealthReason = "duck audio device unplugged"
             duckMicFallbackActive = true
+            duckMicFallbackAutoRecover = true
             nextDuckRecoveryProbeAt = Date().addingTimeInterval(6)
             stt.clearTeensyDevice()
             tts.outputDeviceName = nil
@@ -1077,9 +1092,18 @@ class SpeechService: ObservableObject {
                 startListening()
             }
         } else if !wasDuckUAC && duckNow != nil {
+            if duckMicFallbackActive && !duckMicFallbackAutoRecover {
+                log("[speech] Duck mic still marked broken — keeping local mic fallback")
+                return
+            }
             // Duck UAC device plugged in — switch to it
             let label = duckNow!.isTeensy ? "Teensy" : "duck UAC (\(duckNow!.name))"
             log("[speech] \(label) plugged in — switching audio")
+            duckMicFallbackActive = false
+            duckMicFallbackAutoRecover = false
+            micHealthState = .healthy
+            micHealthReason = nil
+            nextDuckRecoveryProbeAt = .distantPast
             selectMicrophone()
 
             if isListening {
