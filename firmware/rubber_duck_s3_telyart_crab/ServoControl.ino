@@ -28,6 +28,15 @@ float servoVelocity     = 0.0;
 float servoOscillationAmp   = 0.0;
 float servoOscillationPhase = 0.0;
 
+// --- Crab Typing ---
+// Full L/R snap from center. Amplitude = how far each side. Speed = ms per side.
+float crabTypeAmp     = 0.0f;    // Degrees each direction from center
+unsigned long crabTypeInterval = 300;  // ms per side (L or R)
+bool  crabTypeLeft    = true;    // Current side
+unsigned long crabTypeLastFlip = 0;
+bool  crabTyping      = false;   // Active?
+unsigned long lastRealActivity = 0;  // Last eval/TTS — for idle escalation
+
 unsigned long lastEvalTime = 0;
 
 // --- Idle Heartbeat ---
@@ -64,9 +73,31 @@ ServoTarget servoReducer(EvalScores &scores) {
     scores.ambition   * 0.10f -
     scores.risk       * 0.10f;
 
-  // Crab: snappier movements, more oscillation (pincers)
-  target.angle = approval * (float)SERVO_RANGE;
-  target.oscillationAmp = max(2.0f, max(0.0f, scores.risk) * 12.0f);
+  // Crab mode: approval maps to typing character.
+  // Positive = lighter/faster, negative = heavier/slower, neutral = small/fast.
+  float intensity = fabs(approval);
+
+  if (approval > 0.7f) {
+    // Very positive (impressed): big swings, moderate speed
+    target.angle = 33.0f;
+    target.oscillationAmp = 250.0f;
+  } else if (approval > 0.3f) {
+    // Positive (excited): large, fast
+    target.angle = 30.0f;
+    target.oscillationAmp = 150.0f;
+  } else if (approval > -0.3f) {
+    // Neutral (skeptical/bored/nervous): medium
+    target.angle = 16.0f;
+    target.oscillationAmp = (fabs(approval) < 0.1f) ? 250.0f : 150.0f;  // Near-zero = bored/slow
+  } else if (approval > -0.6f) {
+    // Negative: medium-large, moderate
+    target.angle = 20.0f;
+    target.oscillationAmp = 180.0f;
+  } else {
+    // Very negative (disgusted): huge, slow
+    target.angle = 50.0f;
+    target.oscillationAmp = 250.0f;
+  }
 
   return target;
 }
@@ -75,13 +106,12 @@ ServoTarget servoReducer(EvalScores &scores) {
 // Set target (called when eval arrives)
 // ============================================================
 void setServoTarget(ServoTarget &target) {
-  servoTargetAngle = target.angle;
-  servoOscillationAmp = target.oscillationAmp;
-  servoOscillationPhase = 0;
+  crabTypeAmp = target.angle;
+  crabTypeInterval = (unsigned long)target.oscillationAmp;
+  crabTyping = true;
+  crabTypeLastFlip = millis();
   lastEvalTime = millis();
-
-  float direction = (servoTargetAngle > servoCurrentAngle) ? 1.0f : -1.0f;
-  servoVelocity += direction * 1.5f;
+  lastRealActivity = millis();
 }
 
 // ============================================================
@@ -89,85 +119,66 @@ void setServoTarget(ServoTarget &target) {
 // ============================================================
 void updateServo() {
   unsigned long now = millis();
-  bool chirpBusy = (chirpServoOffset != 0.0f);  // Chirp playing
   bool ttsPlaying = isAudioStreaming();
 
-  // Expression decay: return to center after hold period
-  if ((now - lastEvalTime) > EXPRESSION_HOLD_MS && fabs(servoTargetAngle) > 0.5f) {
-    float direction = (0 > servoCurrentAngle) ? 1.0f : -1.0f;
-    servoTargetAngle = 0;
-    servoVelocity += direction * EXPRESSION_RETURN_KICK;
+  // TTS talking: start typing if not already
+  if (ttsPlaying && !crabTyping) {
+    crabTypeAmp = 8.0f;
+    crabTypeInterval = 250;
+    crabTyping = true;
+    crabTypeLastFlip = now;
+    lastRealActivity = now;
   }
 
-  // Cluster micro-hops: tight follow-up positions (bird-like "choosing what to look at")
-  if (idleClusterRemaining > 0 && now > nextClusterHop &&
-      !permissionPending && !chirpBusy && !ttsPlaying) {
-    float raw = ((float)random(-100, 101) / 100.0f) * IDLE_CLUSTER_DELTA;
-    float delta = (raw >= 0) ? max(raw, IDLE_CLUSTER_MIN_DELTA) : min(raw, -IDLE_CLUSTER_MIN_DELTA);
-    // Allow follow-ups to swing wider than initial hop range so the full delta is felt
-    ambientTargetOffset = constrain(ambientTargetOffset + delta, -(IDLE_HOP_RANGE + IDLE_CLUSTER_DELTA), IDLE_HOP_RANGE + IDLE_CLUSTER_DELTA);
-    ambientVelocity = 0;
-    ambientSpringActive = false;
-    idleClusterRemaining--;
-
-    if (idleClusterRemaining > 0) {
-      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+  // Stop typing when expression expires and nothing is playing
+  if (!ttsPlaying && crabTyping && (now - lastEvalTime) > EXPRESSION_HOLD_MS) {
+    crabTyping = false;
+    if (nextIdleHop < now + 3000) {
+      nextIdleHop = now + 3000;  // Breathing room after eval typing, but don't shorten idle gap
     }
   }
 
-  // Idle heartbeat: start a new hop cluster
-  if (idleClusterRemaining == 0 && !permissionPending && !chirpBusy && !ttsPlaying &&
+  // Idle fidget: occasional typing bursts
+  if (!crabTyping && !ttsPlaying && !permissionPending &&
       (now - lastEvalTime) > EXPRESSION_HOLD_MS && now > nextIdleHop) {
-    // Pick cluster size: 50% single, 40% double, 10% triple
-    int roll = random(100);
-    int clusterSize = (roll < 50) ? 1 : (roll < 90) ? 2 : 3;
+    crabTypeAmp = 8.0f;
+    crabTypeInterval = (random(2) == 0) ? 150 : 300;  // Coin flip: fast or slow burst
+    crabTyping = true;
+    crabTypeLastFlip = now;
+    lastEvalTime = now - EXPRESSION_HOLD_MS + 2000;  // 2s of typing
 
-    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * IDLE_HOP_RANGE;
-    ambientVelocity = 0;
-    ambientSpringActive = false;
-
-    idleClusterRemaining = clusterSize - 1;
-    if (idleClusterRemaining > 0) {
-      nextClusterHop = now + IDLE_CLUSTER_GAP_MIN + random(IDLE_CLUSTER_GAP_MAX - IDLE_CLUSTER_GAP_MIN);
+    // Escalating gaps based on time since last real activity
+    unsigned long idleTime = now - lastRealActivity;
+    unsigned long gap;
+    if (idleTime > 3600000) {       // >1 hr → stop completely
+      crabTyping = false;
+      nextIdleHop = 0xFFFFFFFF;     // Never
+    } else if (idleTime > 900000) { // >15 min → 15 min gaps
+      gap = 900000;
+      nextIdleHop = now + gap;
+    } else if (idleTime > 120000) { // >2 min → 5 min gaps
+      gap = 300000;
+      nextIdleHop = now + gap;
+    } else {                        // First 2 min → 25-75s gaps
+      gap = (IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS)) * 5;
+      nextIdleHop = now + gap;
     }
-
-    nextIdleHop = now + IDLE_HOP_MIN_MS + random(IDLE_HOP_MAX_MS - IDLE_HOP_MIN_MS);
-
   }
 
-  // TTS talking head animation: retarget ambient while speaking
-  if (ttsPlaying && (now - lastTTSRetarget) >= TTS_RETARGET_MS) {
-    lastTTSRetarget = now;
-    ambientTargetOffset = ((float)random(-100, 101) / 100.0f) * TTS_HOP_RANGE;
-    ambientSpringActive = false;
+  // L/R flip on interval
+  if (crabTyping && (now - crabTypeLastFlip) >= crabTypeInterval) {
+    crabTypeLeft = !crabTypeLeft;
+    crabTypeLastFlip = now;
   }
 
-  // Spring physics: pull toward target (conscious layer)
-  float diff = servoTargetAngle - servoCurrentAngle;
-  servoVelocity += diff * SPRING_K;
-  servoVelocity *= SPRING_DAMPING;
-
-  // Risk oscillation overlay
-  if (servoOscillationAmp > 0.1f) {
-    servoOscillationPhase += 0.3f;
-    servoVelocity += sin(servoOscillationPhase) * servoOscillationAmp * 0.05f;
-    servoOscillationAmp *= OSCILLATION_DECAY;
+  // Set servo position: full snap L or R
+  if (crabTyping) {
+    servoCurrentAngle = crabTypeLeft ? -crabTypeAmp : crabTypeAmp;
   }
+  // When not typing, stay wherever the last flip left us (arm down)
 
-  servoCurrentAngle += servoVelocity;
-
-  // Ambient layer: spring (nag kicks) or simple ease (idle hops)
-  if (ambientSpringActive) {
-    float ambientDiff = ambientTargetOffset - ambientCurrentOffset;
-    ambientVelocity += ambientDiff * AMBIENT_SPRING_K;
-    ambientVelocity *= AMBIENT_SPRING_DAMPING;
-    ambientCurrentOffset += ambientVelocity;
-  } else {
-    ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * AMBIENT_LERP_RATE;
-  }
-
-  // Write to servo — layers: conscious + ambient + chirp servo kick
-  int pos = (int)(SERVO_CENTER + servoCurrentAngle + ambientCurrentOffset + chirpServoOffset);
+  // Write to servo
+  int pos = (int)(SERVO_CENTER + servoCurrentAngle + chirpServoOffset);
   pos = constrain(pos, SERVO_MIN, SERVO_MAX);
   servoWriteAngle(pos);
 }
@@ -176,9 +187,10 @@ void updateServo() {
 // Setup
 // ============================================================
 void setupServo() {
-  ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ, SERVO_LEDC_BITS);
+  // Use high LEDC channel (7) to avoid conflict with I2S internal timers
+  ledcAttachChannel(SERVO_PIN, SERVO_LEDC_FREQ, SERVO_LEDC_BITS, 7);
   servoWriteAngle(SERVO_CENTER);
-  Serial.print("[servo] LEDC PWM on pin D0 (GPIO");
+  Serial.print("[servo] LEDC PWM ch7 on pin D3 (GPIO");
   Serial.print((int)SERVO_PIN);
   Serial.println(")");
 }
@@ -187,15 +199,12 @@ void setupServo() {
 // Startup wiggle
 // ============================================================
 void startupServoAnimation() {
-  // Crab scuttle: quick side-to-side like pincers snapping
-  for (int i = 0; i < 3; i++) {
-    servoWriteAngle(SERVO_CENTER - 20);
-    delay(120);
-    servoWriteAngle(SERVO_CENTER + 20);
-    delay(120);
-  }
+  servoWriteAngle(SERVO_CENTER - 30);
+  delay(300);
+  servoWriteAngle(SERVO_CENTER + 30);
+  delay(300);
   servoWriteAngle(SERVO_CENTER);
-  delay(150);
+  delay(200);
 }
 
 // ============================================================
@@ -258,6 +267,8 @@ void snapToCenter() {
   servoTargetAngle = 0;
   servoVelocity = 0;
   servoOscillationAmp = 0;
+  crabTypeAmp = 0;
+  crabTyping = false;
   ambientCurrentOffset = 0;
   ambientTargetOffset = 0;
   ambientVelocity = 0;
@@ -338,8 +349,8 @@ void triggerDemoPreset() {
   // But if dead level is active, pressing button exits it early
   if (deadLevelActive) {
     deadLevelActive = false;
-    Serial.println("[demo] Dead level cancelled");
-    return;
+    Serial.println("[demo] Dead level cancelled — playing first preset");
+    // Fall through to play the preset
   }
 
   // Every NUM_DEMO_PRESETS+1 press = dead level (after cycling all demos)

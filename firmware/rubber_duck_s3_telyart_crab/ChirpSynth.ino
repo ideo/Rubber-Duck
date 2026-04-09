@@ -363,10 +363,12 @@ void updateChirp() {
       float t = sampleTimeMs / (float)chirpDuration;
       freq = chirpStartFreq + (chirpEndFreq - chirpStartFreq) * t;
 
-      // Whistle servo
+      // Servo coupling during chirp
       if (isWhistle) {
+        // Positive whistle: one-direction lift (hands off keyboard)
         chirpServoOffset = hillEnvelope(t) * WHISTLE_SERVO_KICK;
       }
+      // Non-whistle chirps: crab typing oscillation handles servo motion
     }
     else if (doubleChirp) {
       float phase2Start = chirpDuration + gapDuration;
@@ -388,7 +390,7 @@ void updateChirp() {
           freq = chirp2PeakFreq + (chirp2EndFreq - chirp2PeakFreq) * tFall;
         }
 
-        // Whistle servo note 2
+        // Servo coupling note 2
         if (isWhistle) {
           chirpServoOffset = h * WHISTLE_SERVO_KICK;
         }
