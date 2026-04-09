@@ -149,6 +149,34 @@ struct PermissionEvent: Codable {
     }
 }
 
+/// Audio state broadcast for the dashboard debug panel.
+/// Sent at ~10Hz when mic is active (level updates) and on any state change.
+struct AudioState: Codable {
+    let type: String           // "audio_state"
+    let micDevice: String
+    let speakerDevice: String
+    let audioPath: String      // "local", "teensy", "esp32Serial"
+    let listenMode: String     // "off", "permissionsOnly", "active"
+    let isListening: Bool
+    let isSpeaking: Bool
+    let isWakeActive: Bool
+    let lastHeard: String
+    let micLevel: Float        // 0.0–1.0 RMS
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case micDevice = "mic_device"
+        case speakerDevice = "speaker_device"
+        case audioPath = "audio_path"
+        case listenMode = "listen_mode"
+        case isListening = "is_listening"
+        case isSpeaking = "is_speaking"
+        case isWakeActive = "is_wake_active"
+        case lastHeard = "last_heard"
+        case micLevel = "mic_level"
+    }
+}
+
 /// Discriminated union for all inbound WebSocket messages.
 /// Decodes via the "type" field to route to the correct payload.
 enum InboundMessage {

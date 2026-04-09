@@ -361,6 +361,11 @@ struct RubberDuckWidgetApp: App {
             DuckLog.log("[app] Wake word detected")
         }
 
+        // Wire audio state → dashboard WebSocket
+        speech.onAudioStateChange = { [weak server] state in
+            Task { await server?.broadcaster.broadcast(state) }
+        }
+
         // Give SpeechService the serial transport for ESP32 audio
         speech.setSerialTransport(serial.serialTransport)
 
