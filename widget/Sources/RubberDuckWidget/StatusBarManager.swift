@@ -693,7 +693,7 @@ enum PluginInstaller {
             }
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
-        } else if desktopPluginDirExists() {
+        } else if claudeConfigExists() {
             // No CLI but ~/.claude/plugins exists — direct file copy as best effort
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             directInstall()
@@ -705,12 +705,14 @@ enum PluginInstaller {
         }
     }
 
-    /// Check if ~/.claude/plugins exists (Claude Desktop or CLI has been run)
-    private static func desktopPluginDirExists() -> Bool {
+    /// Check if Claude is installed (Desktop or CLI has been run).
+    /// Checks for ~/.claude/ (not just ~/.claude/plugins/ — Desktop may not create
+    /// the plugins subdirectory until a plugin is first installed).
+    private static func claudeConfigExists() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let pluginsDir = "\(home)/.claude/plugins"
+        let claudeDir = "\(home)/.claude"
         var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: pluginsDir, isDirectory: &isDir) && isDir.boolValue
+        return FileManager.default.fileExists(atPath: claudeDir, isDirectory: &isDir) && isDir.boolValue
     }
 
     /// Install plugin by copying files directly to ~/.claude/plugins/ (no CLI needed)

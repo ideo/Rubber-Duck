@@ -969,7 +969,7 @@ class SpeechService: ObservableObject {
 
             // Immediate acknowledgment — duck perks up (skip chirp for speed)
             scheduleSpeech(
-                ["Yeah?", "Hmm?", "Yep?", "What's up?"].randomElement()!,
+                ["Yeah?", "Hmm?", "Yep?", "What's up?"].randomElement() ?? "",
                 kind: .acknowledgement,
                 lane: .turn,
                 scopeID: "wake",
@@ -1049,7 +1049,7 @@ class SpeechService: ObservableObject {
         switch decision {
         case .allow:
             scheduleSpeech(
-                ["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement()!,
+                ["Got it.", "Done.", "Approved.", "Yep.", "Go for it."].randomElement() ?? "",
                 kind: .permission,
                 lane: .critical,
                 scopeID: "permission-active",
@@ -1060,7 +1060,7 @@ class SpeechService: ObservableObject {
             onPermissionResponse?(0)
         case .deny:
             scheduleSpeech(
-                ["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement()!,
+                ["Blocked it.", "Nope.", "Denied.", "Not happening."].randomElement() ?? "",
                 kind: .permission,
                 lane: .critical,
                 scopeID: "permission-active",
@@ -1083,7 +1083,7 @@ class SpeechService: ObservableObject {
                 )
             } else {
                 scheduleSpeech(
-                    ["Got it.", "Done."].randomElement()!,
+                    ["Got it.", "Done."].randomElement() ?? "",
                     kind: .permission,
                     lane: .critical,
                     scopeID: "permission-active",

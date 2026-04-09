@@ -387,6 +387,7 @@ class SerialTransport: DeviceTransport {
             // But if we have a lot of pending data with no newline, it might be
             // binary garbage. Don't let it grow unbounded.
             if data.count > 8192 {
+                DuckLog.log("[serial] Warning: buffer overflow (\(data.count) bytes without newline) — clearing")
                 data.removeAll()
             }
             return

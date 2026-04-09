@@ -176,7 +176,7 @@ class DuckServer: ObservableObject {
                     scores = EvalScores(
                         creativity: 0, soundness: 0, ambition: 0,
                         elegance: 0, risk: 0,
-                        reaction: reactions.randomElement()!,
+                        reaction: reactions.randomElement() ?? "",
                         summary: "Evaluation failed"
                     )
                 }
@@ -412,7 +412,7 @@ class DuckServer: ObservableObject {
 
             await MainActor.run {
                 localTransport.onClearThinking?()
-                localTransport.onSpeak?(phrases.randomElement()!)
+                localTransport.onSpeak?(phrases.randomElement() ?? "")
             }
             return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
         }
@@ -425,17 +425,17 @@ class DuckServer: ObservableObject {
 
             let reaction: String = switch errorType {
             case "rate_limit":
-                ["Hit the rate limit. Take a breather.", "Throttled. Slow down.", "Rate limited. Wait a sec."].randomElement()!
+                ["Hit the rate limit. Take a breather.", "Throttled. Slow down.", "Rate limited. Wait a sec."].randomElement() ?? ""
             case "authentication_failed":
-                ["Auth failed. Check your API key.", "Credentials expired."].randomElement()!
+                ["Auth failed. Check your API key.", "Credentials expired."].randomElement() ?? ""
             case "billing_error":
-                ["Billing issue. Check your account.", "Payment problem."].randomElement()!
+                ["Billing issue. Check your account.", "Payment problem."].randomElement() ?? ""
             case "server_error":
-                ["Server's down. Not our fault.", "Server error. Try again.", "Their end, not ours."].randomElement()!
+                ["Server's down. Not our fault.", "Server error. Try again.", "Their end, not ours."].randomElement() ?? ""
             case "max_output_tokens":
-                ["Hit the output limit. Response was too long.", "Ran out of tokens."].randomElement()!
+                ["Hit the output limit. Response was too long.", "Ran out of tokens."].randomElement() ?? ""
             default:
-                ["Something went wrong.", "Hit a snag.", "Error. Not sure what."].randomElement()!
+                ["Something went wrong.", "Hit a snag.", "Error. Not sure what."].randomElement() ?? ""
             }
 
             await MainActor.run {
