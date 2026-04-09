@@ -74,6 +74,18 @@ void storedAudioPlayQuip() {
   storedAudioPlay(QUIP_TABLE[idx], QUIP_LEN_TABLE[idx]);
 }
 
+/// Play the volume announcement for a given step (0-4).
+/// For Silent (step 4): plays at 0.05 volume, then drops to 0 after playback.
+static bool pendingSilentDrop = false;
+
+void storedAudioPlayVolume(uint8_t step) {
+  if (step >= PHRASE_COUNT_VOLUMES) return;
+  Serial.printf("[stored] Volume step %d\n", step);
+  storedAudioPlay(VOL_PHRASE_TABLE[step], VOL_PHRASE_LEN_TABLE[step]);
+  // If stepping to Silent, we'll drop volume to 0 after playback finishes
+  pendingSilentDrop = (step == PHRASE_COUNT_VOLUMES - 1);
+}
+
 /// Returns true if a stored phrase is currently playing.
 bool isStoredAudioPlaying() {
   return storedPlaying;
@@ -107,6 +119,11 @@ void storedAudioFeed() {
     // Don't stop immediately — let ring buffer drain first
     if (ringAvailable() == 0) {
       storedAudioStop();
+      if (pendingSilentDrop) {
+        volumeScale = 0.0f;
+        pendingSilentDrop = false;
+        Serial.println("[stored] Silent — volume dropped to 0");
+      }
       Serial.println("[stored] Playback complete");
     }
     return;
@@ -119,10 +136,15 @@ void storedAudioFeed() {
   // Cap per call to avoid starving loop() — but generous (2048 not 256)
   toWrite = min(toWrite, (uint32_t)2048);
 
-  // Read from PROGMEM and write to ring buffer
+  // Read from PROGMEM, apply volume + boost, write to ring buffer
   int16_t chunk[2048];
+  float vol = volumeScale * 2.5f;
   for (uint32_t i = 0; i < toWrite; i++) {
-    chunk[i] = pgm_read_word(&storedPtr[storedPos + i]);
+    int16_t raw = (int16_t)pgm_read_word(&storedPtr[storedPos + i]);
+    int32_t scaled = (int32_t)(raw * vol);
+    if (scaled > 32767) scaled = 32767;
+    if (scaled < -32768) scaled = -32768;
+    chunk[i] = (int16_t)scaled;
   }
 
   uint32_t written = ringWrite(chunk, toWrite);

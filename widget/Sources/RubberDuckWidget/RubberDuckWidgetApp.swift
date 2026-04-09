@@ -385,6 +385,14 @@ struct RubberDuckWidgetApp: App {
             coordinator?.toggleMode()
         }
 
+        // Device button volume change → sync widget
+        serial.onVolumeFromDevice = { [weak speech] vol in
+            DuckConfig.volume = vol
+            speech?.setVolume(vol)
+            DuckLog.log("[serial] Device volume → \(vol)")
+            // StatusBarManager will pick up DuckConfig.volume on next menu open
+        }
+
         // Wire plugin installer voice feedback
         PluginInstaller.onSpeak = { [weak speech] text in
             speech?.scheduleSpeech(

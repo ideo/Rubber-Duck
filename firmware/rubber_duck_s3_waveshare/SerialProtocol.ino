@@ -125,6 +125,12 @@ void parseTextMessage(char *msg) {
   if (strncmp(msg, "VOL,", 4) == 0) {
     float vol = strtof(msg + 4, NULL);
     volumeScale = constrain(vol, 0.0f, 1.0f);
+    // Sync volumeStep to nearest preset so button cycling stays in sync
+    float minDist = 999.0f;
+    for (uint8_t i = 0; i < NUM_VOLUME_PRESETS; i++) {
+      float d = fabs(vol - volumePresets[i]);
+      if (d < minDist) { minDist = d; volumeStep = i; }
+    }
     return;
   }
 
@@ -152,7 +158,6 @@ void parseTextMessage(char *msg) {
     // Play "Connected" on first handshake (or reconnect)
     if (!widgetConnected) {
       widgetConnected = true;
-      lostPhrasePlayed = false;
       deferredConnected = true;
     }
     return;
