@@ -186,10 +186,18 @@ class DuckCoordinator: ObservableObject {
 
     /// Start the Jeopardy thinking melody (called from /compact endpoint).
     func startMelody() {
-        if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
-            melodyEngine.outputDeviceID = duckDevice.deviceID
+        // Prefer serial path when ESP32 hardware is connected
+        let transport = serialManager.serialTransport
+        if transport.isConnected {
+            melodyEngine.serialTransport = transport
         } else {
-            melodyEngine.outputDeviceID = nil
+            melodyEngine.serialTransport = nil
+            // Fallback: route local playback to USB audio device if present
+            if let duckDevice = AudioDeviceDiscovery.findDuckDevice() {
+                melodyEngine.outputDeviceID = duckDevice.deviceID
+            } else {
+                melodyEngine.outputDeviceID = nil
+            }
         }
         melodyEngine.start()
     }
