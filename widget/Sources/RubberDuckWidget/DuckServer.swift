@@ -448,13 +448,14 @@ class DuckServer: ObservableObject {
 
         // POST /permission-clear — tool succeeded, permission is resolved
         // Signal from PostToolUse hook — user approved via CLI (not voice).
-        // Resolves the PermissionGate so the original /permission curl unblocks,
-        // clears the voice gate, and updates the UI.
+        // Resolves the PermissionGate so the blocked /permission curl unblocks
+        // immediately instead of waiting for its full timeout. This prevents
+        // connection pile-up during rapid tool calls.
         srv.post("/permission-clear") { [localTransport] _ in
-            DuckLog.log("[permission] PostToolUse — clearing UI state")
-            // Only clear UI state (thinking indicator, expression).
-            // Do NOT resolve the gate — the PermissionRequest hook's stdout
-            // handles the actual decision, and resolve() would drain queued requests.
+            DuckLog.log("[permission] PostToolUse — resolving gate + clearing UI")
+            // Resolve the gate so the blocked /permission request returns immediately.
+            // The hook script handles empty/timeout responses gracefully (exit 0).
+            await permissionGate.resolve(decision: "allow")
             await MainActor.run {
                 localTransport.onClearThinking?()
             }

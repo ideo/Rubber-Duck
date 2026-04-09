@@ -19,9 +19,13 @@ import CoreAudio
 @MainActor
 class MelodyEngine {
 
+    // Audio graph — created once, reused across start/stop cycles.
+    // Tearing down AVAudioEngine mid-playback can crash the audio render
+    // thread and corrupt other dispatch queues (including NWListener).
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var pitchUnit: AVAudioUnitTimePitch?
+
     private var buffer: AVAudioPCMBuffer?
     private var fastBuffer: AVAudioPCMBuffer?  // Trimmed buffer for fast notes
     private var melodyTask: Task<Void, Never>?
@@ -29,7 +33,16 @@ class MelodyEngine {
 
     /// Output device ID — set to Teensy's AudioDeviceID to route there.
     /// When nil, plays through system default output.
-    var outputDeviceID: AudioDeviceID?
+    var outputDeviceID: AudioDeviceID? {
+        didSet {
+            // Re-route if we have a running engine
+            if let engine = engine {
+                if let deviceID = outputDeviceID {
+                    setOutputDevice(engine: engine, deviceID: deviceID)
+                }
+            }
+        }
+    }
 
     // Base pitch of the "Mmmm" sample — Ralph at roughly F3 (MIDI 53)
     private let baseMIDI: Float = 53.0
@@ -48,11 +61,6 @@ class MelodyEngine {
     private let fastTrim: Double = 0.29
 
     // MARK: - Jeopardy "Think!" Melody
-    //
-    // Flat sequence of events matching the proven Python prototype.
-    // int = play note at MIDI pitch (natural sample length)
-    // .fast(midi) = play note trimmed to fastTrim seconds
-    // .rest(beats) = silence for N beats
 
     private enum Event {
         case note(Int)           // Play at natural sample length
@@ -87,42 +95,63 @@ class MelodyEngine {
             return
         }
 
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let pitch = AVAudioUnitTimePitch()
+        // Create the audio graph once — reuse across start/stop cycles
+        if engine == nil {
+            let eng = AVAudioEngine()
+            let player = AVAudioPlayerNode()
+            let pitch = AVAudioUnitTimePitch()
+            pitch.rate = 1.0
 
-        // Preserve tempo while shifting pitch
-        pitch.rate = 1.0
+            eng.attach(player)
+            eng.attach(pitch)
 
-        engine.attach(player)
-        engine.attach(pitch)
+            let format = buffer!.format
+            eng.connect(player, to: pitch, format: format)
+            eng.connect(pitch, to: eng.mainMixerNode, format: format)
 
-        let format = buffer!.format
-        engine.connect(player, to: pitch, format: format)
-        engine.connect(pitch, to: engine.mainMixerNode, format: format)
+            player.volume = melodyVolume
 
-        // Route to Teensy (or other device) if configured
+            self.engine = eng
+            self.playerNode = player
+            self.pitchUnit = pitch
+        }
+
+        guard let engine = engine, let player = playerNode, let pitch = pitchUnit else { return }
+
+        // Route to device if configured
         if let deviceID = outputDeviceID {
             setOutputDevice(engine: engine, deviceID: deviceID)
         }
 
-        // Quiet — we're background humming, not performing
-        player.volume = melodyVolume
-
-        do {
-            try engine.start()
-        } catch {
-            DuckLog.log("[melody] Engine start failed: \(error)")
-            return
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                DuckLog.log("[melody] Engine start failed: \(error)")
+                return
+            }
         }
 
-        self.engine = engine
-        self.playerNode = player
-        self.pitchUnit = pitch
-        self.isPlaying = true
+        isPlaying = true
 
-        melodyTask = Task {
-            await playMelody()
+        // Run melody loop OFF MainActor so scheduleBuffer awaits don't starve the UI.
+        let capturedPlayer = player
+        let capturedPitch = pitch
+        let buf = buffer!
+        let fastBuf = fastBuffer ?? buffer!
+        let baseMIDI = baseMIDI
+        let sampleDuration = sampleDuration
+        let fastTrim = fastTrim
+        let beatDuration = beatDuration
+        let melody = melody
+        melodyTask = Task.detached { [weak self] in
+            await Self.playMelodyLoop(
+                player: capturedPlayer, pitch: capturedPitch,
+                buffer: buf, fastBuffer: fastBuf,
+                baseMIDI: baseMIDI, sampleDuration: sampleDuration,
+                fastTrim: fastTrim, beatDuration: beatDuration,
+                melody: melody, isPlaying: { await self?.isPlaying ?? false }
+            )
         }
 
         DuckLog.log("[melody] Jeopardy humming started")
@@ -134,19 +163,16 @@ class MelodyEngine {
         melodyTask?.cancel()
         melodyTask = nil
 
+        // Just stop the player — don't tear down the engine.
+        // The detached task may still hold references to the player/pitch nodes.
+        // Stopping the player is safe from any thread; destroying the engine is not.
         playerNode?.stop()
-        engine?.stop()
-
-        playerNode = nil
-        pitchUnit = nil
-        engine = nil
 
         DuckLog.log("[melody] Jeopardy humming stopped")
     }
 
     // MARK: - Audio Output Routing
 
-    /// Route AVAudioEngine output to a specific CoreAudio device.
     private func setOutputDevice(engine: AVAudioEngine, deviceID: AudioDeviceID) {
         let outputNode = engine.outputNode
         guard let audioUnit = outputNode.audioUnit else {
@@ -195,11 +221,9 @@ class MelodyEngine {
             // Create a trimmed buffer for fast notes (half the sample with fade-out)
             let fastFrames = AVAudioFrameCount(fastTrim * format.sampleRate)
             if fastFrames < frameCount, let fastPCM = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: fastFrames) {
-                // Copy frames
                 if let src = pcm.floatChannelData, let dst = fastPCM.floatChannelData {
                     for ch in 0..<Int(format.channelCount) {
                         memcpy(dst[ch], src[ch], Int(fastFrames) * MemoryLayout<Float>.size)
-                        // Apply short fade-out on last 30ms to avoid click
                         let fadeFrames = Int(0.03 * format.sampleRate)
                         let fadeStart = Int(fastFrames) - fadeFrames
                         if fadeStart > 0 {
@@ -222,33 +246,34 @@ class MelodyEngine {
         }
     }
 
-    /// Play one note: set pitch, schedule buffer once, wait for duration.
-    private func playNote(midi: Int, isFast: Bool) async {
-        guard let player = playerNode, let pitch = pitchUnit else { return }
-
-        let cents = (Float(midi) - baseMIDI) * 100.0
-        pitch.pitch = cents
-
-        let buf = isFast ? (fastBuffer ?? buffer!) : buffer!
-        await player.scheduleBuffer(buf, at: nil, options: [])
-        player.play()
-
-        let duration = isFast ? fastTrim : sampleDuration
-        try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-    }
-
-    /// Walk through melody events sequentially. Loops until stopped.
-    private func playMelody() async {
-        while !Task.isCancelled && isPlaying {
+    /// Static melody loop — runs OFF MainActor so audio awaits don't block the UI.
+    private static func playMelodyLoop(
+        player: AVAudioPlayerNode, pitch: AVAudioUnitTimePitch,
+        buffer: AVAudioPCMBuffer, fastBuffer: AVAudioPCMBuffer,
+        baseMIDI: Float, sampleDuration: Double, fastTrim: Double,
+        beatDuration: Double, melody: [Event],
+        isPlaying: @escaping () async -> Bool
+    ) async {
+        while !Task.isCancelled {
+            guard await isPlaying() else { return }
             for event in melody {
-                guard !Task.isCancelled && isPlaying else { return }
+                guard !Task.isCancelled else { return }
+                guard await isPlaying() else { return }
 
                 switch event {
                 case .note(let midi):
-                    await playNote(midi: midi, isFast: false)
+                    let cents = (Float(midi) - baseMIDI) * 100.0
+                    pitch.pitch = cents
+                    await player.scheduleBuffer(buffer, at: nil, options: [])
+                    player.play()
+                    try? await Task.sleep(nanoseconds: UInt64(sampleDuration * 1_000_000_000))
 
                 case .fast(let midi):
-                    await playNote(midi: midi, isFast: true)
+                    let cents = (Float(midi) - baseMIDI) * 100.0
+                    pitch.pitch = cents
+                    await player.scheduleBuffer(fastBuffer, at: nil, options: [])
+                    player.play()
+                    try? await Task.sleep(nanoseconds: UInt64(fastTrim * 1_000_000_000))
 
                 case .rest(let beats):
                     let duration = beats * beatDuration
@@ -257,7 +282,8 @@ class MelodyEngine {
             }
 
             // Breath between loops
-            guard !Task.isCancelled && isPlaying else { return }
+            guard !Task.isCancelled else { return }
+            guard await isPlaying() else { return }
             try? await Task.sleep(nanoseconds: UInt64(2.0 * beatDuration * 1_000_000_000))
         }
     }

@@ -59,8 +59,11 @@ class DuckCoordinator: ObservableObject {
         thinkingTimeout?.cancel()
         thinkingTimeout = nil
 
-        // Stop any melody that was playing (Claude responded)
-        melodyEngine.stop()
+        // Stop melody only when Claude responds (not on user evals — those
+        // arrive while Claude is still thinking, which is when the melody plays).
+        if !isUserEval {
+            melodyEngine.stop()
+        }
 
         // Safety net: auto-clear thinking if Claude eval never arrives (session crash, etc.)
         if isUserEval {
