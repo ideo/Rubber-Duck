@@ -22,9 +22,19 @@ class SerialTransport: DeviceTransport {
     /// Board identity from handshake (e.g. "ESP32S3", "TEENSY40"). Nil until identified.
     private(set) var connectedBoard: String?
 
+    /// Thread-safe access to fileDescriptor and inAudioMode.
+    /// These are written on the main thread but read from the audio streaming
+    /// and serial read threads. Same pattern as TTSGate.
+    private var _lock = os_unfair_lock()
+    private var _fileDescriptor: Int32 = -1
+    private var _inAudioMode: Bool = false
+
     /// When true, writeString() wraps text in binary control frames (0x02)
     /// so the firmware can parse them during audio mode.
-    private(set) var inAudioMode: Bool = false
+    private(set) var inAudioMode: Bool {
+        get { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; return _inAudioMode }
+        set { os_unfair_lock_lock(&_lock); _inAudioMode = newValue; os_unfair_lock_unlock(&_lock) }
+    }
 
     /// Enter audio mode — text commands will be wrapped in binary control frames.
     func enterAudioMode() { inAudioMode = true }
@@ -32,7 +42,10 @@ class SerialTransport: DeviceTransport {
     /// Exit audio mode — text commands sent as plain strings again.
     func exitAudioMode() { inAudioMode = false }
 
-    private var fileDescriptor: Int32 = -1
+    private var fileDescriptor: Int32 {
+        get { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; return _fileDescriptor }
+        set { os_unfair_lock_lock(&_lock); _fileDescriptor = newValue; os_unfair_lock_unlock(&_lock) }
+    }
     private var reconnectTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
     private var devWatchSource: DispatchSourceFileSystemObject?
