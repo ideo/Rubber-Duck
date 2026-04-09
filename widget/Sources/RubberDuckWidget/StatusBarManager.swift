@@ -693,16 +693,27 @@ enum PluginInstaller {
             }
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             automaticInstall(claude: claude)
-        } else if claudeConfigExists() {
-            // No CLI but ~/.claude/plugins exists — direct file copy as best effort
+        } else if claudeConfigExists() || isClaudeDesktopInstalled() {
+            // No CLI but Claude is installed — create plugin dirs and copy files directly
             Task { @MainActor in onSpeak?("Installing the plugin. One moment.") }
             directInstall()
         } else {
+            let hasDesktop = isClaudeDesktopInstalled()
             Task { @MainActor in
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
-                showSetupChecklist(hasClaude: false, hasPlugin: DuckConfig.lastInstalledPluginVersion != nil)
+                showSetupChecklist(hasClaude: hasDesktop, hasPlugin: DuckConfig.lastInstalledPluginVersion != nil)
             }
         }
+    }
+
+    /// Check if Claude Desktop app is installed via Launch Services (works even if never launched).
+    private static func isClaudeDesktopInstalled() -> Bool {
+        if let urls = LSCopyApplicationURLsForBundleIdentifier(
+            "com.anthropic.claudefordesktop" as CFString, nil
+        )?.takeRetainedValue() as? [URL] {
+            return !urls.isEmpty
+        }
+        return false
     }
 
     /// Check if Claude is installed (Desktop or CLI has been run).
