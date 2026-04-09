@@ -157,6 +157,32 @@ Connect the [IDEO Duck, Duck, Duck](https://duck-duck-duck.edges.ideo.com/) or b
 - [`hardware/README.md`](hardware/README.md) — enclosure CAD, 3D print settings, assembly instructions, PCB design
 - [`firmware/README.md`](firmware/README.md) — supported boards, wiring, flashing, serial protocol
 
+#### Button Controls
+
+The duck has a single button with two modes:
+
+**Normal Mode** (default) — volume control:
+
+| Action | What happens |
+|--------|-------------|
+| **Press** | Announces current volume level |
+| **Press again within 15s** | Cycles to next level: Quack! (75%) → Normal (50%) → Indoor Voice (25%) → Whisper (5%) → Silent (0%) |
+| **Hold 2 seconds** | Enter Demo Mode |
+| **Hold 5 seconds** | Enter bootloader (for firmware updates) |
+
+Silent mode (0%) mutes all audio — the widget shows subtitles instead. Volume changes on the duck sync to the widget, and vice versa.
+
+**Demo Mode** — show off the duck's personality:
+
+| Action | What happens |
+|--------|-------------|
+| **Press** | Cycles through 6 emotion presets (Impressed → Excited → Skeptical → Nervous → Disgusted → Bored), each with a unique chirp and spoken quip |
+| **Hold 2 seconds** | Exit back to Normal Mode |
+| **Hold 5 seconds** | Enter bootloader |
+| **30s no button press** | Auto-exits to Normal Mode |
+
+On boot, the duck plays a startup chirp and says "I'm awake." When the widget connects, it says "Connected."
+
 ## Development
 
 ```bash
