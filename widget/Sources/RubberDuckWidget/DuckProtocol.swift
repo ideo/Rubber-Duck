@@ -234,7 +234,6 @@ protocol EvalTransport: AnyObject {
 }
 
 /// How the widget talks to the hardware duck (currently serial, future: BLE/network).
-@MainActor
 protocol DeviceTransport: AnyObject {
     var isConnected: Bool { get }
     var deviceName: String { get }

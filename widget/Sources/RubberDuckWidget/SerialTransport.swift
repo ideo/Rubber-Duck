@@ -7,7 +7,6 @@
 
 import Foundation
 
-@MainActor
 class SerialTransport: DeviceTransport {
     private(set) var isConnected: Bool = false
     private(set) var deviceName: String = ""
@@ -33,9 +32,7 @@ class SerialTransport: DeviceTransport {
     /// Exit audio mode — text commands sent as plain strings again.
     func exitAudioMode() { inAudioMode = false }
 
-    /// nonisolated(unsafe): written only on MainActor (open/close), read from
-    /// nonisolated writeBytes/writeFrame for real-time audio streaming.
-    nonisolated(unsafe) private var fileDescriptor: Int32 = -1
+    private var fileDescriptor: Int32 = -1
     private var reconnectTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
     private var devWatchSource: DispatchSourceFileSystemObject?
@@ -89,21 +86,19 @@ class SerialTransport: DeviceTransport {
     }
 
     /// Write raw bytes (for binary audio frames).
-    /// nonisolated: POSIX write() is thread-safe on a file descriptor, and this is called
-    /// from the real-time audio streaming loop where MainActor hop would add latency.
-    nonisolated func writeBytes(_ data: [UInt8]) {
+    func writeBytes(_ data: [UInt8]) {
         guard fileDescriptor >= 0 else { return }
         let written = data.withUnsafeBufferPointer { ptr in
             write(fileDescriptor, ptr.baseAddress, data.count)
         }
         if written < 0 {
-            print("[serial] Write failed")
+            print("[serial] Write failed, reconnecting...")
+            disconnect()
         }
     }
 
     /// Write a binary-framed audio packet: [tag][len_hi][len_lo][payload].
-    /// nonisolated: called from the real-time audio streaming loop.
-    nonisolated func writeFrame(tag: UInt8, payload: [UInt8]) {
+    func writeFrame(tag: UInt8, payload: [UInt8]) {
         let len = UInt16(payload.count)
         var frame = [tag, UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF)]
         frame.append(contentsOf: payload)
@@ -126,13 +121,10 @@ class SerialTransport: DeviceTransport {
                 queue: .global(qos: .utility)
             )
             source.setEventHandler { [weak self] in
+                guard let self = self, !self.isConnected else { return }
                 // Small delay to let the kernel finish creating the device node
                 Thread.sleep(forTimeInterval: 0.3)
-                // Hop to MainActor for all state access
-                Task { @MainActor [weak self] in
-                    guard let self, !self.isConnected else { return }
-                    self.connect()
-                }
+                self.connect()
             }
             source.setCancelHandler { close(devFD) }
             source.resume()
@@ -315,7 +307,8 @@ class SerialTransport: DeviceTransport {
     private func startReading() {
         readTask?.cancel()
         let fd = fileDescriptor
-        readTask = Task.detached { [weak self] in
+        let transport = self
+        readTask = Task.detached {
             var buffer = [UInt8](repeating: 0, count: 4096)
             var pending = Data()
 
@@ -323,22 +316,13 @@ class SerialTransport: DeviceTransport {
                 let bytesRead = read(fd, &buffer, buffer.count)
                 if bytesRead > 0 {
                     pending.append(contentsOf: buffer[0..<bytesRead])
-                    // Hop to MainActor for all state mutations
-                    let chunk = pending
-                    pending.removeAll(keepingCapacity: true)
-                    await MainActor.run { [weak self, chunk] in
-                        guard let self else { return }
-                        var data = chunk
-                        self.processPending(&data)
-                    }
+                    transport.processPending(&pending)
                 } else if bytesRead == 0 {
                     try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
                 } else {
                     // Read error — device unplugged or connection lost
                     print("[serial] Read error (device unplugged?) — disconnecting")
-                    await MainActor.run { [weak self] in
-                        self?.disconnect()
-                    }
+                    transport.disconnect()
                     break
                 }
             }
