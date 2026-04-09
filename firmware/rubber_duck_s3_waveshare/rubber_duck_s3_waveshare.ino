@@ -29,6 +29,13 @@
 // ============================================================
 
 #include "Config.h"
+#include "StoredPhrases.h"
+
+// Forward declarations — StoredAudio.ino / AudioStream.ino
+void storedAudioPlay(const int16_t* phrase, uint32_t sampleCount);
+void storedAudioPlayQuip();
+bool isStoredAudioPlaying();
+bool isAudioBusy();
 
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
@@ -52,6 +59,15 @@ unsigned long lastExpressionTime = 0;
 // --- Button State ---
 bool          buttonDown   = false;
 unsigned long buttonDownAt = 0;
+
+// --- Stored Audio / Connection State ---
+bool          widgetConnected = false;
+unsigned long lastSerialRx    = 0;       // Last time we got ANY serial data
+#define       LOST_TIMEOUT_MS 30000      // 30s without serial → "I can't find my computer"
+bool          lostPhrasePlayed = false;  // Only play once per disconnect
+bool          deferredQuip = false;
+bool          deferredAwake = false;
+bool          deferredConnected = false;
 
 void setup() {
   Serial.setRxBufferSize(16384); // Large USB CDC RX buffer — prevents byte loss during i2s writes
@@ -88,6 +104,7 @@ void setup() {
   #endif
   #if ENABLE_AUDIO
     playStartupChirp();
+    deferredAwake = true;
   #endif
 
   if (Serial) {
@@ -108,6 +125,7 @@ void loop() {
   // --- Feed I2S from ring buffer (if streaming or chirping) ---
   #if ENABLE_AUDIO
     updateChirp();      // Generate chirp samples into ring buffer
+    storedAudioFeed();  // Feed stored phrase samples into ring buffer
     audioFeedI2S();     // Drain ring buffer to I2S DMA
     // Read serial again immediately after I2S write to minimize CDC buffer buildup
     readSerial();
@@ -117,6 +135,30 @@ void loop() {
       ChirpTarget ct = chirpReducer(deferredChirpScores);
       playChirp(ct);
       deferredChirp = false;
+    }
+
+    // Play deferred phrases after chirp finishes
+    if (!isAudioBusy() && !isStoredAudioPlaying()) {
+      if (deferredAwake) {
+        storedAudioPlay(PHRASE_AWAKE, PHRASE_AWAKE_LEN);
+        deferredAwake = false;
+      } else if (deferredConnected) {
+        storedAudioPlay(PHRASE_CONNECTED, PHRASE_CONNECTED_LEN);
+        deferredConnected = false;
+      } else if (deferredQuip) {
+        storedAudioPlayQuip();
+        deferredQuip = false;
+      }
+    }
+
+    // "I can't find my computer" — after 30s with no serial data
+    if (widgetConnected && lastSerialRx > 0 && !lostPhrasePlayed) {
+      if ((now - lastSerialRx) > LOST_TIMEOUT_MS && !isAudioStreaming() && !isStoredAudioPlaying()) {
+        storedAudioPlay(PHRASE_LOST, PHRASE_LOST_LEN);
+        lostPhrasePlayed = true;
+        widgetConnected = false;
+        Serial.println("[duck] Lost widget connection");
+      }
     }
   #endif
 
@@ -140,9 +182,6 @@ void loop() {
         Serial.println("[duck] Entering bootloader via button...");
         Serial.flush();
         delay(100);
-        #if defined(CONFIG_IDF_TARGET_ESP32S3)
-          chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
-        #endif
         esp_restart();
       } else if (held >= LONG_PRESS_MS) {
         snapToCenter();
@@ -158,6 +197,7 @@ void loop() {
           advanceCalibration();
         } else {
           triggerDemoPreset();
+          deferredQuip = true;
         }
       }
     }

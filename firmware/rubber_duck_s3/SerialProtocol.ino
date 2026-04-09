@@ -78,6 +78,7 @@ void readSerialText() {
 }
 
 void parseTextMessage(char *msg) {
+  lastSerialRx = millis();  // Track for "lost computer" detection
   char source = msg[0];
 
   // --- Audio mode entry ---
@@ -139,15 +140,21 @@ void parseTextMessage(char *msg) {
     return;
   }
 
-  // --- Identity ---
+  // --- Identity (handshake) ---
   if (source == 'I') {
     #if defined(CONFIG_IDF_TARGET_ESP32S3)
-      Serial.println("DUCK,ESP32S3,1.0");
+      Serial.println("DUCK,ESP32S3,1.0,XIAO");
     #elif defined(CONFIG_IDF_TARGET_ESP32C3)
-      Serial.println("DUCK,ESP32C3,1.0");
+      Serial.println("DUCK,ESP32C3,1.0,XIAO");
     #else
-      Serial.println("DUCK,ESP32,1.0");
+      Serial.println("DUCK,ESP32,1.0,XIAO");
     #endif
+    // Play "Connected" on first handshake (or reconnect)
+    if (!widgetConnected) {
+      widgetConnected = true;
+      lostPhrasePlayed = false;
+      deferredConnected = true;
+    }
     return;
   }
 
@@ -156,9 +163,6 @@ void parseTextMessage(char *msg) {
     Serial.println("[duck] Entering bootloader...");
     Serial.flush();
     delay(100);
-    #if defined(CONFIG_IDF_TARGET_ESP32S3)
-      chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
-    #endif
     esp_restart();
     return;
   }
@@ -370,6 +374,7 @@ void readSerialBinary() {
 
     if (frameReceivedLen >= frameExpectedLen) {
       audioModeLastRx = millis();  // Any complete frame resets the timeout
+      lastSerialRx = audioModeLastRx;  // Track for "lost computer" detection
       // Frame complete — dispatch
       if (frameType == FRAME_MODE_AUDIO) {
         audioStreamWrite(frameBuf, frameExpectedLen);

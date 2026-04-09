@@ -15,6 +15,10 @@
 #include "driver/gpio.h"
 #include <math.h>
 
+// Forward declarations — StoredAudio.ino (sorted after AudioStream.ino)
+bool isStoredAudioPlaying();
+void storedAudioStop();
+
 // ============================================================
 // Ring Buffer
 // ============================================================
@@ -150,6 +154,8 @@ static void audioSetSampleRate(uint32_t rate) {
 // ============================================================
 
 void audioStreamBegin(uint32_t sampleRate, uint8_t bits, uint8_t channels) {
+  // Kill any stored phrase playback — serial TTS takes priority
+  storedAudioStop();
   ringClear();
   streaming = true;
   prefilled = false;
@@ -171,6 +177,10 @@ void audioStreamEnd() {
 
 bool isAudioStreaming() {
   return streaming || draining;
+}
+
+bool isAudioBusy() {
+  return streaming || draining || chirpPlaying;
 }
 
 void audioChirpBegin() {
@@ -215,13 +225,13 @@ static int16_t stereoChunk[I2S_DMA_BUF_LEN * 2];
 
 void audioFeedI2S() {
   if (!txHandle) return;
-  if (!streaming && !draining && !chirpPlaying) return;
+  if (!streaming && !draining && !chirpPlaying && !isStoredAudioPlaying()) return;
 
   if (streaming && !prefilled && !chirpPlaying) return;
 
   uint32_t avail = ringAvailable();
 
-  if (draining && !chirpPlaying && avail == 0) {
+  if (draining && !chirpPlaying && !isStoredAudioPlaying() && avail == 0) {
     draining = false;
     // auto_clear handles silence
     return;
