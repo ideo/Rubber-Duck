@@ -191,103 +191,6 @@
     font-size: 0.85rem;
     padding: 40px 0;
   }
-
-  /* --- Audio Debug Panel --- */
-  .audio-panel {
-    background: #16213e;
-    border: 1px solid #2a2a4a;
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin-bottom: 16px;
-  }
-  .audio-panel h2 {
-    font-size: 0.7rem;
-    color: #555;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin-bottom: 12px;
-  }
-  .audio-devices {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 12px;
-  }
-  .audio-device {
-    flex: 1;
-  }
-  .audio-device-label {
-    font-size: 0.6rem;
-    color: #556;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 2px;
-  }
-  .audio-device-name {
-    font-size: 0.8rem;
-    color: #ccc;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .audio-pills {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-  }
-  .audio-pill {
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 4px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    background: #0f1a2e;
-    color: #556;
-  }
-  .audio-pill.active { background: #1a3a2a; color: #4a9; }
-  .audio-pill.warn { background: #3a2a1a; color: #f0c040; }
-  .audio-pill.hot { background: #3a1a1a; color: #e04080; }
-  .audio-pill.off { background: #1a1a1a; color: #444; }
-  .audio-level-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-  .audio-level-label {
-    font-size: 0.65rem;
-    color: #556;
-    width: 36px;
-    flex-shrink: 0;
-  }
-  .audio-level-track {
-    flex: 1;
-    height: 12px;
-    background: #0f1a2e;
-    border-radius: 3px;
-    overflow: hidden;
-    position: relative;
-  }
-  .audio-level-bar {
-    height: 100%;
-    border-radius: 3px;
-    background: #40c080;
-    width: 0%;
-    transition: width 0.08s linear, background 0.2s;
-  }
-  .audio-level-bar.hot { background: #f0c040; }
-  .audio-level-bar.clip { background: #e04080; }
-  .audio-last-heard {
-    font-size: 0.75rem;
-    color: #6ab0f3;
-    font-style: italic;
-    min-height: 1.2em;
-    margin-top: 4px;
-  }
-  .audio-last-heard:empty::before {
-    content: "—";
-    color: #333;
-  }
 </style>
 </head>
 <body>
@@ -296,28 +199,6 @@
 <div class="status disconnected" id="status">disconnected</div>
 
 <div class="container">
-  <div class="audio-panel" id="audioPanel" style="display:none">
-    <h2>Audio</h2>
-    <div class="audio-devices">
-      <div class="audio-device">
-        <div class="audio-device-label">Mic</div>
-        <div class="audio-device-name" id="audioMic">—</div>
-      </div>
-      <div class="audio-device">
-        <div class="audio-device-label">Speaker</div>
-        <div class="audio-device-name" id="audioSpeaker">—</div>
-      </div>
-    </div>
-    <div class="audio-pills" id="audioPills"></div>
-    <div class="audio-level-row">
-      <div class="audio-level-label">Level</div>
-      <div class="audio-level-track">
-        <div class="audio-level-bar" id="audioLevelBar"></div>
-      </div>
-    </div>
-    <div class="audio-last-heard" id="audioLastHeard"></div>
-  </div>
-
   <div class="eval-card" id="evalCard" style="display:none">
     <div class="eval-header">
       <span class="eval-source" id="evalSource"></span>
@@ -374,12 +255,8 @@ function connect() {
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.type === "audio_state") {
-      renderAudioState(data);
-    } else {
-      renderEval(data);
-      addHistory(data);
-    }
+    renderEval(data);
+    addHistory(data);
   };
 }
 
@@ -500,53 +377,6 @@ function addHistory(data) {
       container.appendChild(item);
     }
   }
-}
-
-function renderAudioState(data) {
-  const panel = document.getElementById("audioPanel");
-  panel.style.display = "block";
-
-  // Device names
-  document.getElementById("audioMic").textContent = data.mic_device || "—";
-  document.getElementById("audioSpeaker").textContent = data.speaker_device || "—";
-
-  // Status pills
-  const pills = document.getElementById("audioPills");
-  pills.innerHTML = "";
-
-  const makePill = (text, cls) => {
-    const el = document.createElement("span");
-    el.className = "audio-pill " + cls;
-    el.textContent = text;
-    pills.appendChild(el);
-  };
-
-  // Audio path
-  const pathLabels = { local: "Local", teensy: "Teensy", esp32Serial: "ESP32" };
-  makePill(pathLabels[data.audio_path] || data.audio_path, data.audio_path === "local" ? "" : "active");
-
-  // Listen mode
-  const modeLabels = { off: "Mic Off", permissionsOnly: "Permissions Only", active: "Active" };
-  const modeCls = data.listen_mode === "active" ? "active" : data.listen_mode === "off" ? "off" : "warn";
-  makePill(modeLabels[data.listen_mode] || data.listen_mode, modeCls);
-
-  // Listening indicator
-  if (data.is_listening) makePill("Listening", "active");
-
-  // Speaking indicator
-  if (data.is_speaking) makePill("Speaking", "warn");
-
-  // Wake word indicator
-  if (data.is_wake_active) makePill("Wake!", "hot");
-
-  // Level meter
-  const levelBar = document.getElementById("audioLevelBar");
-  const pct = Math.min(data.mic_level * 100 * 3, 100); // Scale up for visibility (RMS is typically low)
-  levelBar.style.width = pct + "%";
-  levelBar.className = "audio-level-bar" + (pct > 80 ? " clip" : pct > 50 ? " hot" : "");
-
-  // Last heard
-  document.getElementById("audioLastHeard").textContent = data.last_heard || "";
 }
 
 connect();

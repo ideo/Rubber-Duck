@@ -16,9 +16,6 @@ class SerialMicEngine: ObservableObject {
     /// Called when a transcript is produced (text, isFinal).
     var onTranscript: ((String, Bool) -> Void)?
 
-    /// Called from the serial frame handler with RMS level (0.0–1.0). Fires off MainActor.
-    nonisolated(unsafe) var onAudioLevel: ((Float) -> Void)?
-
     private weak var transport: SerialTransport?
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -182,20 +179,6 @@ class SerialMicEngine: ObservableObject {
         }
 
         _activeRequest?.append(pcmBuffer)
-
-        // Compute RMS for the dashboard level meter
-        if let cb = onAudioLevel {
-            data.withUnsafeBytes { rawPtr in
-                guard let srcPtr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
-                var sum: Float = 0
-                for i in 0..<sampleCount {
-                    let s = Float(srcPtr[i]) / 32768.0
-                    sum += s * s
-                }
-                let rms = min(sqrt(sum / max(Float(sampleCount), 1)), 1.0)
-                cb(rms)
-            }
-        }
     }
 
 }

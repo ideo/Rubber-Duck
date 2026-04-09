@@ -17,9 +17,6 @@ class STTEngine: ObservableObject {
     /// Called when a transcript is produced (text, isFinal).
     var onTranscript: ((String, Bool) -> Void)?
 
-    /// Called from the audio tap with RMS level (0.0–1.0). Fires on the audio thread.
-    nonisolated(unsafe) var onAudioLevel: ((Float) -> Void)?
-
     // Audio
     private let audioEngine = AVAudioEngine()
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -97,20 +94,9 @@ class STTEngine: ObservableObject {
         // Gate: don't feed audio to recognition while TTS is playing.
         // Captures ttsGate directly (not through self) so it's not actor-isolated.
         let gate = ttsGate
-        let levelCallback = onAudioLevel
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
             if let g = gate, g.muted { return }
             request.append(buffer)
-
-            // Compute RMS for the dashboard level meter
-            if let cb = levelCallback,
-               let data = buffer.floatChannelData?[0] {
-                let count = Int(buffer.frameLength)
-                var sum: Float = 0
-                for i in 0..<count { sum += data[i] * data[i] }
-                let rms = min(sqrt(sum / max(Float(count), 1)), 1.0)
-                cb(rms)
-            }
         }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in

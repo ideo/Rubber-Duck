@@ -109,7 +109,6 @@ class SpeechService: ObservableObject {
         didSet {
             UserDefaults.standard.set(listenMode.rawValue, forKey: "duck_listen_mode")
             applyListenMode()
-            broadcastAudioState()
         }
     }
 
@@ -138,13 +137,6 @@ class SpeechService: ObservableObject {
     var onVoiceInput: ((String) -> Void)?
     var onWakeWord: (() -> Void)?
     var onPermissionResponse: ((Int) -> Void)?  // 0=allow once, 1+=suggestion index, -1=deny
-
-    /// Called when audio state changes (device, mode, level). Wired to WS broadcaster.
-    var onAudioStateChange: ((AudioState) -> Void)?
-
-    // Mic level tracking (updated from audio thread, read on MainActor)
-    private nonisolated(unsafe) var _currentMicLevel: Float = 0
-    private var levelBroadcastTask: Task<Void, Never>?
 
     /// Which audio device path is active.
     enum AudioPath {
@@ -216,11 +208,6 @@ class SpeechService: ObservableObject {
         // Share the TTS mute gate with STT so mic mutes during playback
         stt.setTTSGate(tts.gate)
 
-        // Wire mic level for dashboard
-        stt.onAudioLevel = { [weak self] level in
-            self?._currentMicLevel = level
-        }
-
         // Watch for USB audio device plug/unplug.
         // CoreAudio fires multiple callbacks per plug event (one per endpoint),
         // so we debounce to let enumeration settle before checking state.
@@ -253,77 +240,9 @@ class SpeechService: ObservableObject {
         }
         // Share the serial TTS gate with serial mic so mic mutes during playback
         sMic.setTTSGate(sTTS.gate)
-        // Wire mic level for dashboard
-        sMic.onAudioLevel = { [weak self] level in
-            self?._currentMicLevel = level
-        }
         self.serialMic = sMic
 
         log("[speech] Serial audio engines created for ESP32")
-    }
-
-    // MARK: - Audio State Broadcasting (Dashboard)
-
-    /// Build the current audio state snapshot for the dashboard.
-    func buildAudioState() -> AudioState {
-        let pathStr: String
-        switch audioPath {
-        case .local: pathStr = "local"
-        case .teensy: pathStr = "teensy"
-        case .esp32Serial: pathStr = "esp32Serial"
-        }
-
-        let modeStr: String
-        switch listenMode {
-        case .off: modeStr = "off"
-        case .permissionsOnly: modeStr = "permissionsOnly"
-        case .active: modeStr = "active"
-        }
-
-        let speakerName: String
-        switch audioPath {
-        case .local: speakerName = "System Default"
-        case .teensy: speakerName = tts.outputDeviceName ?? "Teensy"
-        case .esp32Serial: speakerName = "ESP32 Serial"
-        }
-
-        return AudioState(
-            type: "audio_state",
-            micDevice: selectedMicName.isEmpty ? "None" : selectedMicName,
-            speakerDevice: speakerName,
-            audioPath: pathStr,
-            listenMode: modeStr,
-            isListening: isListening,
-            isSpeaking: isSpeaking,
-            isWakeActive: isWakeActive,
-            lastHeard: lastHeard,
-            micLevel: _currentMicLevel
-        )
-    }
-
-    /// Notify the dashboard of a state change.
-    func broadcastAudioState() {
-        onAudioStateChange?(buildAudioState())
-    }
-
-    /// Start periodic level broadcasts (~10Hz) while listening.
-    func startLevelBroadcast() {
-        levelBroadcastTask?.cancel()
-        levelBroadcastTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms = 10Hz
-                guard let self, !Task.isCancelled else { break }
-                self.onAudioStateChange?(self.buildAudioState())
-            }
-        }
-    }
-
-    /// Stop level broadcasts.
-    func stopLevelBroadcast() {
-        levelBroadcastTask?.cancel()
-        levelBroadcastTask = nil
-        _currentMicLevel = 0
-        broadcastAudioState() // Send final zero-level update
     }
 
     /// Called when the serial device connects, disconnects, or identifies itself.
@@ -391,8 +310,6 @@ class SpeechService: ObservableObject {
         // Restart on the new path if we were listening
         if wasListening {
             startListening()
-        } else {
-            broadcastAudioState()
         }
     }
 
@@ -511,16 +428,12 @@ class SpeechService: ObservableObject {
 
         if isListening {
             log("[speech] Listening via \(audioPath) for \"\(wakeWord)\"...")
-            startLevelBroadcast()
-        } else {
-            broadcastAudioState()
         }
     }
 
     func stopListening() {
         activeSTT.stop()
         isListening = false
-        stopLevelBroadcast()
     }
 
     /// Whether the current voice is Silent (speech bubble only, no TTS).
@@ -734,7 +647,6 @@ class SpeechService: ObservableObject {
         activeSpeech = speech
         currentUtterance = speech.text
         isSpeaking = true
-        broadcastAudioState()
 
         let systemMuted = audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted()
         if isSilent || systemMuted {
@@ -775,7 +687,6 @@ class SpeechService: ObservableObject {
         activePlaybackBackend = nil
         isSpeaking = false
         currentUtterance = ""
-        broadcastAudioState()
         if finishedLane == .turn && pendingTurnSpeech == nil {
             currentTurnScopeID = nil
         }
