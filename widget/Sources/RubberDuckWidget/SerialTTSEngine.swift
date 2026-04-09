@@ -94,8 +94,10 @@ class SerialTTSEngine {
             }
 
             // NOW enter audio mode on ESP32
-            transportRef.enterAudioMode()
-            transportRef.sendCommand("A,16000,16,1")
+            await MainActor.run {
+                transportRef.enterAudioMode()
+                transportRef.sendCommand("A,16000,16,1")
+            }
 
             // Stream PCM as it arrives — no waiting for full render.
             // AsyncStream bridges the synth callback (producer) to the streaming loop (consumer).
@@ -203,7 +205,7 @@ class SerialTTSEngine {
 
     /// Wait for the firmware's chirp-complete signal ("K\n") before entering audio mode.
     /// Returns when the signal arrives, or after 3s timeout.
-    private nonisolated static func waitForChirpDone(transport: SerialTransport) async {
+    @MainActor private static func waitForChirpDone(transport: SerialTransport) async {
         let previousCallback = transport.onChirpDone
 
         // Use an actor-isolated flag to safely coordinate the callback and timeout.
