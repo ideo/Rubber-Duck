@@ -58,7 +58,7 @@ actor GeminiEvaluator {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let body = String(data: data, encoding: .utf8) ?? ""
             DuckLog.log("[gemini-eval] API error \(status): \(body.prefix(200))")
-            return Self.fallbackScores()
+            return Self.errorScores(status: status)
         }
 
         // Parse the Gemini API response
@@ -121,11 +121,27 @@ actor GeminiEvaluator {
         )
     }
 
+    private static func errorScores(status: Int) -> EvalScores {
+        let reaction: String
+        switch status {
+        case 401, 403: reaction = "Gemini isn't working. Check your API key or switch intelligence in the menu."
+        case 429: reaction = "Gemini is rate limited. Try again in a moment or switch intelligence."
+        case 500...599: reaction = "Gemini's servers are down. Switch intelligence or try later."
+        default: reaction = "Gemini isn't responding. Check your API key or switch intelligence."
+        }
+        return EvalScores(
+            creativity: 0, soundness: 0, ambition: 0,
+            elegance: 0, risk: 0,
+            reaction: reaction,
+            summary: "Evaluation failed (HTTP \(status))"
+        )
+    }
+
     private static func fallbackScores() -> EvalScores {
         EvalScores(
             creativity: 0, soundness: 0, ambition: 0,
             elegance: 0, risk: 0,
-            reaction: ["Hmm.", "That's odd.", "Didn't catch that."].randomElement()!,
+            reaction: "Gemini couldn't parse that one. Might be a fluke.",
             summary: "Failed to parse evaluation"
         )
     }

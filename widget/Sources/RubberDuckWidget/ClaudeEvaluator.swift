@@ -56,8 +56,8 @@ actor ClaudeEvaluator {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let body = String(data: data, encoding: .utf8) ?? ""
-            DuckLog.log("[eval] API error \(status): \(body.prefix(200))")
-            return Self.fallbackScores()
+            DuckLog.log("[eval] Haiku API error \(status): \(body.prefix(200))")
+            return Self.errorScores(status: status)
         }
 
         // Parse the API response to extract content text
@@ -65,7 +65,7 @@ actor ClaudeEvaluator {
               let content = json["content"] as? [[String: Any]],
               let firstBlock = content.first,
               var raw = firstBlock["text"] as? String else {
-            DuckLog.log("[eval] Failed to extract text from API response")
+            DuckLog.log("[eval] Failed to extract text from Haiku API response")
             return Self.fallbackScores()
         }
 
@@ -171,11 +171,27 @@ actor ClaudeEvaluator {
             """
     }
 
+    private static func errorScores(status: Int) -> EvalScores {
+        let reaction: String
+        switch status {
+        case 401: reaction = "Haiku isn't working. Check your API key or switch intelligence in the menu."
+        case 429: reaction = "Haiku is rate limited. Try again in a moment or switch intelligence."
+        case 500...599: reaction = "Haiku's servers are down. Switch intelligence or try later."
+        default: reaction = "Haiku isn't responding. Check your API key or switch intelligence."
+        }
+        return EvalScores(
+            creativity: 0, soundness: 0, ambition: 0,
+            elegance: 0, risk: 0,
+            reaction: reaction,
+            summary: "Evaluation failed (HTTP \(status))"
+        )
+    }
+
     private static func fallbackScores() -> EvalScores {
         EvalScores(
             creativity: 0, soundness: 0, ambition: 0,
             elegance: 0, risk: 0,
-            reaction: ["Hmm.", "That's odd.", "Didn't catch that."].randomElement()!,
+            reaction: "Haiku couldn't parse that one. Might be a fluke.",
             summary: "Failed to parse evaluation"
         )
     }

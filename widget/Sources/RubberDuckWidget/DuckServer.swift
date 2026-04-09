@@ -143,43 +143,27 @@ class DuckServer: ObservableObject {
                 }
             } catch {
                 let providerName = provider == .anthropic ? "Haiku" : provider == .gemini ? "Gemini" : "Foundation"
-                DuckLog.log("[server] Eval error (\(providerName)): \(error) — falling back to Foundation Model")
+                let errStr = "\(error)".lowercased()
+                DuckLog.log("[server] Eval error (\(providerName)): \(error)")
 
-                // Tell the user once (not every eval)
-                if provider != .foundation {
-                    let errDesc = "\(error)".prefix(100)
-                    let spoken: String
-                    if "\(error)".lowercased().contains("key") || "\(error)".lowercased().contains("auth") || "\(error)".lowercased().contains("401") {
-                        spoken = "\(providerName) API key issue. Check your key in the Intelligence menu. Falling back to on-device."
-                    } else if "\(error)".lowercased().contains("rate") || "\(error)".lowercased().contains("429") {
-                        spoken = "\(providerName) rate limited. Falling back to on-device for now."
-                    } else {
-                        spoken = "\(providerName) scoring failed. Falling back to on-device. Error: \(errDesc)"
-                    }
-                    await MainActor.run {
-                        localTransport.onSpeak?(spoken)
-                    }
+                let spoken: String
+                if provider == .foundation {
+                    // On-device failed — guardrail, token limit, etc.
+                    spoken = "On-device scoring hit a snag. Try again."
+                } else if errStr.contains("key") || errStr.contains("auth") || errStr.contains("401") {
+                    spoken = "\(providerName) isn't working. Check your API key or switch intelligence in the menu."
+                } else if errStr.contains("rate") || errStr.contains("429") {
+                    spoken = "\(providerName) is rate limited. Try again in a moment or switch intelligence."
+                } else {
+                    spoken = "\(providerName) isn't working. Check your API key or switch intelligence in the menu."
                 }
 
-                // Cloud provider failed — try Foundation Model as fallback
-                do {
-                    scores = try await localEvaluator.evaluate(text: text, source: source,
-                                                                userContext: userContext,
-                                                                claudeContext: claudeContext,
-                                                                wildcardEnabled: wildcardOn)
-                } catch {
-                    DuckLog.log("[server] Foundation Model fallback also failed: \(error)")
-                    await MainActor.run {
-                        localTransport.onSpeak?("On-device scoring also failed. Check the Intelligence menu.")
-                    }
-                    let reactions = ["Hmm.", "That's odd.", "Uh oh.", "Something broke.", "Didn't catch that."]
-                    scores = EvalScores(
-                        creativity: 0, soundness: 0, ambition: 0,
-                        elegance: 0, risk: 0,
-                        reaction: reactions.randomElement() ?? "",
-                        summary: "Evaluation failed"
-                    )
-                }
+                scores = EvalScores(
+                    creativity: 0, soundness: 0, ambition: 0,
+                    elegance: 0, risk: 0,
+                    reaction: spoken,
+                    summary: "Evaluation failed"
+                )
             }
 
             let textPreview = String(text.prefix(150)) + (text.count > 150 ? "..." : "")
