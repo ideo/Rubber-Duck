@@ -86,6 +86,9 @@ actor DuckHelpService {
         Optional Haiku or Gemini for sharper and faster scoring, needs API key. \
         You are currently using \(provider == .foundation ? "Foundation Models (on-device)" : provider == .anthropic ? "Claude Haiku (Anthropic API)" : "Gemini (Google API)") for scoring. \
         Install Claude from claude.com/download. Minimum version 1.1.9669. \
+        First-time Claude CLI users on Mac: Claude needs git, which requires Xcode Command Line Tools. \
+        If prompted, install them, then run "sudo xcodebuild -license accept" in Terminal to accept the license. \
+        Without accepting, git won't work and Claude CLI will keep asking. \
         Setup: go to Help menu, Get Started. It shows a checklist with what's installed and what's needed. \
         Two steps: install Claude (CLI or Desktop), then install the Duck Duck Duck plugin from Setup menu. \
         Plugin not working? Update Claude, start a new session. Mid-session, run /reload-plugins. \

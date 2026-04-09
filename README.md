@@ -120,6 +120,7 @@ On-device scoring runs slowly on M1/M2 (~30-60 seconds per eval). For instant re
 - **Duck not reacting** — Make sure the widget is running (duck in menu bar) and you have an active Claude session. Try `/reload-plugins`.
 - **Duck reacting slowly** — On M1/M2, on-device scoring takes 30-60s per eval. The duck IS working, just thinking. Switch to Gemini or Haiku in Preferences → Intelligence for instant reactions.
 - **Plugin not loading** — Start a new session. Hooks are cached at session start.
+- **Claude CLI asking for git / Xcode tools** — First-time CLI setup requires Xcode Command Line Tools. Install them when prompted, then run `sudo xcodebuild -license accept` in Terminal to accept the Apple license. Claude won't work until the license is accepted.
 
 ## Data & Privacy
 
