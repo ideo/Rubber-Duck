@@ -335,8 +335,8 @@ void triggerDemoPreset() {
   // But if dead level is active, pressing button exits it early
   if (deadLevelActive) {
     deadLevelActive = false;
-    Serial.println("[demo] Dead level cancelled");
-    return;
+    Serial.println("[demo] Dead level cancelled — playing first preset");
+    // Fall through to play the preset
   }
 
   // Every NUM_DEMO_PRESETS+1 press = dead level (after cycling all demos)

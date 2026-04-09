@@ -27,6 +27,20 @@
 // ============================================================
 
 #include "Config.h"
+#include "StoredPhrases.h"
+
+// Forward declarations — StoredAudio.ino
+void storedAudioPlay(const int16_t* phrase, uint32_t sampleCount);
+void storedAudioPlayQuip();
+void storedAudioPlayVolume(uint8_t step);
+bool isStoredAudioPlaying();
+bool isAudioBusy();
+void snapToCenter();
+
+// Defined in ServoControl.ino
+extern bool deadLevelActive;
+extern unsigned long deadLevelStart;
+extern int demoStep;
 
 // --- Global State ---
 EvalScores latestScores = {0, 0, 0, 0, 0, 'U', false};
@@ -50,6 +64,32 @@ unsigned long lastExpressionTime = 0;
 // --- Button State ---
 bool          buttonDown   = false;
 unsigned long buttonDownAt = 0;
+bool          longPressConsumed = false;  // Prevent short-press firing after 2s hold
+
+// --- Button Modes ---
+bool          demoMode = false;
+unsigned long demoModeEnteredAt = 0;
+unsigned long lastDemoPress = 0;
+#define       DEMO_AUTO_EXIT_MS 30000  // Exit demo mode after 30s of no button press
+
+unsigned long lastVolumePress = 0;
+#define       VOLUME_CYCLE_WINDOW_MS 15000  // Press within 15s to cycle, otherwise just announce
+
+// Volume presets (parallel to VOL_PHRASE_TABLE in StoredPhrases.h)
+const float   volumePresets[] = { 0.75f, 0.50f, 0.25f, 0.05f, 0.00f };
+#define       NUM_VOLUME_PRESETS 5
+uint8_t       volumeStep = 1;  // Default: Normal (0.50)
+
+// --- Stored Audio / Connection State ---
+bool          widgetConnected = false;
+unsigned long lastSerialRx    = 0;
+bool          deferredQuip = false;
+bool          deferredAwake = false;
+bool          deferredConnected = false;
+bool          deferredDemoMode = false;
+bool          deferredNormalMode = false;
+bool          deferredVolume = false;
+uint8_t       deferredVolumeStep = 0;
 
 void setup() {
   Serial.setRxBufferSize(16384); // Large USB CDC RX buffer — prevents byte loss during i2s writes
@@ -85,6 +125,7 @@ void setup() {
   #endif
   #if ENABLE_AUDIO
     playStartupChirp();
+    deferredAwake = true;
   #endif
 
   if (Serial) {
@@ -105,6 +146,7 @@ void loop() {
   // --- Feed I2S from ring buffer (if streaming or chirping) ---
   #if ENABLE_AUDIO
     updateChirp();      // Generate chirp samples into ring buffer
+    storedAudioFeed();  // Feed stored phrase samples into ring buffer
     audioFeedI2S();     // Drain ring buffer to I2S DMA
     // Read serial again immediately after I2S write to minimize CDC buffer buildup
     readSerial();
@@ -115,6 +157,30 @@ void loop() {
       playChirp(ct);
       deferredChirp = false;
     }
+
+    // Play deferred phrases after chirp finishes
+    if (!isAudioBusy() && !isStoredAudioPlaying()) {
+      if (deferredAwake) {
+        storedAudioPlay(PHRASE_AWAKE, PHRASE_AWAKE_LEN);
+        deferredAwake = false;
+      } else if (deferredConnected) {
+        storedAudioPlay(PHRASE_CONNECTED, PHRASE_CONNECTED_LEN);
+        deferredConnected = false;
+      } else if (deferredDemoMode) {
+        storedAudioPlay(PHRASE_DEMO_MODE, PHRASE_DEMO_MODE_LEN);
+        deferredDemoMode = false;
+      } else if (deferredNormalMode) {
+        storedAudioPlay(PHRASE_NORMAL_MODE, PHRASE_NORMAL_MODE_LEN);
+        deferredNormalMode = false;
+      } else if (deferredVolume) {
+        storedAudioPlayVolume(deferredVolumeStep);
+        deferredVolume = false;
+      } else if (deferredQuip) {
+        storedAudioPlayQuip();
+        deferredQuip = false;
+      }
+    }
+
   #endif
 
   // --- Mic capture: sample ADC + stream frames to widget ---
@@ -123,6 +189,10 @@ void loop() {
   #endif
 
   // --- Button handling ---
+  // Normal mode: short press cycles volume levels
+  // Demo mode: short press cycles demo presets with quips
+  // 2s hold: toggle between modes
+  // 5s hold: bootloader (both modes)
   #if ENABLE_BUTTON
   {
     bool pressed = (digitalRead(BUTTON_PIN) == LOW);
@@ -130,32 +200,77 @@ void loop() {
     if (pressed && !buttonDown) {
       buttonDown = true;
       buttonDownAt = now;
+      longPressConsumed = false;
     }
     else if (pressed && buttonDown) {
       unsigned long held = now - buttonDownAt;
       if (held >= 5000) {
-        // 5s hold → enter bootloader
+        // 5s hold → bootloader (both modes)
         Serial.println("[duck] Entering bootloader via button...");
         Serial.flush();
         delay(100);
-        #if defined(CONFIG_IDF_TARGET_ESP32S3)
-          chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
-        #endif
         esp_restart();
-      } else if (held >= LONG_PRESS_MS) {
-        snapToCenter();
-        buttonDown = false;
+      } else if (held >= LONG_PRESS_MS && !longPressConsumed) {
+        // 2s hold → toggle demo mode
+        longPressConsumed = true;
+        demoMode = !demoMode;
+        if (demoMode) {
+          Serial.println("[button] Entering demo mode");
+          deferredDemoMode = true;
+          demoModeEnteredAt = now;
+          lastDemoPress = now;
+          // Startup chirp + dead level hold until first button press
+          #if ENABLE_AUDIO
+            playStartupChirp();
+          #endif
+          deadLevelActive = true;
+          deadLevelStart = now;
+          snapToCenter();
+          demoStep = 0;
+        } else {
+          Serial.println("[button] Exiting demo mode");
+          deferredNormalMode = true;
+        }
       }
     }
     else if (!pressed && buttonDown) {
       buttonDown = false;
       unsigned long held = now - buttonDownAt;
 
-      if (held < LONG_PRESS_MS && held > 50) {
+      // Short press (< 2s, > 50ms debounce), only if 2s hold wasn't consumed
+      if (!longPressConsumed && held > 50) {
         if (calibrationMode) {
           advanceCalibration();
-        } else {
+        } else if (demoMode) {
+          // Demo mode: cycle presets + quip
           triggerDemoPreset();
+          deferredQuip = true;
+          lastDemoPress = now;
+        } else {
+          // Normal mode: first press announces current, subsequent presses within 15s cycle
+          bool shouldCycle = (now - lastVolumePress) < VOLUME_CYCLE_WINDOW_MS;
+          lastVolumePress = now;
+
+          if (shouldCycle) {
+            volumeStep = (volumeStep + 1) % NUM_VOLUME_PRESETS;
+            float vol = volumePresets[volumeStep];
+            // For Silent, play at indoor voice level, then drop to 0 after phrase
+            if (volumeStep == NUM_VOLUME_PRESETS - 1) {
+              volumeScale = 0.25f;
+            } else {
+              volumeScale = vol;
+            }
+            // Send volume to widget
+            char volCmd[16];
+            snprintf(volCmd, sizeof(volCmd), "VOL,%.2f", vol);
+            Serial.println(volCmd);
+            Serial.printf("[button] Volume → %.2f (step %d)\n", vol, volumeStep);
+          } else {
+            Serial.printf("[button] Volume announce (step %d)\n", volumeStep);
+          }
+          // Either way, announce the current level
+          deferredVolume = true;
+          deferredVolumeStep = volumeStep;
         }
       }
     }
@@ -211,6 +326,12 @@ void loop() {
   // --- Permission nag loop ---
   if (permissionPending) {
     updatePermissionNag(now);
+  }
+
+  // --- Demo mode auto-exit after 30s of no button press ---
+  if (demoMode && (now - lastDemoPress) > DEMO_AUTO_EXIT_MS) {
+    demoMode = false;
+    Serial.println("[button] Demo mode auto-exit (30s timeout)");
   }
 }
 

@@ -78,6 +78,7 @@ void readSerialText() {
 }
 
 void parseTextMessage(char *msg) {
+  lastSerialRx = millis();  // Track for "lost computer" detection
   char source = msg[0];
 
   // --- Audio mode entry ---
@@ -124,6 +125,12 @@ void parseTextMessage(char *msg) {
   if (strncmp(msg, "VOL,", 4) == 0) {
     float vol = strtof(msg + 4, NULL);
     volumeScale = constrain(vol, 0.0f, 1.0f);
+    // Sync volumeStep to nearest preset so button cycling stays in sync
+    float minDist = 999.0f;
+    for (uint8_t i = 0; i < NUM_VOLUME_PRESETS; i++) {
+      float d = fabs(vol - volumePresets[i]);
+      if (d < minDist) { minDist = d; volumeStep = i; }
+    }
     return;
   }
 
@@ -139,15 +146,20 @@ void parseTextMessage(char *msg) {
     return;
   }
 
-  // --- Identity ---
+  // --- Identity (handshake) ---
   if (source == 'I') {
     #if defined(CONFIG_IDF_TARGET_ESP32S3)
-      Serial.println("DUCK,ESP32S3,1.0");
+      Serial.println("DUCK,ESP32S3,1.0,TELYART");
     #elif defined(CONFIG_IDF_TARGET_ESP32C3)
-      Serial.println("DUCK,ESP32C3,1.0");
+      Serial.println("DUCK,ESP32C3,1.0,TELYART");
     #else
-      Serial.println("DUCK,ESP32,1.0");
+      Serial.println("DUCK,ESP32,1.0,TELYART");
     #endif
+    // Play "Connected" on first handshake (or reconnect)
+    if (!widgetConnected) {
+      widgetConnected = true;
+      deferredConnected = true;
+    }
     return;
   }
 
@@ -156,9 +168,6 @@ void parseTextMessage(char *msg) {
     Serial.println("[duck] Entering bootloader...");
     Serial.flush();
     delay(100);
-    #if defined(CONFIG_IDF_TARGET_ESP32S3)
-      chip_usb_set_persist_flags(USBDC_PERSIST_ENA);
-    #endif
     esp_restart();
     return;
   }
@@ -370,6 +379,7 @@ void readSerialBinary() {
 
     if (frameReceivedLen >= frameExpectedLen) {
       audioModeLastRx = millis();  // Any complete frame resets the timeout
+      lastSerialRx = audioModeLastRx;  // Track for "lost computer" detection
       // Frame complete — dispatch
       if (frameType == FRAME_MODE_AUDIO) {
         audioStreamWrite(frameBuf, frameExpectedLen);

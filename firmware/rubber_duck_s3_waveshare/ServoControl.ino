@@ -175,9 +175,10 @@ void updateServo() {
 // Setup
 // ============================================================
 void setupServo() {
-  ledcAttach(SERVO_PIN, SERVO_LEDC_FREQ, SERVO_LEDC_BITS);
+  // Use high LEDC channel (7) to avoid conflict with I2S internal timers
+  ledcAttachChannel(SERVO_PIN, SERVO_LEDC_FREQ, SERVO_LEDC_BITS, 7);
   servoWriteAngle(SERVO_CENTER);
-  Serial.print("[servo] LEDC PWM on pin D0 (GPIO");
+  Serial.print("[servo] LEDC PWM ch7 on pin D3 (GPIO");
   Serial.print((int)SERVO_PIN);
   Serial.println(")");
 }
@@ -334,8 +335,8 @@ void triggerDemoPreset() {
   // But if dead level is active, pressing button exits it early
   if (deadLevelActive) {
     deadLevelActive = false;
-    Serial.println("[demo] Dead level cancelled");
-    return;
+    Serial.println("[demo] Dead level cancelled — playing first preset");
+    // Fall through to play the preset
   }
 
   // Every NUM_DEMO_PRESETS+1 press = dead level (after cycling all demos)

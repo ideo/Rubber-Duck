@@ -23,6 +23,9 @@ class SerialManager: ObservableObject {
     /// Called when Teensy sends "MODE" (physical button press).
     var onModeToggle: (() -> Void)?
 
+    /// Called when device sends VOL,X.XX (button volume change).
+    var onVolumeFromDevice: ((Float) -> Void)?
+
     /// Called when the serial device connects/disconnects (after identity handshake).
     /// Use this to switch audio paths based on connected board type.
     var onDeviceChange: (() -> Void)?
@@ -41,6 +44,10 @@ class SerialManager: ObservableObject {
             Task { @MainActor in
                 if line == "MODE" {
                     self?.onModeToggle?()
+                } else if line.hasPrefix("VOL,") {
+                    if let vol = Float(line.dropFirst(4)) {
+                        self?.onVolumeFromDevice?(vol)
+                    }
                 } else {
                     self?.onLineReceived?(line)
                 }
