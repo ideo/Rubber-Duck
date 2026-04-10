@@ -451,24 +451,12 @@ class DuckServer: ObservableObject {
         // Resolves the PermissionGate so the blocked /permission curl unblocks
         // immediately instead of waiting for its full timeout. This prevents
         // connection pile-up during rapid tool calls.
-        srv.post("/permission-clear") { [localTransport] _ in
-            DuckLog.log("[permission] PostToolUse — resolving gate + clearing UI")
-            // Resolve the gate so the blocked /permission request returns immediately.
-            // The hook script handles empty/timeout responses gracefully (exit 0).
-            await permissionGate.resolve(decision: "allow")
-            await MainActor.run {
-                localTransport.onClearThinking?()
-            }
-            let resolved = PermissionEvent(
-                type: "permission",
-                status: "allow",
-                toolName: "",
-                toolInput: nil,
-                optionLabels: nil,
-                actionSummary: nil
-            )
-            await MainActor.run { localTransport.deliverPermission(resolved) }
-            await broadcaster.broadcast(resolved)
+        srv.post("/permission-clear") { _ in
+            DuckLog.log("[permission] PostToolUse — ignoring (permissions managed by voice gate)")
+            // Do nothing. Permission state is fully managed by the PermissionGate
+            // (voice approve/deny/timeout). This endpoint fires for ALL sessions'
+            // PostToolUse hooks — delivering events or clearing state here would
+            // kill the voice gate for unrelated permission requests.
             return .json("{\"status\":\"ok\"}".data(using: .utf8)!)
         }
 
