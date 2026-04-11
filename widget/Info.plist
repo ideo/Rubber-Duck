@@ -11,9 +11,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>0.9.8</string>
+    <string>0.9.85</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.8</string>
+    <string>0.9.85</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <!-- Regular app: shows in Dock, has menu bar, Cmd+Q works -->
