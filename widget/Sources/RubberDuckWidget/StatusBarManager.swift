@@ -1265,7 +1265,7 @@ enum CLISession {
         let script = """
         tell application "Terminal"
             activate
-            do script "\(cdPart)if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(windowName) '\(tool)'; else tmux kill-window -t \(session):\(windowName) 2>/dev/null; tmux new-window -t \(session) -n \(windowName) '\(tool)'; fi && tmux attach -t \(session):\(windowName)"
+            do script "\(cdPart)if ! tmux has-session -t \(session) 2>/dev/null; then tmux new-session -d -s \(session) -n \(windowName) && tmux send-keys -t \(session):\(windowName) '\(tool)' Enter; else tmux kill-window -t \(session):\(windowName) 2>/dev/null; tmux new-window -t \(session) -n \(windowName) && tmux send-keys -t \(session):\(windowName) '\(tool)' Enter; fi && tmux attach -t \(session):\(windowName)"
         end tell
         """
 
