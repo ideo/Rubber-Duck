@@ -57,8 +57,9 @@ if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [
 fi
 
 # MCP subagent tools (preview, browser automation) → pass through to Claude Code's own UI
-if echo "$TOOL_NAME" | grep -q "^mcp__"; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] MCP tool ($TOOL_NAME) — passing through to Claude Code" >> "$LOG"
+# Only filter known automated MCP servers — other MCP tools may need voice approval
+if echo "$TOOL_NAME" | grep -q "^mcp__Claude_Preview__\|^mcp__Claude_in_Chrome__"; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] MCP subagent ($TOOL_NAME) — passing through to Claude Code" >> "$LOG"
   echo "========================================" >> "$LOG"
   exit 0
 fi
