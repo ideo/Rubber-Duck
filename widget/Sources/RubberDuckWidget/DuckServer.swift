@@ -64,14 +64,16 @@ class DuckServer: ObservableObject {
             }
         }
 
-        // When a permission request becomes active (first in queue or queue advances),
-        // deliver it locally so the widget voice-asks about it.
+        // PermissionGate is the single source of truth for permission lifecycle.
+        // onBecameActive: deliver event to EvalService → triggers voice prompt
+        // onRequestResolved: tell coordinator to clear UI + voice gate
         let transport = localTransport
         Task {
             await permissionGate.setOnBecameActive { [weak transport] event in
-                Task { @MainActor in
-                    transport?.deliverPermission(event)
-                }
+                transport?.deliverPermission(event)
+            }
+            await permissionGate.setOnRequestResolved { [weak transport] in
+                transport?.onPermissionResolved?()
             }
         }
     }

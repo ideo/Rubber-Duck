@@ -19,6 +19,7 @@ class LocalEvalTransport: EvalTransport {
     var onMelodyStart: (() -> Void)?
     var onMelodyStop: (() -> Void)?
     var onClearThinking: (() -> Void)?
+    var onPermissionResolved: (() -> Void)?
 
     func connect() { /* no-op — always connected */ }
     func disconnect() { /* no-op */ }

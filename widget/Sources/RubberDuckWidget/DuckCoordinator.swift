@@ -252,10 +252,13 @@ class DuckCoordinator: ObservableObject {
         resetOrUpdateExpression()
     }
 
-    /// Called when permission resolves (pending → false) via onChange.
-    /// Backup path in case decision comes from outside the widget (CLI, timeout).
+    /// Called by PermissionGate (via onRequestResolved) when the active request
+    /// is resolved or times out. Safe to clear voice gate here — the gate
+    /// guarantees this fires before onBecameActive for the next request
+    /// (DispatchQueue.main.async FIFO ordering).
     func handlePermissionResolved() {
-        DuckLog.log("[permission] Widget expression reset — permission resolved")
+        DuckLog.log("[permission] Gate resolved — clearing UI + voice gate")
+        evalService.permissionPending = false
         resetOrUpdateExpression()
         serialManager.sendCommand("P,0")
         speechService.clearPermissionGate()

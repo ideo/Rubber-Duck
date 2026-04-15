@@ -289,11 +289,10 @@ private struct DuckStatusOverlay: View {
         .onChange(of: evalService.permissionRequestId) {
             coordinator.handlePermissionChange()
         }
-        .onChange(of: evalService.permissionPending) {
-            if !evalService.permissionPending {
-                coordinator.handlePermissionResolved()
-            }
-        }
+        // Permission resolution is handled directly by PermissionGate callbacks
+        // (onRequestResolved → coordinator.handlePermissionResolved), not by
+        // watching permissionPending. This eliminates races between back-to-back
+        // requests where onChange could fire out of order.
     }
 }
 

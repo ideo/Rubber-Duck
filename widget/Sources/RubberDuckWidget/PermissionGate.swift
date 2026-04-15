@@ -1,8 +1,11 @@
 // Permission Gate — Voice-gated permission approval for Claude Code actions.
 //
-// Uses a FIFO queue so concurrent permission requests each block independently.
-// The duck asks about the head of the queue; when resolved, the next one
-// becomes active and the duck asks about it.
+// Single source of truth for permission state. Uses a FIFO queue so
+// concurrent requests block independently. Callbacks notify the UI layer
+// directly — no SwiftUI onChange bounce.
+//
+// Callbacks use DispatchQueue.main.async (FIFO-ordered) to guarantee
+// onRequestResolved fires before onBecameActive for the next request.
 //
 // Timeout uses DispatchQueue instead of Task.sleep to avoid the
 // swift_task_dealloc crash that occurs with Task.sleep(for:) in
@@ -20,12 +23,20 @@ actor PermissionGate {
 
     private var queue: [PendingRequest] = []
 
-    /// Called when a request becomes the active (head) request and needs voice-asking.
-    /// Fires both for the first request and when the queue advances.
+    /// Fires when a request becomes the active (head) request.
+    /// Used by DuckServer to deliver the permission event to EvalService/SpeechService.
     private var onBecameActive: ((PermissionEvent) -> Void)?
+
+    /// Fires when the active request is resolved (voice, timeout, or external).
+    /// Used by DuckServer to tell the coordinator to clear UI + voice gate.
+    private var onRequestResolved: (() -> Void)?
 
     func setOnBecameActive(_ handler: @escaping (PermissionEvent) -> Void) {
         onBecameActive = handler
+    }
+
+    func setOnRequestResolved(_ handler: @escaping () -> Void) {
+        onRequestResolved = handler
     }
 
     /// Stored permission events, keyed by request ID, for delivery when active.
@@ -35,8 +46,7 @@ actor PermissionGate {
 
     /// Block until this request is resolved or times out.
     /// Requests are queued FIFO — each caller blocks independently.
-    /// When this request is first in queue, `onBecameActive` fires immediately
-    /// to trigger the duck's voice prompt. Otherwise it fires when the queue advances.
+    /// When this request is first in queue, `onBecameActive` fires immediately.
     func waitForDecision(timeoutSeconds: Double = 30.0, event: PermissionEvent) async -> (String, Int?) {
         let requestID = UUID()
         let isFirst = queue.isEmpty
@@ -61,7 +71,7 @@ actor PermissionGate {
         return result
     }
 
-    /// Called when the widget sends a permission response via WebSocket or local transport.
+    /// Called when the widget sends a permission response via voice or WebSocket.
     /// Resolves the head of the queue (the currently active request).
     func resolve(decision: String, suggestionIndex: Int? = nil) {
         guard !queue.isEmpty else { return }
@@ -73,7 +83,9 @@ actor PermissionGate {
         head.timeoutWorkItem.cancel()
         head.continuation.resume(returning: (validDecision, suggestionIndex))
 
-        activateNextIfNeeded()
+        // Notify UI, then activate next — DispatchQueue.main.async is FIFO,
+        // so resolved fires before becameActive for the next request.
+        notifyResolvedThenAdvance()
     }
 
     private func handleTimeout(requestID: UUID) {
@@ -86,21 +98,31 @@ actor PermissionGate {
         DuckLog.log("[permission] Timeout for request \(requestID.uuidString.prefix(8))")
         entry.continuation.resume(returning: ("timeout", nil))
 
-        if wasHead { activateNextIfNeeded() }
+        if wasHead { notifyResolvedThenAdvance() }
     }
 
-    private func activateNextIfNeeded() {
-        guard let nextRequest = queue.first,
-              let event = pendingEvents[nextRequest.id] else { return }
-        DuckLog.log("[permission] Activating next in queue — \(queue.count) remaining")
-        onBecameActive?(event)
+    /// Notify resolution, then activate the next queued request if any.
+    /// Uses DispatchQueue.main.async for both to guarantee FIFO ordering on MainActor.
+    private func notifyResolvedThenAdvance() {
+        // 1. Tell UI to clear permission state
+        let resolved = onRequestResolved
+        DispatchQueue.main.async {
+            resolved?()
+        }
+
+        // 2. If there's a next request, activate it (fires after resolved due to FIFO)
+        if let nextRequest = queue.first, let event = pendingEvents[nextRequest.id] {
+            DuckLog.log("[permission] Activating next in queue — \(queue.count) remaining")
+            let activate = onBecameActive
+            DispatchQueue.main.async {
+                activate?(event)
+            }
+        }
     }
 
     // MARK: - Suggestion Labels
 
     /// Generate a short, TTS-friendly label for a permission suggestion.
-    /// Labels are designed for natural voice interaction:
-    /// "Say always allow to [label]" or "Got it. [Label]."
     static func describeSuggestion(_ suggestion: [String: Any]) -> String {
         let stype = suggestion["type"] as? String ?? ""
         let dest = suggestion["destination"] as? String ?? "session"
