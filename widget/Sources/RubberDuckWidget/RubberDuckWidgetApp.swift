@@ -69,27 +69,7 @@ struct RubberDuckWidgetApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.bottomTrailing)
-        .commands {
-            // Suppress all default menus (File, Edit, View, Format, Window)
-            // by replacing their CommandGroups with empty content.
-            SuppressDefaultMenus()
-            SuppressWindowMenus()
-            // "Terms of Use" + "View Open Source Project" right after "About Duck Duck Duck"
-            CommandGroup(after: .appInfo) {
-                Button("Terms of Use") {
-                    RubberDuckWidgetApp.showDisclaimerReadOnly()
-                }
-                Button("View Open Source Project") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/ideo/Rubber-Duck")!)
-                }
-            }
-            CommandMenu("Setup") {
-                SetupMenuContent()
-            }
-            CommandGroup(replacing: .help) {
-                HelpMenuContent()
-            }
-        }
+        .commands { SetupCommands() }
 
         Window("Duck Duck Duck Help", id: "help") {
             HelpView()
@@ -561,11 +541,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // now handled solely by canBecomeKey override on the duck window.
 
     func applicationWillUpdate(_ notification: Notification) {
-        // Menu stripping removed from here — it caused visible flickering during
-        // subtitles and any frequent @Published updates. CommandGroup(replacing:)
-        // in .commands{} handles the SwiftUI side. Any residual AppKit menus
-        // (Edit, occasional Format) are harmless. See TBD.
-
         // Only hunt for the duck window until it's found. Once assigned,
         // stop — otherwise we turn Settings/Help/alerts into borderless widgets.
         if Self.duckWindow == nil {
@@ -576,6 +551,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+
         // When Settings/Help closes, re-key the duck window
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: nil, queue: .main
@@ -594,9 +570,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { notif in
             (notif.object as? NSWindow)?.isRestorable = false
         }
-
-        // Menu stripping removed — CommandGroup(replacing:) handles it.
-        // Residual AppKit menus are harmless. See TBD.
 
         // Disable state restoration — it recreates windows without our properties.
         // Clear ALL window frame autosaves, not just "main".
@@ -621,6 +594,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.configureDuckWindow(window)
             }
             NSApp.activate()
+        }
+
+        // One-shot strip of unwanted top-level menus. SwiftUI has no selective
+        // removal for the wrappers even when their contents are empty.
+        // Edit stays — we need Cmd+C/V/X. View/Window/Help stay per product call.
+        // Textream-pattern: run once, don't re-strip in willUpdate (flickers).
+        let unwanted: Set<String> = ["File", "Format"]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            guard let mainMenu = NSApp.mainMenu else { return }
+            for item in mainMenu.items where unwanted.contains(item.title) {
+                mainMenu.removeItem(item)
+            }
         }
     }
 
@@ -746,28 +731,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DuckLog.log("[app] Duck Duck Duck turned off")
     }
 
-    // MARK: - Menu Stripping
-
-    // NOTE: Edit is NOT stripped — removing it kills Cmd+V/C/X in text fields.
-    private static let unwantedMenus: Set<String> = ["File", "View", "Format", "Window"]
-
-    /// Strip default menus on launch and when windows change focus.
-    /// Uses NSWindow notifications instead of NSMenu.didAddItemNotification
-    /// (which fires too aggressively and disrupts eval/speech pipelines).
-    static func startMenuStripping() {
-        stripMenus()
-        // Primary defence: CommandGroup(replacing:) in .commands{} empties
-        // all standard groups. This applicationWillUpdate callback is the
-        // safety net — it fires before every render, catching anything AppKit
-        // re-adds (Services, Dictation, etc.) with zero race conditions.
-    }
-
-    static func stripMenus() {
-        guard let mainMenu = NSApp.mainMenu else { return }
-        for item in mainMenu.items where unwantedMenus.contains(item.title) {
-            mainMenu.removeItem(item)
-        }
-    }
 }
 
 // MARK: - Duck Window Content (captures openWindow for non-SwiftUI use)
@@ -871,132 +834,116 @@ class DraggableView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 }
 
-// MARK: - Suppress Default Menus
+// MARK: - Main Menu (SwiftUI .commands additions)
 
-/// Replaces every standard CommandGroup with empty content so SwiftUI never
-/// renders File / Edit / View / Format / Window menus. Extracted into its own
-/// Commands struct to stay within CommandsBuilder's 10-item limit.
-struct SuppressDefaultMenus: Commands {
-    var body: some Commands {
-        // File
-        CommandGroup(replacing: .newItem) {}
-        CommandGroup(replacing: .saveItem) {}
-        CommandGroup(replacing: .importExport) {}
-        CommandGroup(replacing: .printItem) {}
-        // Edit — NOT suppressed. Removing these kills Cmd+V/C/X in text fields.
-        // Format
-        CommandGroup(replacing: .textFormatting) {}
-        // View
-        CommandGroup(replacing: .toolbar) {}
-        CommandGroup(replacing: .sidebar) {}
+/// Cached menu state. Expensive system calls (filesystem scans, SMAppService
+/// queries) run here — ONCE in init, and again on app-activate — never inside
+/// Commands bodies. This is the fix for the re-render storm / crash that
+/// hit the old inline `PluginInstaller.findClaude()` / `Binding(get:)` pattern.
+@MainActor
+final class MenuStateModel: ObservableObject {
+    @Published private(set) var isClaudeInstalled: Bool = false
+    @Published private(set) var launchAtLogin: Bool = false
+    @Published var experimentalEnabled: Bool {
+        didSet { UserDefaults.standard.set(experimentalEnabled, forKey: "experimentalEnabled") }
+    }
+
+    init() {
+        self.experimentalEnabled = UserDefaults.standard.bool(forKey: "experimentalEnabled")
+        refresh()
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func refresh() {
+        isClaudeInstalled = PluginInstaller.findClaude() != nil
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    func toggleLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            print("[menu] launch at login toggle failed: \(error)")
+        }
+        refresh()
     }
 }
 
-/// Window menu suppressions — separate struct because SuppressDefaultMenus
-/// is already at the 10-item CommandsBuilder limit.
-struct SuppressWindowMenus: Commands {
+/// Our additions to SwiftUI's default menu bar. We don't try to remove Edit,
+/// View, Window, or Help wrappers — SwiftUI fights that and the flicker isn't
+/// worth it. Format is stripped by title post-launch (see AppDelegate).
+struct SetupCommands: Commands {
+    @StateObject private var model = MenuStateModel()
+
     var body: some Commands {
-        CommandGroup(replacing: .windowSize) {}
-        CommandGroup(replacing: .windowArrangement) {}
-        CommandGroup(replacing: .windowList) {}
-    }
-}
+        CommandGroup(after: .appInfo) {
+            Button("Terms of Use") {
+                RubberDuckWidgetApp.showDisclaimerReadOnly()
+            }
+            Button("View Open Source Project") {
+                NSWorkspace.shared.open(URL(string: "https://github.com/ideo/Rubber-Duck")!)
+            }
+        }
 
-// MARK: - Setup Menu
-
-struct SetupMenuContent: View {
-    @AppStorage("experimentalEnabled") private var experimentalEnabled = false
-
-    var body: some View {
-        if PluginInstaller.findClaude() == nil {
-            Button {
+        CommandMenu("Setup") {
+            // Static structure — label and disabled state flip with cached model.
+            Button(model.isClaudeInstalled ? "Claude Code Installed ✓" : "Install Claude Code...") {
                 StatusBarManager.installClaudeCLIAction()
-            } label: {
-                Label("Install Claude Code...", systemImage: "arrow.down.circle.fill")
+                model.refresh()
             }
-        } else {
-            Button {} label: {
-                Label("Claude Code Installed", systemImage: "checkmark.circle.fill")
+            .disabled(model.isClaudeInstalled)
+
+            Button("Install / Update Plugin") {
+                PluginInstaller.install()
             }
-            .disabled(true)
-        }
 
-        Button {
-            PluginInstaller.install()
-        } label: {
-            Label("Install / Update Plugin", systemImage: "puzzlepiece.extension.fill")
-        }
-
-        Button {
-            PluginInstaller.exportPluginZip()
-        } label: {
-            Label("Export Plugin Zip...", systemImage: "square.and.arrow.up")
-        }
-
-        Divider()
-
-        Toggle("Launch at Login", isOn: Binding(
-            get: { SMAppService.mainApp.status == .enabled },
-            set: { enabled in
-                do {
-                    if enabled {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    print("[app] Launch at Login toggle failed: \(error)")
-                }
+            Button("Export Plugin Zip...") {
+                PluginInstaller.exportPluginZip()
             }
-        ))
 
-        Divider()
+            Divider()
 
-        Toggle(isOn: $experimentalEnabled) {
-            Label("Experimental Features", systemImage: "flask.fill")
-        }
+            Toggle("Launch at Login", isOn: Binding(
+                get: { model.launchAtLogin },
+                set: { _ in model.toggleLaunchAtLogin() }
+            ))
 
-        if experimentalEnabled {
-            Button {
+            Toggle("Experimental Features", isOn: $model.experimentalEnabled)
+
+            // Always present, disabled when experimental is off — keeps the menu
+            // structure stable so SwiftUI doesn't recurse through structural changes.
+            Button("Install Gemini Extension") {
                 GeminiExtensionInstaller.install()
-            } label: {
-                Label("Install Gemini Extension", systemImage: "puzzlepiece.extension.fill")
             }
-            Button {
+            .disabled(!model.experimentalEnabled)
+
+            Button("Launch Gemini CLI") {
                 CLISession.launchPlain("gemini")
-            } label: {
-                Label("Launch Gemini CLI", systemImage: "terminal.fill")
+            }
+            .disabled(!model.experimentalEnabled)
+        }
+
+        CommandGroup(replacing: .help) {
+            Button("Get Started") {
+                AppDelegate.showSetupChecklist()
+            }
+            Button("Debugging Dashboard") {
+                NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.activePort)")!)
+            }
+            Divider()
+            Button("User Manual") {
+                NSApp.activate()
+                AppDelegate.openWindow?("help")
             }
         }
-    }
-}
-
-// MARK: - Help Menu
-
-struct HelpMenuContent: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button {
-            AppDelegate.showSetupChecklist()
-        } label: {
-            Label("Get Started", systemImage: "sparkles")
-        }
-
-        Button {
-            NSWorkspace.shared.open(URL(string: "http://localhost:\(DuckConfig.activePort)")!)
-        } label: {
-            Label("Debugging Dashboard", systemImage: "gauge.with.dots.needle.33percent")
-        }
-
-        Divider()
-
-        Button {
-            NSApp.activate()
-            openWindow(id: "help")
-        } label: {
-            Label("User Manual", systemImage: "book.fill")
-        }
-
     }
 }

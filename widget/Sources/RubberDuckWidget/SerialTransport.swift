@@ -84,7 +84,7 @@ class SerialTransport: DeviceTransport {
         // Clear rejected ports when a real device disconnects (unplug),
         // so we retry all ports in case a different device appears.
         if wasIdentified {
-            rejectedPorts.removeAll()
+            withRejectedPorts { $0.removeAll() }
         }
         print("[serial] Disconnected")
         onConnectionChange?()
@@ -190,7 +190,19 @@ class SerialTransport: DeviceTransport {
     /// Previously-rejected ports (no DUCK identity) with timestamp. Entries expire after 30s
     /// so wedged CDC ports get retried without requiring unplug/replug.
     /// Cleared entirely when a device disconnects.
-    private var rejectedPorts: [String: Date] = [:]
+    ///
+    /// Mutated from: the identity Task (background), findSerialPorts() (any thread
+    /// via the 5s poll and /dev watch), and disconnect() (typically main). All
+    /// access must go through `withRejectedPorts` to avoid concurrent Dictionary
+    /// mutation, which crashes.
+    private var _rejectedPorts: [String: Date] = [:]
+    private var _rejectedPortsLock = os_unfair_lock()
+
+    private func withRejectedPorts<T>(_ body: (inout [String: Date]) -> T) -> T {
+        os_unfair_lock_lock(&_rejectedPortsLock)
+        defer { os_unfair_lock_unlock(&_rejectedPortsLock) }
+        return body(&_rejectedPorts)
+    }
 
     private func findSerialPorts() -> [String] {
         let fileManager = FileManager.default
@@ -202,16 +214,20 @@ class SerialTransport: DeviceTransport {
                 name.hasPrefix(prefix) || name.hasPrefix(cuPrefix)
             }.sorted()
 
-            // Expire old rejections (30s)
-            let now = Date()
-            rejectedPorts = rejectedPorts.filter { now.timeIntervalSince($0.value) < 30 }
+            // Expire old rejections (30s) and grab a snapshot for filtering,
+            // all under the same lock to avoid races with the identity Task.
+            let stillRejected: Set<String> = withRejectedPorts { dict in
+                let now = Date()
+                dict = dict.filter { now.timeIntervalSince($0.value) < 30 }
+                return Set(dict.keys)
+            }
 
             // Prefer tty over cu, filter out recently-rejected ports
             let ttyFirst = candidates.filter { $0.hasPrefix("tty.") } +
                            candidates.filter { $0.hasPrefix("cu.") }
             return ttyFirst
                 .map { "/dev/\($0)" }
-                .filter { rejectedPorts[$0] == nil }
+                .filter { !stillRejected.contains($0) }
         } catch {
             return []
         }
@@ -266,27 +282,33 @@ class SerialTransport: DeviceTransport {
         requestIdentity()
     }
 
-    /// Send identity request — retry up to 3 times with 300ms gaps before rejecting.
-    /// ESP32 USB CDC can be slow to stabilize after plug-in.
+    /// Send identity request — 2 attempts with 250ms gap before rejecting.
+    /// Cut from 3×500ms (+2×300ms gap) because users with multiple ESP32
+    /// dev boards on USB were waiting ~2s per non-duck port. The real duck
+    /// almost always responds on attempt 1; attempt 2 is insurance for slow CDC.
     private func requestIdentity() {
         let port = deviceName
         Task {
-            for attempt in 1...3 {
+            for attempt in 1...2 {
                 self.writeString("I\n")
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try? await Task.sleep(nanoseconds: 400_000_000)
                 if self.connectedBoard != nil {
                     print("[serial] Identity confirmed on attempt \(attempt): \(self.connectedBoard ?? "")")
                     self.onConnectionChange?()
                     return
                 }
-                if attempt < 3 {
-                    print("[serial] No DUCK identity from \(port) — retry \(attempt)/3")
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                if attempt < 2 {
+                    print("[serial] No DUCK identity from \(port) — retry \(attempt)/2")
+                    try? await Task.sleep(nanoseconds: 250_000_000)
                 }
             }
-            print("[serial] No DUCK identity from \(port) after 3 attempts — rejecting")
-            self.rejectedPorts[port] = Date()
+            print("[serial] No DUCK identity from \(port) after 2 attempts — rejecting")
+            self.withRejectedPorts { $0[port] = Date() }
             self.disconnect()
+            // Immediately try the next candidate instead of waiting for the
+            // 5s poll. findSerialPorts() filters out rejected ports, so this
+            // walks down the list until a duck is found or none remain.
+            self.connect()
         }
     }
 
