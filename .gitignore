@@ -17,3 +17,6 @@ duck-eval-test.txt
 # WIP firmware (GPL dependency, not ready for public)
 firmware/rubber_duck_c3/
 .DS_Store
+
+# PlatformIO build artifacts
+firmware/**/.pio/
