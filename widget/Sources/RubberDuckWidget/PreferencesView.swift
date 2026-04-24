@@ -267,6 +267,7 @@ private struct BehaviorPane: View {
     @State private var volume: Float = DuckConfig.volume
     @State private var selectedMic: String = ""
     @State private var availableMics: [(index: Int, name: String)] = []
+    @State private var tiangesHollowOn: Bool = DuckConfig.tiangesHollowEnabled
 
     private var accent: Color { DuckTheme.accent }
 
@@ -411,6 +412,32 @@ private struct BehaviorPane: View {
             .onChange(of: speechService.selectedMicName) {
                 selectedMic = speechService.selectedMicName
                 availableMics = SpeechService.listMicrophones()
+            }
+
+            // --- Tiange's Hollow ---
+            Section("Tiange's Hollow") {
+                Toggle(isOn: $tiangesHollowOn) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Summon the doppelganger")
+                        Text("A second duck caroms around the screen and body-checks this one.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(accent)
+                .onChange(of: tiangesHollowOn) {
+                    if tiangesHollowOn {
+                        AppDelegate.summonEvilTwin()
+                    } else {
+                        AppDelegate.banishEvilTwin()
+                    }
+                }
+                .onChange(of: coordinator.evilTwinSummoned) {
+                    // Keep the toggle in sync if the state flips from elsewhere (menu, close box).
+                    if tiangesHollowOn != coordinator.evilTwinSummoned {
+                        tiangesHollowOn = coordinator.evilTwinSummoned
+                    }
+                }
             }
         }
         .formStyle(.grouped)

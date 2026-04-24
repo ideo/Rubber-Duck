@@ -105,6 +105,16 @@ struct RubberDuckWidgetApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
+        Window("Evil Duck", id: "evil-duck") {
+            EvilDuckWindowContent()
+                .environmentObject(coordinator)
+                .environmentObject(evalService)
+                .environmentObject(speechService)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.topLeading)
+
         Settings {
             PreferencesView()
                 .environmentObject(speechService)
@@ -548,6 +558,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// The duck widget window. Tracked so turnOn/turnOff don't touch other windows.
     static weak var duckWindow: NSWindow?
 
+    /// The evil twin window. Tracked so the coordinator can creep it toward the main duck.
+    static weak var evilDuckWindow: NSWindow?
+
     /// Service references for turn on/off. Set during wireServices().
     static var speechService: SpeechService?
     static var coordinator: DuckCoordinator?
@@ -566,9 +579,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // in .commands{} handles the SwiftUI side. Any residual AppKit menus
         // (Edit, occasional Format) are harmless. See TBD.
 
-        // Only hunt for the duck window until it's found. Once assigned,
-        // stop — otherwise we turn Settings/Help/alerts into borderless widgets.
-        if Self.duckWindow == nil {
+        // Hunt for duck + evil twin windows. Safe to call repeatedly: configureDuckWindow
+        // only mutates windows with the correct identifier tag, so Settings/Help are ignored.
+        if Self.duckWindow == nil || Self.evilDuckWindow == nil {
             for window in NSApp.windows {
                 configureDuckWindow(window)
             }
@@ -627,14 +640,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window Configuration
 
     static let duckWindowTag = "com.duckduckduck.widget.main"
+    static let evilDuckWindowTag = "com.duckduckduck.widget.evil"
 
     /// Idempotent: configures a window as the borderless floating duck widget.
     /// Safe to call multiple times — skips windows already configured.
     private func configureDuckWindow(_ window: NSWindow) {
         // Skip if already borderless (already configured)
         guard window.styleMask != [.borderless] else { return }
-        // Only configure windows tagged as the duck window
-        guard window.identifier?.rawValue == Self.duckWindowTag else { return }
+
+        let tag = window.identifier?.rawValue
+        guard tag == Self.duckWindowTag || tag == Self.evilDuckWindowTag else { return }
 
         window.styleMask = [.borderless]
         window.isMovable = true
@@ -655,11 +670,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.invalidateShadow()
         window.alphaValue = 1
 
-        // First window configured = the duck
-        if Self.duckWindow == nil {
+        if tag == Self.duckWindowTag && Self.duckWindow == nil {
             Self.duckWindow = window
             DuckLog.log("[focus] duckWindow assigned")
+        } else if tag == Self.evilDuckWindowTag && Self.evilDuckWindow == nil {
+            Self.evilDuckWindow = window
+            DuckLog.log("[evil] evilDuckWindow assigned")
+            // If user closes the twin via Cmd+W or the close box, snap our state
+            // back to banished so the toggle/menu reflect reality and the physics
+            // timer stops. Observer is released when the window deallocates.
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    if Self.coordinator?.evilTwinSummoned == true {
+                        DuckLog.log("[evil] External close detected — syncing state")
+                        Self.banishEvilTwin()
+                    }
+                }
+            }
         }
+    }
+
+    // MARK: - Evil Twin window management
+
+    @MainActor
+    static func summonEvilTwin() {
+        DuckConfig.tiangesHollowEnabled = true
+        coordinator?.summonEvilTwin()
+        openWindow?("evil-duck")
+    }
+
+    @MainActor
+    static func banishEvilTwin() {
+        DuckConfig.tiangesHollowEnabled = false
+        coordinator?.banishEvilTwin()
+        evilDuckWindow?.close()
+    }
+
+    /// Restore Tiange's Hollow on launch if the user had it enabled. Called after
+    /// the main duck window is ready (from DuckWindowContent.onAppear) so openWindow
+    /// and coordinator are both wired.
+    @MainActor
+    static func restoreTiangesHollowIfNeeded() {
+        guard DuckConfig.tiangesHollowEnabled,
+              coordinator?.evilTwinSummoned == false else { return }
+        coordinator?.summonEvilTwin()
+        openWindow?("evil-duck")
     }
 
     // MARK: - Claude detection on launch
@@ -782,6 +841,10 @@ struct DuckWindowContent: View {
             .tint(Color(red: 0.925, green: 0.725, blue: 0.278))
             .onAppear {
                 AppDelegate.openWindow = { id in openWindow(id: id) }
+                // Small delay so the main window is tagged before the twin tries to seed its physics off it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    AppDelegate.restoreTiangesHollowIfNeeded()
+                }
             }
             .background(WindowTagger(tag: AppDelegate.duckWindowTag))
     }

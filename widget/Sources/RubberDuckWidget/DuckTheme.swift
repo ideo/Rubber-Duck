@@ -29,4 +29,13 @@ static let cornerRadius: CGFloat = 18
     static let reactionDuration: Double = 0.6
     static let springResponse: Double = 0.5
     static let springDamping: Double = 0.6
+
+    // Evil twin palette — the doppelganger that tries to take over.
+    static let evilWidgetSize: CGFloat = 88
+    static let evilBodyColor = Color(red: 0.18, green: 0.04, blue: 0.12)        // near-black plum
+    static let evilAccent = Color(red: 0.78, green: 0.08, blue: 0.18)           // blood red
+    static let evilEyeColor = Color(red: 1.0, green: 0.85, blue: 0.2)           // glowing yellow
+    static let evilPositiveGlow = Color(red: 0.85, green: 0.1, blue: 0.15).opacity(0.6)  // delights in bad code
+    static let evilNegativeGlow = Color(red: 0.45, green: 0.15, blue: 0.6).opacity(0.35) // sulks at good code
+    static let evilTakeoverGlow = Color(red: 0.9, green: 0.05, blue: 0.1).opacity(0.65)
 }

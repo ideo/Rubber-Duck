@@ -197,6 +197,19 @@ private struct DuckContextMenu: View {
             Label("Launch Claude Code", systemImage: "terminal.fill")
         }
 
+        Button {
+            if coordinator.evilTwinSummoned {
+                AppDelegate.banishEvilTwin()
+            } else {
+                AppDelegate.summonEvilTwin()
+            }
+        } label: {
+            Label(
+                coordinator.evilTwinSummoned ? "✓ Tiange's Hollow" : "Tiange's Hollow",
+                systemImage: "theatermasks.fill"
+            )
+        }
+
         Divider()
 
         if AppDelegate.isDuckActive {

@@ -143,6 +143,14 @@ enum DuckConfig {
         set { UserDefaults.standard.set(newValue, forKey: "experimentalEnabled") }
     }
 
+    /// Tiange's Hollow — summons the doppelganger twin that caroms around
+    /// the screen and body-checks the main duck. Persisted so the twin
+    /// returns at its last known state across app launches.
+    static var tiangesHollowEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "tiangesHollowEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "tiangesHollowEnabled") }
+    }
+
     // MARK: - Update Checking
 
     /// Last app version that ran (detects post-update first launch).
