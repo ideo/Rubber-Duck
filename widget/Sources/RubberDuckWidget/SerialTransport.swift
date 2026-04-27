@@ -48,6 +48,16 @@ class SerialTransport: DeviceTransport {
     }
     private var reconnectTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
+
+    /// All writes to the serial fd go through this queue. Keeps the kernel
+    /// `write()` call (which can block when the hardware's RX buffer is full
+    /// or USB stalls) off the main thread, preventing UI pinwheel.
+    /// Serial queue → preserves write ordering between scores, commands,
+    /// and audio frames.
+    private let writeQueue = DispatchQueue(
+        label: "com.duckduckduck.serial.write",
+        qos: .userInitiated
+    )
     private var devWatchSource: DispatchSourceFileSystemObject?
 
     // 921600 nominal — USB CDC ignores baud but this signals fast link to serial monitors.
@@ -98,15 +108,21 @@ class SerialTransport: DeviceTransport {
         writeString(command + "\n")
     }
 
-    /// Write raw bytes (for binary audio frames).
+    /// Write raw bytes (for binary audio frames). Returns immediately —
+    /// the actual `write()` runs on the writeQueue so callers (especially
+    /// the main actor) never block on a stalled hardware RX buffer.
     func writeBytes(_ data: [UInt8]) {
-        guard fileDescriptor >= 0 else { return }
-        let written = data.withUnsafeBufferPointer { ptr in
-            write(fileDescriptor, ptr.baseAddress, data.count)
-        }
-        if written < 0 {
-            print("[serial] Write failed, reconnecting...")
-            disconnect()
+        writeQueue.async { [weak self] in
+            guard let self else { return }
+            let fd = self.fileDescriptor
+            guard fd >= 0 else { return }
+            let written = data.withUnsafeBufferPointer { ptr in
+                write(fd, ptr.baseAddress, data.count)
+            }
+            if written < 0 {
+                print("[serial] Write failed, reconnecting...")
+                self.disconnect()
+            }
         }
     }
 
@@ -313,8 +329,6 @@ class SerialTransport: DeviceTransport {
     }
 
     private func writeString(_ str: String) {
-        guard fileDescriptor >= 0 else { return }
-
         // If firmware is in audio mode, wrap text as a binary control frame
         // so it gets parsed correctly instead of being eaten by the binary parser.
         if inAudioMode {
@@ -322,15 +336,9 @@ class SerialTransport: DeviceTransport {
             writeFrame(tag: 0x02, payload: payload)
             return
         }
-
-        let data = Array(str.utf8)
-        let written = data.withUnsafeBufferPointer { ptr in
-            write(fileDescriptor, ptr.baseAddress, data.count)
-        }
-        if written < 0 {
-            print("[serial] Write failed, reconnecting...")
-            disconnect()
-        }
+        // Funnel through writeBytes → writeQueue so the kernel write call
+        // doesn't block whatever caller (e.g. main actor) handed us the string.
+        writeBytes(Array(str.utf8))
     }
 
     // MARK: - Read (text + binary)
