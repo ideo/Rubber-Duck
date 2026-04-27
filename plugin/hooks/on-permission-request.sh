@@ -41,6 +41,23 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] SESSION_ID: $SESSION_ID" >> "$LOG"
 # 3b. Smart filtering — skip noise the user doesn't need to voice-approve
 SUGGESTION_COUNT=$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1])))" "$PERMISSION_SUGGESTIONS")
 PERMISSION_MODE=$(json_get "$INPUT" "permission_mode" "default")
+AGENT_ID=$(json_get "$INPUT" "agent_id" "")
+AGENT_TYPE=$(json_get "$INPUT" "agent_type" "")
+
+# Sub-agent permission requests — main Claude session is already showing the
+# dialog to the user; the duck doesn't need to also speak up. Pass through.
+if [ -n "$AGENT_ID" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sub-agent ($AGENT_TYPE id=$AGENT_ID) — passing through" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
+
+# Auto-approve modes — user already opted out of per-action prompting.
+if [ "$PERMISSION_MODE" = "auto" ] || [ "$PERMISSION_MODE" = "dontAsk" ] || [ "$PERMISSION_MODE" = "bypassPermissions" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Auto mode ($PERMISSION_MODE) — passing through" >> "$LOG"
+  echo "========================================" >> "$LOG"
+  exit 0
+fi
 
 # Zero suggestions + not a tool the duck should voice-ask about → pass through
 if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
