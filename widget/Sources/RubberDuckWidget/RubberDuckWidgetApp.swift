@@ -859,6 +859,10 @@ final class MenuStateModel: ObservableObject {
         }
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     func refresh() {
         isClaudeInstalled = PluginInstaller.findClaude() != nil
         launchAtLogin = SMAppService.mainApp.status == .enabled

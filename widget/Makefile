@@ -37,6 +37,13 @@ bundle: build icon
 	@cp -R $(BUILD_DIR)/$(EXECUTABLE)_$(EXECUTABLE).bundle $(RESOURCES_DIR)/
 	@rm -rf $(RESOURCES_DIR)/plugin
 	@cp -R ../plugin $(RESOURCES_DIR)/plugin
+	@# Sanity check: bundled plugin/.claude-plugin/plugin.json must match source.
+	@# Catches any pre-bundle staleness from a broken cache or partial copy.
+	@diff -q ../plugin/.claude-plugin/plugin.json $(RESOURCES_DIR)/plugin/.claude-plugin/plugin.json > /dev/null \
+		|| (echo "❌ Bundled plugin.json differs from source — build aborted"; exit 1)
+	@PLUGIN_V=$$(python3 -c 'import json; print(json.load(open("../plugin/.claude-plugin/plugin.json"))["version"])'); \
+		APP_V=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist); \
+		echo "📦 Bundled plugin v$$PLUGIN_V in app v$$APP_V"
 	@codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ Built $(APP_BUNDLE)"
 

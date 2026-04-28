@@ -145,7 +145,10 @@ print(json.dumps({
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] OUTPUT (stdout): $OUTPUT" >> "$LOG"
   echo "$OUTPUT"
 else
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] NO OUTPUT — decision was not allow/deny: '$DECISION'" >> "$LOG"
+  # Empty/timeout/unrecognized decision → silent passthrough to Claude UI.
+  # Logged for backend diagnostics so Claude can see when the duck tried but
+  # the user didn't voice-answer in time. Not visible to the end user.
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] PASSTHROUGH — duck timed out / no voice decision (decision='$DECISION'). Claude UI will handle it." >> "$LOG"
 fi
 
 # 8. Log hook exit
