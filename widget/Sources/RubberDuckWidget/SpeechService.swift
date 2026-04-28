@@ -773,6 +773,22 @@ class SpeechService: ObservableObject {
         permissionGate.reset()
     }
 
+    /// Tail-end nudge: spoken once after an active permission prompt resolves
+    /// IF concurrent permissions silently passed through to Claude's terminal
+    /// UI during the active window. Lets the user know more requests are
+    /// waiting elsewhere without the duck trying to voice-gate them itself.
+    /// Uses critical lane so it queues right after the current prompt's TTS
+    /// rather than getting dropped.
+    func notifyMorePermissionsWaiting() {
+        scheduleSpeech(
+            "More waiting in terminal.",
+            kind: .system,
+            lane: .critical,
+            policy: .fifo,
+            interruptibility: .byCriticalOnly
+        )
+    }
+
     static func listMicrophones() -> [(index: Int, name: String)] {
         AudioDeviceDiscovery.listMicrophones()
     }

@@ -253,15 +253,22 @@ class DuckCoordinator: ObservableObject {
     }
 
     /// Called by PermissionGate (via onRequestResolved) when the active request
-    /// is resolved or times out. Safe to clear voice gate here — the gate
-    /// guarantees this fires before onBecameActive for the next request
-    /// (DispatchQueue.main.async FIFO ordering).
-    func handlePermissionResolved() {
-        DuckLog.log("[permission] Gate resolved — clearing UI + voice gate")
+    /// is resolved or times out.
+    ///
+    /// - Parameter hadPassthrough: true if any concurrent permission requests
+    ///   silently passed through to Claude Code's terminal UI during the
+    ///   active window. Triggers a one-shot "more waiting in terminal" TTS so
+    ///   the user knows to check elsewhere.
+    func handlePermissionResolved(hadPassthrough: Bool = false) {
+        DuckLog.log("[permission] Gate resolved — clearing UI + voice gate (passthroughs=\(hadPassthrough))")
         evalService.permissionPending = false
         resetOrUpdateExpression()
         serialManager.sendCommand("P,0")
         speechService.clearPermissionGate()
+
+        if hadPassthrough {
+            speechService.notifyMorePermissionsWaiting()
+        }
     }
 
     // MARK: - Expression

@@ -19,7 +19,9 @@ class LocalEvalTransport: EvalTransport {
     var onMelodyStart: (() -> Void)?
     var onMelodyStop: (() -> Void)?
     var onClearThinking: (() -> Void)?
-    var onPermissionResolved: (() -> Void)?
+    /// Bool param: true if any concurrent passthroughs happened during the
+    /// active window — coordinator should announce "more waiting in terminal".
+    var onPermissionResolved: ((Bool) -> Void)?
 
     func connect() { /* no-op — always connected */ }
     func disconnect() { /* no-op */ }

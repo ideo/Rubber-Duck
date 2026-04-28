@@ -444,7 +444,7 @@ struct RubberDuckWidgetApp: App {
             )
         }
         transport.onClearThinking = { [weak coordinator] in coordinator?.clearThinking() }
-        transport.onPermissionResolved = { [weak coordinator] in coordinator?.handlePermissionResolved() }
+        transport.onPermissionResolved = { [weak coordinator] hadPassthrough in coordinator?.handlePermissionResolved(hadPassthrough: hadPassthrough) }
         transport.onMelodyStart = { [weak coordinator] in coordinator?.startMelody() }
         transport.onMelodyStop = { [weak coordinator] in coordinator?.stopMelody() }
 

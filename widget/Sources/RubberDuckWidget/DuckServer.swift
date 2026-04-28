@@ -72,8 +72,8 @@ class DuckServer: ObservableObject {
             await permissionGate.setOnBecameActive { [weak transport] event in
                 transport?.deliverPermission(event)
             }
-            await permissionGate.setOnRequestResolved { [weak transport] in
-                transport?.onPermissionResolved?()
+            await permissionGate.setOnRequestResolved { [weak transport] hadPassthrough in
+                transport?.onPermissionResolved?(hadPassthrough)
             }
         }
     }
@@ -294,6 +294,12 @@ class DuckServer: ObservableObject {
             // Wait for voice response (blocks until this request's turn).
             // The gate delivers locally via onBecameActive when this request is active.
             let (decision, suggestionIndex) = await permissionGate.waitForDecision(event: pendingEvent)
+
+            // Concurrent request: voice slot was busy. Hook returns {}, Claude
+            // Code's terminal UI handles it. No broadcasts (UI was never set up).
+            if decision == "passthrough" {
+                return .json("{}".data(using: .utf8)!)
+            }
 
             if decision == "timeout" {
                 DuckLog.log("[permission] Timeout — no response")
