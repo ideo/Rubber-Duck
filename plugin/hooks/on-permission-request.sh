@@ -59,12 +59,10 @@ if [ "$PERMISSION_MODE" = "auto" ] || [ "$PERMISSION_MODE" = "dontAsk" ] || [ "$
   exit 0
 fi
 
-# Zero suggestions + not a tool the duck should voice-ask about → pass through
-if [ "$SUGGESTION_COUNT" = "0" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] No suggestions, not AskUserQuestion — passing through" >> "$LOG"
-  echo "========================================" >> "$LOG"
-  exit 0
-fi
+# NOTE: We used to pass through when permission_suggestions was empty. That filter
+# was wrong — modern Claude Code sends empty suggestions for many user-facing
+# Bash requests. PermissionRequest only fires when a dialog WOULD be shown, so
+# if we got here, we should prompt the user via voice.
 
 # Plan mode (except AskUserQuestion and ExitPlanMode) → pass through to Claude Code's own UI
 if [ "$PERMISSION_MODE" = "plan" ] && [ "$TOOL_NAME" != "AskUserQuestion" ] && [ "$TOOL_NAME" != "ExitPlanMode" ]; then
