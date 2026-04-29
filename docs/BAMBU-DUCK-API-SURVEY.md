@@ -84,7 +84,65 @@ Trigger logic is "edge on the source field", not "every push". 10 events for v1:
 
 **Cooldown rule for all triggers:** debounce identical events for ≥ 30s, and never speak two phrases within 5s — let the duck breathe.
 
-## 4. Risks / open questions
+## 4. Cloud MQTT path (for users who keep Bambu Handy)
+
+For users who don't want to flip LAN Only Mode (loses Bambu Handy remote, cloud printing, auto firmware updates), the duck can subscribe to Bambu's **cloud MQTT relay** instead of the printer's local broker. Same topic vocabulary, same payload, same reactions — just an extra auth step at startup.
+
+### Auth flow
+
+One-time setup (then the duck remembers across reboots):
+
+1. **User provides credentials** via a captive-portal on the duck (or one-time entry over USB serial). Persisted to NVS:
+   - Bambu account email + password, OR
+   - Refresh token if we want a no-password setup later
+2. **Login**: `POST https://api.bambulab.com/v1/user-service/user/login`
+   - Body: `{"account": "<email>", "password": "<password>"}`
+   - Response: `{"accessToken": "...", "refreshToken": "...", "expiresIn": 86400}`
+3. **Region detection**: the login response includes the user's home region. Pick `us.mqtt.bambulab.com` or `cn.mqtt.bambulab.com` accordingly.
+4. **Refresh loop**: access tokens expire ~24h. Duck refreshes silently with `POST /v1/user-service/user/refreshtoken` whenever it has < 1h left or whenever a reconnect attempt fails with auth.
+
+### MQTT connection
+
+| Field | Value |
+|---|---|
+| Host | `us.mqtt.bambulab.com:8883` (or `cn.` for CN accounts) |
+| Transport | TLS (properly CA-signed — easier than the local self-signed mess) |
+| Username | `u_{user_id}` — the numeric Bambu user ID from the login response |
+| Password | the current access token |
+| Client ID | unique per duck (UUID generated once, stored in NVS) |
+| Subscribe | `device/{SERIAL}/report` |
+| Publish | `device/{SERIAL}/request` |
+
+The `pushall` snapshot semantics for P1/A1 still apply over cloud — duck publishes `{"pushing":{"command":"pushall"}}` on every reconnect to get a full state, then patches deltas.
+
+### Extra complexity vs local
+
+| Concern | Local | Cloud |
+|---|---|---|
+| HTTPS client | not needed | needed for login + refresh |
+| JSON parsing for auth | n/a | needed (small) |
+| NVS storage | optional | required (refresh token, region) |
+| Token refresh timer | n/a | needed |
+| Region detection | n/a | needed |
+| Cert handling | self-signed mess | trivial (public CA) |
+| Latency | LAN-fast (~1–10ms) | round-trip to Bambu (~50–200ms) |
+| Stability | rock-solid | Bambu can change the cloud API any time |
+
+### Reference implementations
+
+These have all solved cloud auth — worth cribbing from rather than reinventing:
+- [`greghesp/ha-bambulab`](https://github.com/greghesp/ha-bambulab) — Home Assistant integration, full Python; their `pybambu/bambu_cloud.py` is the auth + region + refresh playbook
+- [`hannasdev/n8n-nodes-bambulab`](https://github.com/hannasdev/n8n-nodes-bambulab) — Node.js port of the same flow
+- [`Doridian/OpenBambuAPI`](https://github.com/Doridian/OpenBambuAPI) — protocol-level docs covering both local and cloud paths
+
+### Cloud-specific risks
+
+- **Bambu's cloud API is undocumented.** All known integrations are reverse-engineered. Bambu has changed auth twice in the last two years; expect to update the duck firmware when they do.
+- **Rate limits.** Unknown but real — don't poll, stay subscribed. The duck's reaction model is already push-only, so this is fine.
+- **Account credentials on a small device.** Refresh tokens stored on an ESP32 NVS without flash encryption are extractable by a determined attacker with physical access. Recommend documenting this clearly and offering "reset duck" to wipe credentials.
+- **Region drift.** If a user moves regions (e.g. travels, account migrates), the cached endpoint will start failing. Detect and re-resolve.
+
+## 5. Risks / open questions
 
 - **Cloud-bound printers can't be reached locally.** A user who never enabled LAN Only + Developer Mode has no MQTT to talk to. Onboarding has to walk them through enabling it (and warn that it disables Bambu Handy app cloud control).
 - **TLS on ESP32**: cert is self-signed and rotates with firmware. Either ship Bambu's CA bundle and accept future breakage, or skip CN verification (works, slightly less paranoid). PSK is not an option here.
