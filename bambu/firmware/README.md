@@ -31,20 +31,27 @@ doesn't need to. It's a dumb audio pipe.
 
 ## Hardware
 
+Pinout matches `firmware/rubber_duck_s3/Config.h` so the existing duck wiring
+works without changes. Mic is **ICS-43434** (Adafruit breakout), amp is
+**MAX98357A**.
+
 | Pin (XIAO label / GPIO) | Wire to |
 |---|---|
-| **D0 / GPIO1** | INMP441 WS |
-| **D1 / GPIO2** | INMP441 SCK |
-| **D2 / GPIO3** | INMP441 SD |
-| **D3 / GPIO4** | MAX98357A LRC |
-| **D4 / GPIO5** | MAX98357A BCLK |
-| **D5 / GPIO6** | MAX98357A DIN |
-| **D9 / GPIO9** | Push-to-talk button → GND |
-| 3V3 | INMP441 VDD, MAX98357A SD (shutdown high = enabled) |
+| **D0 / GPIO1** | MAX98357A LRC (WS) |
+| **D1 / GPIO2** | MAX98357A BCLK |
+| **D2 / GPIO3** | MAX98357A DIN |
+| **D5 / GPIO6** | Push-to-talk button → GND |
+| **D8 / GPIO7** | ICS-43434 SCK (BCLK) |
+| **D9 / GPIO8** | ICS-43434 SD (DOUT) |
+| **D10 / GPIO9** | ICS-43434 WS (LRCL) |
+| 3V3 | ICS-43434 VDD, MAX98357A SD (shutdown high = enabled) |
 | 5V (USB) | MAX98357A VIN |
-| GND | INMP441 GND + L/R, MAX98357A GND |
+| GND | ICS-43434 GND + SEL/L+R, MAX98357A GND |
 
-INMP441 L/R pin → GND selects left channel; we read `I2S_STD_SLOT_LEFT`.
+ICS-43434 SEL pin → GND selects left channel; we read `I2S_STD_SLOT_LEFT`.
+
+D3, D4, D6, D7 are free. The main duck uses D3 for a servo and D4 unused —
+if you have a servo on D3, this firmware leaves it alone.
 
 ## One-time setup
 
