@@ -29,6 +29,14 @@ import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger("duck_proxy")
+logger.setLevel(logging.INFO)
+# Ensure messages reach uvicorn's stdout — without this, default root level
+# is WARNING and our INFO transcripts never appear in the log.
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:duck_proxy: %(message)s"))
+    logger.addHandler(_h)
+    logger.propagate = False
 
 router = APIRouter()
 
@@ -63,11 +71,19 @@ async def _send_init(upstream: websockets.WebSocketClientProtocol) -> None:
     )
 
 
+# 80ms of int16 silence at 16kHz = 1280 samples * 2 bytes = 2560 bytes.
+# Pre-encoded to avoid recomputing base64 each tick.
+_SILENCE_80MS_B64 = base64.b64encode(bytes(2560)).decode("ascii")
+
+
 async def _duck_to_eleven(duck: WebSocket,
                           upstream: websockets.WebSocketClientProtocol,
-                          mic_wav: Optional[wave.Wave_write]) -> None:
+                          mic_wav: Optional[wave.Wave_write],
+                          last_sent: list) -> None:
     """Pump duck mic frames upstream as user_audio_chunk messages.
-    Optionally tee to a local WAV for diagnostics."""
+    Optionally tee to a local WAV for diagnostics. Updates last_sent[0]
+    each time real audio is forwarded so the silence pump knows to back off.
+    """
     try:
         while True:
             msg = await duck.receive()
@@ -79,9 +95,28 @@ async def _duck_to_eleven(duck: WebSocket,
                     mic_wav.writeframes(pcm)
                 b64 = base64.b64encode(pcm).decode("ascii")
                 await upstream.send(json.dumps({"user_audio_chunk": b64}))
+                last_sent[0] = time.time()
             elif "text" in msg and msg["text"]:
                 logger.debug("duck text: %s", msg["text"])
     except WebSocketDisconnect:
+        return
+
+
+async def _silence_pump(upstream: websockets.WebSocketClientProtocol,
+                        last_sent: list) -> None:
+    """When the duck stops sending mic frames (because firmware muted itself
+    while the agent talks), ElevenLabs sees zero user_audio_chunk traffic
+    and ends the session as 'user disconnected / turn timed out'. Send 80ms
+    of silence whenever real audio hasn't arrived in the last 80ms — keeps
+    the server's turn-timing clock happy without triggering self-transcription.
+    Mirrors what the official SDK does."""
+    try:
+        while True:
+            await asyncio.sleep(0.08)
+            if time.time() - last_sent[0] > 0.075:  # ~80ms with a tiny margin
+                await upstream.send(json.dumps({"user_audio_chunk": _SILENCE_80MS_B64}))
+                last_sent[0] = time.time()
+    except (websockets.ConnectionClosed, asyncio.CancelledError):
         return
 
 
@@ -154,9 +189,11 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
     try:
         async with websockets.connect(signed, max_size=None) as upstream:
             await _send_init(upstream)
-            up = asyncio.create_task(_duck_to_eleven(duck, upstream, mic_wav))
+            last_sent = [time.time()]
+            up = asyncio.create_task(_duck_to_eleven(duck, upstream, mic_wav, last_sent))
             down = asyncio.create_task(_eleven_to_duck(duck, upstream, agent_wav))
-            done, pending = await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
+            silence = asyncio.create_task(_silence_pump(upstream, last_sent))
+            done, pending = await asyncio.wait({up, down, silence}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
     except Exception as e:

@@ -40,8 +40,8 @@ static void on_text(const char *json, size_t len) {
     // Cheap substring sniff — relay only sends two known control messages,
     // no need for a full JSON parser on the hot path.
     if (memmem(json, len, "interruption", 12) != NULL) {
-        s_agent_speaking = false;
-        audio_mic_enable(true);
+        // Drop any pending agent speaker output so the duck stops mid-word.
+        // Mic stays on (it never went off).
         if (s_spk_stream) xStreamBufferReset(s_spk_stream);
         ESP_LOGI(TAG, "rx interruption");
     } else if (memmem(json, len, "ready", 5) != NULL) {
@@ -51,12 +51,11 @@ static void on_text(const char *json, size_t len) {
 }
 
 static void on_binary(const uint8_t *data, size_t len, int payload_offset, int payload_len) {
-    // PCM audio chunk from agent. Pieces of larger messages still arrive as
-    // separate DATA events; the WS client gives us payload_offset/_len so
-    // we can stream into the spk ring without reassembly.
+    // PCM audio chunk from agent. Mark agent_speaking so mic_task zeros out
+    // its frames — frames still flow upstream (keeps session alive) but
+    // don't carry the speaker's own voice as fake user input.
     s_agent_speaking = true;
     s_last_audio_ms = esp_timer_get_time() / 1000;
-    audio_mic_enable(false);
     size_t sent = xStreamBufferSend(s_spk_stream, data, len, pdMS_TO_TICKS(50));
     if (sent < len) {
         ESP_LOGW(TAG, "spk stream full, dropped %u bytes", (unsigned)(len - sent));
@@ -92,15 +91,38 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
 
 static void mic_task(void *arg) {
     int16_t pcm[AUDIO_FRAME_SAMPLES];
+    int reads_total = 0, frames_pushed = 0, frames_silenced = 0;
+    int64_t last_log_ms = esp_timer_get_time() / 1000;
     while (s_session_active) {
         size_t n = audio_mic_read(pcm, AUDIO_FRAME_SAMPLES, 50);
-        if (n == 0) { vTaskDelay(1); continue; }
-        if (s_agent_speaking) { vTaskDelay(1); continue; }
-        size_t bytes = n * sizeof(int16_t);
-        size_t sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
-        if (sent < bytes) {
-            ESP_LOGW(TAG, "mic stream full, resetting");
-            xStreamBufferReset(s_mic_stream);
+        reads_total++;
+        if (n == 0) {
+            vTaskDelay(1);
+        } else {
+            // While the agent is speaking, the mic is hearing the speaker
+            // through the air (= acoustic feedback). Zero out the samples
+            // so frames keep flowing upstream (server expects them to keep
+            // session alive) but don't carry the agent's own voice back as
+            // fake user input.
+            if (s_agent_speaking) {
+                memset(pcm, 0, n * sizeof(int16_t));
+                frames_silenced++;
+            }
+            size_t bytes = n * sizeof(int16_t);
+            size_t sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
+            if (sent < bytes) {
+                ESP_LOGW(TAG, "mic stream full, resetting");
+                xStreamBufferReset(s_mic_stream);
+            } else {
+                frames_pushed++;
+            }
+        }
+        int64_t now = esp_timer_get_time() / 1000;
+        if (now - last_log_ms > 2000) {
+            ESP_LOGI(TAG, "mic: %d reads, %d frames pushed (%d silenced) in %lldms",
+                     reads_total, frames_pushed, frames_silenced, now - last_log_ms);
+            reads_total = 0; frames_pushed = 0; frames_silenced = 0;
+            last_log_ms = now;
         }
     }
     vTaskDelete(NULL);
@@ -144,14 +166,22 @@ static void spk_task(void *arg) {
 // ---- mute timer: re-enable mic 500ms after last agent audio chunk ----
 
 static void mute_timer_task(void *arg) {
+    // Two conditions BOTH must be true to clear s_agent_speaking:
+    //   1. No new audio chunk arrived in the last 500ms.
+    //   2. The speaker stream has drained to near-empty (< 1KB ≈ 30ms).
+    // Without (2), we clear too early — the spk DMA still has seconds of
+    // buffered audio queued, the speaker keeps playing, and the mic picks
+    // up that playback as fake user input.
     while (s_session_active) {
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(100));
         if (s_agent_speaking) {
             int64_t now = esp_timer_get_time() / 1000;
-            if (now - s_last_audio_ms > 500) {
+            bool quiet_long_enough = (now - s_last_audio_ms > 500);
+            bool spk_drained = (s_spk_stream == NULL ||
+                                xStreamBufferBytesAvailable(s_spk_stream) < 1024);
+            if (quiet_long_enough && spk_drained) {
                 s_agent_speaking = false;
-                audio_mic_enable(true);
-                ESP_LOGI(TAG, "mute timer: agent silent >500ms, mic re-enabled");
+                ESP_LOGI(TAG, "mute timer: agent done speaking, mic un-silenced");
             }
         }
     }
@@ -167,7 +197,10 @@ esp_err_t agent_run_session(const char *unused_signed_url) {
     const size_t MIC_CHUNK_BYTES = AUDIO_FRAME_SAMPLES * 4 * sizeof(int16_t);
     s_mic_stream = xStreamBufferCreate(16 * 1024, MIC_CHUNK_BYTES);
     if (!s_mic_stream) return ESP_ERR_NO_MEM;
-    s_spk_stream = xStreamBufferCreateWithCaps(64 * 1024, 1,
+    // ElevenLabs sends agent audio faster than realtime (it pre-buffers
+    // entire utterances). For a 10s sentence ~320KB arrives at once. Spk
+    // task drains at 16kHz playback rate. 512KB ≈ 16s of audio buffered.
+    s_spk_stream = xStreamBufferCreateWithCaps(512 * 1024, 1,
                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_spk_stream) {
         vStreamBufferDelete(s_mic_stream); s_mic_stream = NULL;

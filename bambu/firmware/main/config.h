@@ -12,33 +12,33 @@
 // (larger = stutter). 20ms is the documented sweet spot.
 #define AUDIO_FRAME_SAMPLES    320
 
-// Pin assignments match the main rubber_duck_s3 firmware so existing wiring
-// works without re-soldering. ICS-43434 mic, MAX98357A amp.
+// Pin assignments match firmware/rubber_duck_s3_ducky/Config.h — the custom
+// "ducky" PCB with WROOM-1 (built-in PCB antenna), ICS-43432 mic, MAX98357
+// amp, WS2812B status LED. Mic and speaker share a single I2S bus in
+// full-duplex mode (BCLK + WS shared, only data pins differ).
 
-// ---- I2S microphone (ICS-43434) on I2S_NUM_0 ----
-// XIAO pins: D8=GPIO7 (SCK), D9=GPIO8 (SD), D10=GPIO9 (WS).
-// Wire L/R→GND (left channel), VDD→3V3, GND→GND.
-#define MIC_I2S_PORT           0
-#define MIC_PIN_SCK            7   // D8 — bit clock
-#define MIC_PIN_SD             8   // D9 — serial data in
-#define MIC_PIN_WS             9   // D10 — word select / LRCL
+// ---- Single I2S port for both mic + speaker (full-duplex) ----
+#define I2S_PORT               0
 
-// ---- I2S amplifier (MAX98357A) on I2S_NUM_1 ----
-// XIAO pins: D0=GPIO1 (WS/LRC), D1=GPIO2 (BCLK), D2=GPIO3 (DIN).
-// Wire GAIN→float (12dB default), SD→3V3, VIN→5V (USB), GND→GND.
-#define SPK_I2S_PORT           1
-#define SPK_PIN_LRC            1   // D0 — LRC / WS
-#define SPK_PIN_BCLK           2   // D1 — bit clock
-#define SPK_PIN_DIN            3   // D2 — DIN / DOUT
+// Shared clock + word-select pins
+#define I2S_PIN_BCLK           13  // GPIO13 — shared bit clock
+#define I2S_PIN_WS             12  // GPIO12 — shared word select / LRCLK
+
+// Speaker data out (TX) — to MAX98357 DIN
+#define SPK_PIN_DIN            7   // GPIO7
+
+// Mic data in (RX) — from ICS-43432 SD
+#define MIC_PIN_SD             1   // GPIO1
 
 // ---- Push-to-talk button ----
-// Wire button between D5 (GPIO6) and GND. Internal pull-up enabled.
-// Hold to talk; release ends user turn (sends end-of-speech to agent).
-#define BUTTON_PIN             6   // D5
+// User button labeled S3 on the PCB silk. Active-low to GND; internal pull-up.
+#define BUTTON_PIN             2   // GPIO2
 
 // ---- Status LED ----
-// XIAO ESP32-S3 has a user-controllable LED on GPIO21 (active low).
-#define LED_PIN                21
+// PCB has a WS2812B NeoPixel on GPIO38 (via BSS138 level shifter). Driving
+// it requires the RMT or SPI peripheral; not yet wired in this firmware.
+// LED_PIN is kept as a no-op so existing main.c led_init/on/off compile.
+#define LED_PIN                38
 
 // ---- Local relay (path C-light) ----
 // Duck connects to our Python relay over plain TCP via ngrok TCP tunnel,

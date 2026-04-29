@@ -31,6 +31,44 @@ subscription to the printer.
 - ✅ **Agent first message arrives** — `[agent_response] Yeah?` log fires
   shortly after WS opens. Round-trip works at the JSON level.
 
+## 🟢 2026-04-29 evening — Path C working on the ducky PCB
+
+End-to-end conversation working: clean mic capture, agent voice through speaker,
+no self-feedback transcription, long agent responses no longer drop into static,
+"goodbye" cleanly ends the call. Whole arc since the OG-XIAO degraded-mic
+finding, in order:
+
+- Ported full-duplex I2S (single port shared BCLK/WS, ICS-43432 mic, MAX98357
+  stereo) for the ducky PCB pinout (GPIO13/12/7/1)
+- Added 8× gain + DC removal pipeline from rubber_duck_s3_ducky updateMic
+- Found `dma_frame_num` mismatch (256 vs AUDIO_FRAME_SAMPLES=320) caused
+  partial-read rejections → aligned + accept partials
+- Diagnosed ElevenLabs ending sessions at end-of-turn because no
+  `user_audio_chunk` arrived during the mute window → added **silence pump**
+  to the relay (sends 80ms of zero PCM whenever real frames stop)
+- Switched mic to always-on; instead of muting, **zero out mic samples while
+  the agent is speaking** to keep frames flowing without self-feedback
+- Made `mute_timer` track speaker-stream emptiness, not just last-audio-event
+  time — fixes the case where ElevenLabs has stopped sending but spk DMA still
+  has seconds of buffered audio
+- Bumped spk_stream from 64KB → **512KB in PSRAM** to hold 16s of pre-buffered
+  agent audio without dropping into static
+- Enabled ElevenAgents **"End call" system tool** + system-prompt instruction
+  → "goodbye" cleanly ends the conversation
+- Voice config flows through dashboard (need to hit **Publish** for changes
+  to take effect on next session)
+
+Architecture summary:
+
+```
+[duck (ducky PCB)] ──ws://ngrok-tcp──→ [relay] ──TLS+JSON+b64──→ [ElevenAgents]
+                  ◀─── raw int16 PCM ───►       │
+                                                 ├─→ silence pump (every 80ms
+                                                 │   if no real frame arrived)
+                                                 └─→ recordings/{ts}_mic.wav,
+                                                     recordings/{ts}_agent.wav
+```
+
 ## ⚠️ KEY FINDING — 2026-04-29: degraded mic on OG XIAO
 
 After hours of firmware debugging trying to fix garbled mic audio, we did
