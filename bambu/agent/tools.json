@@ -1,0 +1,46 @@
+{
+  "tools": [
+    {
+      "name": "get_printer_state",
+      "description": "Get the current state of the 3D printer: stage (IDLE/PREPARE/RUNNING/PAUSE/FINISH/FAILED), current print name, percent complete, current layer, total layers, minutes remaining, nozzle and bed temperatures, chamber temp, and any active HMS error codes. Call this for any 'how's the print going' / 'what's it doing' question.",
+      "method": "GET",
+      "url": "{{RELAY_BASE_URL}}/tools/printer_state",
+      "headers": {
+        "X-Relay-Secret": "{{RELAY_SHARED_SECRET}}"
+      },
+      "parameters": []
+    },
+    {
+      "name": "get_temperatures",
+      "description": "Get just the temperatures: nozzle current and target, bed current and target, chamber. Smaller subset of get_printer_state, use when the user only asks about temps.",
+      "method": "GET",
+      "url": "{{RELAY_BASE_URL}}/tools/temperatures",
+      "headers": {
+        "X-Relay-Secret": "{{RELAY_SHARED_SECRET}}"
+      },
+      "parameters": []
+    },
+    {
+      "name": "get_print_history",
+      "description": "Get the last N completed prints (FINISH or FAILED outcomes) with timestamp, outcome, and subtask name. Use for questions like 'how did the last few go' or 'when did I last print that benchy'.",
+      "method": "GET",
+      "url": "{{RELAY_BASE_URL}}/tools/print_history",
+      "headers": {
+        "X-Relay-Secret": "{{RELAY_SHARED_SECRET}}"
+      },
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "How many recent prints to return. Default 5. Max 20.",
+          "required": false,
+          "in": "query"
+        }
+      ]
+    }
+  ],
+  "_template_vars": {
+    "RELAY_BASE_URL": "Public URL of the relay — e.g. https://abc123.ngrok.app during dev",
+    "RELAY_SHARED_SECRET": "Must match RELAY_SHARED_SECRET in the relay's .env"
+  }
+}
