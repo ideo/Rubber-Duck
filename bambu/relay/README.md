@@ -1,13 +1,13 @@
 # Bambu Relay
 
-Bridge between an ElevenLabs Convai agent and a Bambu printer's MQTT broker.
+Bridge between an ElevenLabs ElevenAgents agent and a Bambu printer's MQTT broker.
 
-The duck (ESP32-S3) opens a WebSocket to Convai. The Convai LLM, mid-conversation,
-calls tools defined in the Convai dashboard — those tools are HTTP webhooks
+The duck (ESP32-S3) opens a WebSocket to ElevenAgents. The ElevenAgents LLM, mid-conversation,
+calls tools defined in the ElevenAgents dashboard — those tools are HTTP webhooks
 pointing at this relay. The relay holds the MQTT subscription and answers.
 
 ```
-duck ──wss──→ ElevenLabs Convai ──webhook──→ this relay ──MQTT──→ Bambu printer
+duck ──wss──→ ElevenLabs ElevenAgents ──webhook──→ this relay ──MQTT──→ Bambu printer
 ```
 
 ## Run
@@ -22,7 +22,7 @@ cp .env.example .env   # fill in printer IP, access code, serial
 .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8088
 ```
 
-Expose to Convai with `ngrok http 8088` (or deploy somewhere with a public URL).
+Expose to ElevenAgents with `ngrok http 8088` (or deploy somewhere with a public URL).
 
 ### Mock mode (no printer required)
 
@@ -35,9 +35,9 @@ MOCK=1 RELAY_SHARED_SECRET=test123 .venv/bin/uvicorn main:app --port 8088
 curl -H "X-Relay-Secret: test123" http://127.0.0.1:8088/tools/printer_state
 ```
 
-## Convai agent setup
+## ElevenAgents agent setup
 
-In the Convai dashboard, add three Webhook tools pointing at this relay:
+In the ElevenAgents dashboard, add three Server Tools (Webhook type) pointing at this relay:
 
 | Tool name | Method | URL |
 |---|---|---|

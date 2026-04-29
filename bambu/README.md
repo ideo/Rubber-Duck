@@ -1,28 +1,28 @@
 # Bambu Duck
 
 A standalone, conversational rubber duck that lives next to a Bambu 3D printer.
-No Mac required. The duck listens for "ducky", talks to an ElevenLabs Convai
-agent over WebSocket, and the agent can query the printer's live state mid-
-conversation.
+No Mac required. The duck talks to an **ElevenAgents** (ElevenLabs's
+conversational AI product, formerly "Convai") agent over WebSocket, and the
+agent can query the printer's live state mid-conversation.
 
 ```
-[duck ESP32-S3]  ──wss──→  [ElevenLabs Convai]  ──webhook──→  [relay]  ──MQTT──→  [Bambu printer]
-       ↑                          ↓ audio
-       └──────── speaker ─────────┘
+[duck ESP32-S3]  ──wss──→  [ElevenAgents]  ──webhook──→  [relay]  ──MQTT──→  [Bambu printer]
+       ↑                        ↓ audio
+       └────── speaker ─────────┘
 ```
 
 ## Pieces
 
 | Dir | What | Status |
 |---|---|---|
-| [`firmware/`](firmware/) | ESP-IDF project for ESP32-S3: I2S mic, microWakeWord, WebSocket client, I2S DAC out | not started |
-| [`relay/`](relay/) | Python FastAPI service. Holds Bambu MQTT subscription, exposes HTTP tool endpoints for Convai webhook calls | v0 sketch — not yet tested against real printer |
-| `agent/` | Convai agent config (system prompt, tool schemas, voice ID) — source of truth, since the dashboard rots | not started |
+| [`firmware/`](firmware/) | ESP-IDF project for XIAO Seeed ESP32-S3: I2S mic, WebSocket client, I2S DAC out | scaffold — needs bench tuning |
+| [`relay/`](relay/) | Python FastAPI service. Holds Bambu MQTT subscription, exposes HTTP tool endpoints for ElevenAgents Server Tool calls | v0 — verified against mock, not yet against real printer |
+| [`agent/`](agent/) | ElevenAgents config (system prompt, tool schemas, voice) — source of truth since the dashboard rots | working in playground |
 
 ## How the agent gets printer-aware
 
-Convai's dashboard lets you define **Webhook Tools** — HTTP endpoints the LLM
-can call mid-conversation. The relay exposes three:
+ElevenAgents lets you define **Server Tools** — HTTP webhooks the LLM can call
+mid-conversation. The relay exposes three:
 
 - `GET /tools/printer_state` — current stage, percent, layer, temps, HMS codes
 - `GET /tools/temperatures` — nozzle/bed/chamber subset

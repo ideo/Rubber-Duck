@@ -13,8 +13,8 @@ The duck has a personality. The voice should support it, not fight it:
 - **Younger to mid-range.** A grandparent voice doesn't fit a rubber duck.
 - **Not famous.** Avoid voices that strongly evoke a specific person — pulls
   attention away from the duck itself.
-- **Latency matters.** Use a Convai-supported voice with low TTFB; some custom
-  cloned voices have noticeably higher first-byte latency.
+- **Latency matters.** Use an ElevenAgents-supported voice with low TTFB; some
+  custom cloned voices have noticeably higher first-byte latency.
 
 ## Candidates to try
 
@@ -27,7 +27,8 @@ The duck has a personality. The voice should support it, not fight it:
 ## Selected
 
 **Voice ID:** _tbd_
-**Model:** `eleven_turbo_v2_5` (or whatever Convai recommends for low-latency conversational)
+**Model:** `eleven_flash_v2_5` — current default for low-latency conversational
+(~75ms TTFB). `eleven_turbo_v2_5` is the higher-quality / slightly-slower option.
 **Stability:** _tbd_ (lower = more expressive, higher = more consistent)
 **Similarity boost:** _tbd_
 
