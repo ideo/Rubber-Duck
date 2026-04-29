@@ -59,6 +59,10 @@ class BambuState:
             payload = json.loads(msg.payload)
         except json.JSONDecodeError:
             return
+        self.handle_payload(payload)
+
+    def handle_payload(self, payload: dict) -> None:
+        """Merge a push_status payload into state. Public so tests/mocks can inject."""
         push = payload.get("print")
         if not push:
             return

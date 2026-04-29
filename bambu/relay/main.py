@@ -18,13 +18,19 @@ state: BambuState | None = None
 async def lifespan(_app: FastAPI):
     global state
     state = BambuState(
-        host=os.environ["BAMBU_HOST"],
-        access_code=os.environ["BAMBU_ACCESS_CODE"],
-        serial=os.environ["BAMBU_SERIAL"],
+        host=os.environ.get("BAMBU_HOST", "mock"),
+        access_code=os.environ.get("BAMBU_ACCESS_CODE", "mock"),
+        serial=os.environ.get("BAMBU_SERIAL", "mock"),
     )
-    state.start()
+    if os.environ.get("MOCK") == "1":
+        # Mock mode: don't connect to a broker, let mock_printer.py drive state via injection.
+        from mock_printer import drive_in_thread
+        drive_in_thread(state)
+    else:
+        state.start()
     yield
-    state.stop()
+    if os.environ.get("MOCK") != "1":
+        state.stop()
 
 
 app = FastAPI(lifespan=lifespan)

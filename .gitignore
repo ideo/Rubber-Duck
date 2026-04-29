@@ -20,3 +20,8 @@ firmware/rubber_duck_c3/
 
 # PlatformIO build artifacts
 firmware/**/.pio/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

@@ -12,14 +12,28 @@ duck ──wss──→ ElevenLabs Convai ──webhook──→ this relay ─�
 
 ## Run
 
+Requires Python 3.10+ (FastAPI uses PEP 604 `str | None` syntax at runtime).
+
 ```bash
-cd relay
+cd bambu/relay
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env   # fill in printer IP, access code, serial
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8088
+.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8088
 ```
 
 Expose to Convai with `ngrok http 8088` (or deploy somewhere with a public URL).
+
+### Mock mode (no printer required)
+
+`MOCK=1` swaps the MQTT subscriber for `mock_printer.py`, which walks through
+IDLE → PREPARE → RUNNING → FINISH on a loop. Useful for exercising the
+endpoints before you have a printer reachable.
+
+```bash
+MOCK=1 RELAY_SHARED_SECRET=test123 .venv/bin/uvicorn main:app --port 8088
+curl -H "X-Relay-Secret: test123" http://127.0.0.1:8088/tools/printer_state
+```
 
 ## Convai agent setup
 
