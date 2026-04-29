@@ -142,13 +142,108 @@ These have all solved cloud auth — worth cribbing from rather than reinventing
 - **Account credentials on a small device.** Refresh tokens stored on an ESP32 NVS without flash encryption are extractable by a determined attacker with physical access. Recommend documenting this clearly and offering "reset duck" to wipe credentials.
 - **Region drift.** If a user moves regions (e.g. travels, account migrates), the cached endpoint will start failing. Detect and re-resolve.
 
-## 5. Risks / open questions
+## 5. Standalone duck — the full architecture
 
-- **Cloud-bound printers can't be reached locally.** A user who never enabled LAN Only + Developer Mode has no MQTT to talk to. Onboarding has to walk them through enabling it (and warn that it disables Bambu Handy app cloud control).
-- **TLS on ESP32**: cert is self-signed and rotates with firmware. Either ship Bambu's CA bundle and accept future breakage, or skip CN verification (works, slightly less paranoid). PSK is not an option here.
-- **P1/A1 delta-push semantics** mean the duck has to maintain a local state object and diff it — can't just react to whatever arrived in the last message. Easy to get subtly wrong (e.g. missing the FINISH edge if the snapshot arrives before subscription).
-- **HMS code catalog drifts.** New firmware adds codes; the wiki lags. Duck should fall back to "something's wrong" (event #6) for unknown codes rather than going silent.
-- **Multi-printer households** — topic includes serial, so one duck per printer is the simple model. A duck that watches several printers is a v2 question, not v1.
+Once printer data is in our hands (sections 1–4), the duck becomes a self-contained device on its own WiFi. Two voice modes share the same hardware:
+
+| Layer | When it speaks | Latency | Offline | Cost |
+|---|---|---|---|---|
+| **Proactive** (pre-baked Opus phrases) | Reacting to printer events from MQTT | < 50ms | ✅ yes | none |
+| **Conversational** (ElevenLabs Convai) | After "ducky" wake word from the user | ~500ms first audio | ❌ no | per-minute |
+
+The proactive layer is v1. The conversational layer is the unlock — the duck stops being a notifier and becomes a printer-savvy companion you can chat with about settings, status, history.
+
+### 5.1 Proactive voice — Opus pipeline (cribbed from URAM)
+
+URAM (sibling project on the same chip class — ESP32-S3) ships ~5.4 MB of Opus voice + SFX assets baked into firmware. Adopt their pipeline verbatim:
+
+- **Codec**: Opus at 24 kbps mono 16 kHz, voip-optimized (`-application voip -vbr on`)
+- **Transcode**: `ffmpeg -i source.{wav,mp3} -c:a libopus -b:a 24k -ar 16000 -ac 1 -application voip -vbr on -compression_level 10 out.opus`
+- **Embed**: ESP-IDF `EMBED_FILES` directive in `main/CMakeLists.txt` — each `.opus` becomes a `.rodata.embedded` symbol that the decoder reads directly from flash
+- **Decoder**: [`esphome__micro-opus`](https://github.com/esphome-libs/micro-opus) — Xtensa DSP-optimized (~17–25% faster than vanilla on ESP32-S3), PSRAM-aware, thread-safe via per-thread pseudostack
+
+**Size win vs the current `StoredPhrases.h` raw-PCM approach:**
+
+| Format | 3-second phrase | Library of 20 phrases |
+|---|---|---|
+| Raw 16 kHz s16 PCM | ~96 KB | ~1.9 MB |
+| **Opus 24 kbps voip** | **~9 KB** | **~180 KB** |
+
+That ~10× compression makes a rich, varied phrase library fit comfortably (multiple takes per event for randomness — duck doesn't sound like a vending machine).
+
+### 5.2 Wake word — on-device, no Mac required
+
+For the duck to listen for "ducky" without a Mac in the loop, wake-word detection runs on the ESP32-S3. Three credible options:
+
+| Option | Pros | Cons |
+|---|---|---|
+| **Espressif esp-sr / WakeNet** | Official, free, Xtensa DSP-optimized, drops into ESP-IDF | Custom wake-word training requires Espressif's paid service |
+| **microWakeWord** (esphome) | Open source MIT, **Home Assistant Voice ships this**, custom wake words via Google Colab (~50 recordings → ~80 KB TFLite model) | TFLite-Micro runtime adds ~150 KB code/RAM; slightly less accurate than Porcupine in noisy environments |
+| **Picovoice Porcupine** | Best accuracy, friendliest custom-word training (web tool, no audio recording) | Commercial license — free for hobby, ~$1–5/device for distribution |
+
+**Recommended: microWakeWord.** Same chip class, proven in Home Assistant Voice, fully open + free, Colab notebook trains a custom "ducky" model in one session. Detection latency typically <200ms.
+
+### 5.3 Conversational layer — ElevenLabs Convai
+
+[ElevenLabs Conversational AI](https://elevenlabs.io/docs/conversational-ai/overview) bundles STT + LLM + TTS over a single WebSocket. Audio in, audio out. The duck becomes a thin client.
+
+**Architecture:**
+
+```
+[mic ICS-43434] → [microWakeWord, on-device]
+                          ↓ ("ducky" detected)
+                  [open WebSocket → wss://api.elevenlabs.io/v1/convai/...]
+                          ↓ stream raw 16 kHz PCM mic audio
+                  [ElevenLabs Convai server]
+                          STT → LLM (with tools) → TTS
+                          ↓ stream Opus / MP3 response audio
+                  [micro-opus decoder] → [I2S DAC] → [speaker]
+                          ↓ end-of-speech / button → close
+                  [back to wake-word listening]
+```
+
+**Tooling on the LLM side is the unlock** for printer-savvy answers. Configure the Convai agent with function-call tools the LLM can invoke mid-conversation:
+
+- `get_printer_state()` — parsed `push_status` JSON (current stage, percent, layer, AMS, recent HMS codes)
+- `get_print_history(n)` — last N print outcomes (persisted in NVS by the duck)
+- `pause_print()` / `resume_print()` — publishes to `device/{serial}/request`
+- `get_filament_inventory()` — AMS slot contents and remaining %
+- `get_temperatures()` — nozzle / bed / chamber
+
+User says "how's the dragon coming along?" → LLM calls `get_printer_state`, gets live data, replies in natural language with the duck's voice.
+
+**Cost reality check**: ElevenLabs Convai bills per-minute (~$0.10–0.30/min depending on tier). Acceptable for occasional questions, expensive if abused. Gate firmly with the wake word + hard idle timeout (e.g., 30s of silence ends the session).
+
+### 5.4 Future: MCP tool expansion
+
+Once Convai is wired up, the LLM's tool list becomes expandable without firmware changes. A local or cloud-side **MCP server** can host additional tools the Convai agent registers as available:
+
+- Slicer profile lookup ("recommended bed temp for ASA?")
+- Filament inventory across multiple printers / AMS units
+- Print queue management
+- Bambu Studio integration (kick off a sliced profile)
+- Cross-printer history ("which print this week finished closest to its estimate?")
+
+MCP makes this open-ended — add a tool to the server, duck instantly knows about it. Out of scope for v1; design ergonomics toward this so we don't paint ourselves out of it.
+
+---
+
+## 6. Risks / open questions
+
+**Bambu API**
+- **Cloud-bound printers can't be reached locally.** A user without LAN Only + Developer Mode enabled has no local MQTT broker. The cloud MQTT path (section 4) is the alternative — at the cost of OAuth complexity and Bambu API instability.
+- **TLS on ESP32**: local broker uses a self-signed cert that rotates with firmware. Cloud broker is properly CA-signed (easier). Pick a strategy and document it.
+- **P1/A1 delta-push semantics** mean the duck has to maintain a local state object and diff it. Easy to miss edges (e.g., FINISH if snapshot lands before subscription completes).
+- **HMS code catalog drifts.** New firmware adds codes; the wiki lags. Fall back to "something's wrong" for unknown codes rather than going silent.
+- **Multi-printer households** — topic includes serial, so one duck per printer is the simple v1 model. Multi-printer duck is a v2 question.
+
+**Voice / conversational layer**
+- **Convai cost**: per-minute billing means a wake-word false-positive that opens a session and runs to idle-timeout costs real money. Tune the wake-word threshold conservatively, hard-cap idle timeout to ~30s.
+- **Wake-word false-positive rate** in noisy environments (printer fans, music) is the single biggest UX risk. microWakeWord's Colab notebook lets us tune sensitivity; plan for at least one round of in-environment iteration.
+- **Convai outage = no conversation, but proactive layer still works.** Make sure proactive Opus playback has zero dependency on the Convai connection.
+- **API key management on the duck**: ElevenLabs API key has to live somewhere. NVS is the pragmatic answer; document the "reset duck" flow that wipes credentials.
+- **Conversational latency budget**: wake-word (~200ms) + WebSocket open + first STT chunk + LLM tool call + TTS first byte ≈ 1–2 seconds before the duck starts speaking back. Anything longer feels broken. Worth instrumenting end-to-end early.
+- **Tool authority**: giving the Convai LLM the ability to `pause_print()` is real power. Decide whether destructive tools require voice confirmation ("are you sure?") or stay read-only.
 
 ---
 
