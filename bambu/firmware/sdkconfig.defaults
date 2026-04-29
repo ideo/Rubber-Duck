@@ -1,0 +1,35 @@
+# ============================================================
+# Bambu Duck — sdkconfig defaults (XIAO Seeed ESP32-S3 Sense)
+# ============================================================
+
+# Target chip
+CONFIG_IDF_TARGET="esp32s3"
+
+# PSRAM (Sense board has 8MB octal PSRAM)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Flash size (Sense has 8MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Custom partition table (room for OTA later)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Main task: bigger stack, mbedTLS / WebSocket / cJSON eat stack quickly
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# WebSocket client (added via component manager)
+CONFIG_WS_TRANSPORT=y
+
+# HTTPS / TLS — bundled root certs cover ElevenLabs CA chain
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# WiFi: keep credentials in NVS, no hardcoded SSID
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+
+# Logging — keep modest in production, INFO is fine for dev
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
