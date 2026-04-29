@@ -2,7 +2,6 @@ idf_component_register(
     SRCS
         "main.c"
         "wifi.c"
-        "elevenlabs.c"
         "agent.c"
         "audio.c"
     INCLUDE_DIRS "."
@@ -11,10 +10,15 @@ idf_component_register(
         esp_wifi
         esp_event
         esp_netif
-        esp_http_client
         esp_websocket_client
-        json
         mbedtls
         driver
         esp_driver_i2s
 )
+
+# Allow `idf.py -DBAMBU_DUCK_AGENT_ID=agent_xxx` to inject the agent ID at
+# compile time without editing config.h.
+if(DEFINED BAMBU_DUCK_AGENT_ID)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        "BAMBU_DUCK_AGENT_ID=\"${BAMBU_DUCK_AGENT_ID}\"")
+endif()

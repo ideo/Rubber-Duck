@@ -40,13 +40,11 @@
 // XIAO ESP32-S3 has a user-controllable LED on GPIO21 (active low).
 #define LED_PIN                21
 
-// ---- ElevenAgents ----
-// Set BAMBU_DUCK_AGENT_ID at build time:
-//   idf.py build -DBAMBU_DUCK_AGENT_ID=\"agent_xxxxx\"
-// API key is loaded from NVS at runtime, not compiled in. See README.
-#ifndef BAMBU_DUCK_AGENT_ID
-#define BAMBU_DUCK_AGENT_ID    "REPLACE_ME"
+// ---- Local relay (path C-light) ----
+// Duck connects to our Python relay over plain TCP via ngrok TCP tunnel,
+// raw binary PCM. Relay handles ElevenAgents JSON+base64+TLS upstream.
+// (ngrok's HTTPS edge speaks HTTP/2 which esp_websocket_client doesn't, so
+// we use a TCP tunnel for plain-byte forwarding. See bambu/STATE.md.)
+#ifndef RELAY_WS_URL
+#define RELAY_WS_URL "ws://2.tcp.ngrok.io:20554/ws/duck"
 #endif
-
-#define ELEVENLABS_API_HOST    "api.elevenlabs.io"
-#define SIGNED_URL_PATH_FMT    "/v1/convai/conversation/get-signed-url?agent_id=%s"

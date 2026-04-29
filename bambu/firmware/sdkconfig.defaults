@@ -5,6 +5,17 @@
 # Target chip
 CONFIG_IDF_TARGET="esp32s3"
 
+# CPU frequency: 160 MHz default. Tried 240 MHz but caused brownout on
+# button-press chirp once WiFi was up. If we add a decoupling cap or move
+# off USB power, revisit.
+
+# 1kHz FreeRTOS tick — finer scheduling matches our 20ms audio cadence,
+# avoids 10ms quantum jitter in mic_task / ws_send_task.
+CONFIG_FREERTOS_HZ=1000
+
+# Bigger TCP send buffer — fewer stalls when WS write bursts.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+
 # PSRAM (Sense board has 8MB octal PSRAM)
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y

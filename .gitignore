@@ -25,3 +25,14 @@ firmware/**/.pio/
 .venv/
 __pycache__/
 *.pyc
+
+# Bambu firmware NVS provisioning (contains WiFi pw + API key)
+bambu/firmware/provision.local.csv
+bambu/firmware/provision.local.bin
+
+# ESP-IDF build artifacts (apply to any IDF project under firmware/ or bambu/)
+**/build/
+**/managed_components/
+**/sdkconfig
+**/sdkconfig.old
+**/dependencies.lock

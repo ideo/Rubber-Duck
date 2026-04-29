@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 
 from bambu_state import BambuState
+from duck_proxy import router as duck_router
 
 load_dotenv()
 
@@ -34,6 +35,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(duck_router)
 
 
 def _auth(secret: str | None) -> None:

@@ -1,12 +1,14 @@
-// ElevenAgents WebSocket client.
+// Local-relay WebSocket client.
 //
-// Protocol (PCM 16kHz LE mono, base64-encoded):
-//   client → server  : conversation_initiation_client_data, user_audio_chunk, pong
-//   server → client  : conversation_initiation_metadata, audio, ping, interruption,
-//                       agent_response, user_transcript, client_tool_call
+// The duck connects to our Python relay over LAN/ngrok and exchanges raw
+// int16 LE PCM @ 16kHz mono in WebSocket *binary* frames. The relay holds
+// the slow ElevenAgents WS upstream and does all the JSON+base64+TLS work.
+// This file used to do all that on-chip and was unstable; see bambu/STATE.md.
 //
-// We don't implement client_tool_call here — Server Tools (webhooks) call the
-// relay directly from ElevenAgents's side, no firmware involvement.
+// Wire (duck ↔ relay):
+//   binary frame, both ways  : raw int16 LE PCM
+//   text frame, relay → duck : {"type":"ready"} | {"type":"interruption"}
+//   text frame, duck → relay : reserved (currently unused)
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
@@ -14,119 +16,51 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <cJSON.h>
-#include <esp_crt_bundle.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_websocket_client.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/stream_buffer.h>
 #include <freertos/task.h>
-#include <mbedtls/base64.h>
 
 static const char *TAG = "agent";
 
 static esp_websocket_client_handle_t s_ws = NULL;
 static volatile bool s_session_active = false;
 static volatile bool s_agent_speaking = false;
+static volatile int64_t s_last_audio_ms = 0;
 
-// ---- helpers ----
+static StreamBufferHandle_t s_spk_stream = NULL;
+static StreamBufferHandle_t s_mic_stream = NULL;
 
-static void send_json(cJSON *root) {
-    char *s = cJSON_PrintUnformatted(root);
-    if (s && s_ws) {
-        esp_websocket_client_send_text(s_ws, s, strlen(s), portMAX_DELAY);
-    }
-    cJSON_free(s);
-}
+// ---- inbound handling ----
 
-static void send_init(void) {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "type", "conversation_initiation_client_data");
-    cJSON *cfg = cJSON_AddObjectToObject(root, "conversation_config_override");
-    cJSON *agent = cJSON_AddObjectToObject(cfg, "agent");
-    cJSON_AddStringToObject(agent, "language", "en");
-    send_json(root);
-    cJSON_Delete(root);
-}
-
-static void send_audio_chunk(const int16_t *pcm, size_t samples) {
-    size_t in_len = samples * sizeof(int16_t);
-    size_t b64_cap = ((in_len + 2) / 3) * 4 + 8;
-    char *b64 = malloc(b64_cap);
-    if (!b64) return;
-    size_t b64_len = 0;
-    if (mbedtls_base64_encode((unsigned char *)b64, b64_cap, &b64_len,
-                              (const unsigned char *)pcm, in_len) != 0) {
-        free(b64);
-        return;
-    }
-    b64[b64_len] = '\0';
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "user_audio_chunk", b64);
-    send_json(root);
-    cJSON_Delete(root);
-    free(b64);
-}
-
-static void send_pong(int event_id) {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "type", "pong");
-    cJSON_AddNumberToObject(root, "event_id", event_id);
-    send_json(root);
-    cJSON_Delete(root);
-}
-
-// ---- inbound event handling ----
-
-static void play_audio_event(cJSON *audio_event) {
-    cJSON *b64_node = cJSON_GetObjectItem(audio_event, "audio_base_64");
-    if (!cJSON_IsString(b64_node)) return;
-    const char *b64 = b64_node->valuestring;
-    size_t b64_len = strlen(b64);
-    size_t pcm_cap = (b64_len / 4) * 3 + 4;
-    unsigned char *pcm = malloc(pcm_cap);
-    if (!pcm) return;
-    size_t pcm_len = 0;
-    if (mbedtls_base64_decode(pcm, pcm_cap, &pcm_len,
-                              (const unsigned char *)b64, b64_len) == 0) {
-        s_agent_speaking = true;
-        audio_mic_enable(false);  // mute mic while talking back (cheap echo control)
-        audio_spk_write((const int16_t *)pcm, pcm_len / sizeof(int16_t));
-    }
-    free(pcm);
-}
-
-static void handle_event(const char *json, size_t len) {
-    cJSON *root = cJSON_ParseWithLength(json, len);
-    if (!root) return;
-    cJSON *type = cJSON_GetObjectItem(root, "type");
-    const char *t = cJSON_IsString(type) ? type->valuestring : "";
-
-    if (strcmp(t, "ping") == 0) {
-        cJSON *evt = cJSON_GetObjectItem(root, "ping_event");
-        cJSON *id = evt ? cJSON_GetObjectItem(evt, "event_id") : NULL;
-        send_pong(cJSON_IsNumber(id) ? (int)id->valuedouble : 0);
-    } else if (strcmp(t, "audio") == 0) {
-        cJSON *audio = cJSON_GetObjectItem(root, "audio_event");
-        if (audio) play_audio_event(audio);
-    } else if (strcmp(t, "interruption") == 0) {
-        // User cut in: stop talking. (Speaker DMA buffer will drain naturally;
-        // for a hard cut we'd flush the I2S channel.)
+static void on_text(const char *json, size_t len) {
+    // Cheap substring sniff — relay only sends two known control messages,
+    // no need for a full JSON parser on the hot path.
+    if (memmem(json, len, "interruption", 12) != NULL) {
         s_agent_speaking = false;
         audio_mic_enable(true);
-    } else if (strcmp(t, "agent_response") == 0 ||
-               strcmp(t, "user_transcript") == 0) {
-        cJSON *resp = cJSON_GetObjectItem(root, "agent_response_event");
-        if (!resp) resp = cJSON_GetObjectItem(root, "user_transcription_event");
-        cJSON *text = resp ? cJSON_GetObjectItem(resp, "agent_response") : NULL;
-        if (!text) text = resp ? cJSON_GetObjectItem(resp, "user_transcript") : NULL;
-        if (cJSON_IsString(text)) {
-            ESP_LOGI(TAG, "[%s] %s", t, text->valuestring);
-        }
-    } else if (strcmp(t, "conversation_initiation_metadata") == 0) {
+        if (s_spk_stream) xStreamBufferReset(s_spk_stream);
+        ESP_LOGI(TAG, "rx interruption");
+    } else if (memmem(json, len, "ready", 5) != NULL) {
         ESP_LOGI(TAG, "session ready");
         audio_mic_enable(true);
     }
-    cJSON_Delete(root);
+}
+
+static void on_binary(const uint8_t *data, size_t len, int payload_offset, int payload_len) {
+    // PCM audio chunk from agent. Pieces of larger messages still arrive as
+    // separate DATA events; the WS client gives us payload_offset/_len so
+    // we can stream into the spk ring without reassembly.
+    s_agent_speaking = true;
+    s_last_audio_ms = esp_timer_get_time() / 1000;
+    audio_mic_enable(false);
+    size_t sent = xStreamBufferSend(s_spk_stream, data, len, pdMS_TO_TICKS(50));
+    if (sent < len) {
+        ESP_LOGW(TAG, "spk stream full, dropped %u bytes", (unsigned)(len - sent));
+    }
 }
 
 // ---- WebSocket event callback ----
@@ -136,12 +70,14 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
     esp_websocket_event_data_t *d = event_data;
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "ws connected");
-            send_init();
+            ESP_LOGI(TAG, "ws connected to relay");
             break;
         case WEBSOCKET_EVENT_DATA:
-            if (d->op_code == 1 /* text */) {
-                handle_event((const char *)d->data_ptr, d->data_len);
+            if (d->op_code == 1) {
+                on_text((const char *)d->data_ptr, d->data_len);
+            } else if (d->op_code == 2 || d->op_code == 0) {
+                on_binary((const uint8_t *)d->data_ptr, d->data_len,
+                          d->payload_offset, d->payload_len);
             }
             break;
         case WEBSOCKET_EVENT_DISCONNECTED:
@@ -152,14 +88,71 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
     }
 }
 
-// ---- mic pump task ----
+// ---- mic capture task: I2S → ring buffer (DMA-paced, must NOT block) ----
 
 static void mic_task(void *arg) {
     int16_t pcm[AUDIO_FRAME_SAMPLES];
     while (s_session_active) {
         size_t n = audio_mic_read(pcm, AUDIO_FRAME_SAMPLES, 50);
-        if (n > 0 && !s_agent_speaking) {
-            send_audio_chunk(pcm, n);
+        if (n == 0) { vTaskDelay(1); continue; }
+        if (s_agent_speaking) { vTaskDelay(1); continue; }
+        size_t bytes = n * sizeof(int16_t);
+        size_t sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
+        if (sent < bytes) {
+            ESP_LOGW(TAG, "mic stream full, resetting");
+            xStreamBufferReset(s_mic_stream);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+// ---- WS send task: ring buffer → binary WS frame (no JSON, no base64) ----
+
+static void ws_send_task(void *arg) {
+    // 80ms chunks — small enough to amortize each TLS write, big enough
+    // to keep WS overhead down. With binary frames + no encoding work, even
+    // 80ms is comfortably real-time on this chip.
+    static int16_t pcm[AUDIO_FRAME_SAMPLES * 4];
+    int chunk_count = 0;
+    while (s_session_active) {
+        size_t n = xStreamBufferReceive(s_mic_stream, pcm, sizeof(pcm),
+                                        pdMS_TO_TICKS(500));
+        if (n != sizeof(pcm)) continue;  // only send full chunks
+        if (!s_ws) continue;
+        // Binary WS frame — raw bytes, server side reassembles.
+        esp_websocket_client_send_bin(s_ws, (const char *)pcm, n, portMAX_DELAY);
+        if ((++chunk_count % 12) == 0) {
+            ESP_LOGI(TAG, "tx chunk #%d: %u bytes (80ms)", chunk_count, (unsigned)n);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+// ---- speaker drain task: ring buffer → I2S ----
+
+static void spk_task(void *arg) {
+    int16_t buf[256];
+    while (s_session_active) {
+        size_t n = xStreamBufferReceive(s_spk_stream, buf, sizeof(buf), pdMS_TO_TICKS(100));
+        if (n > 0) {
+            audio_spk_write(buf, n / sizeof(int16_t));
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+// ---- mute timer: re-enable mic 500ms after last agent audio chunk ----
+
+static void mute_timer_task(void *arg) {
+    while (s_session_active) {
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (s_agent_speaking) {
+            int64_t now = esp_timer_get_time() / 1000;
+            if (now - s_last_audio_ms > 500) {
+                s_agent_speaking = false;
+                audio_mic_enable(true);
+                ESP_LOGI(TAG, "mute timer: agent silent >500ms, mic re-enabled");
+            }
         }
     }
     vTaskDelete(NULL);
@@ -167,31 +160,56 @@ static void mic_task(void *arg) {
 
 // ---- public ----
 
-esp_err_t agent_run_session(const char *signed_url) {
+esp_err_t agent_run_session(const char *unused_signed_url) {
+    (void)unused_signed_url;  // kept for backwards-compat with main.c
+
+    // 80ms chunks at 16kHz mono int16 = 320*4 samples * 2 bytes = 2560 bytes
+    const size_t MIC_CHUNK_BYTES = AUDIO_FRAME_SAMPLES * 4 * sizeof(int16_t);
+    s_mic_stream = xStreamBufferCreate(16 * 1024, MIC_CHUNK_BYTES);
+    if (!s_mic_stream) return ESP_ERR_NO_MEM;
+    s_spk_stream = xStreamBufferCreateWithCaps(64 * 1024, 1,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_spk_stream) {
+        vStreamBufferDelete(s_mic_stream); s_mic_stream = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
     esp_websocket_client_config_t cfg = {
-        .uri = signed_url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .buffer_size = 4096,
+        .uri = RELAY_WS_URL,  // ws:// via ngrok TCP tunnel — no TLS on chip
+        .buffer_size = 16384,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
     };
     s_ws = esp_websocket_client_init(&cfg);
-    if (!s_ws) return ESP_FAIL;
+    if (!s_ws) {
+        vStreamBufferDelete(s_mic_stream); s_mic_stream = NULL;
+        vStreamBufferDeleteWithCaps(s_spk_stream); s_spk_stream = NULL;
+        return ESP_FAIL;
+    }
 
     esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL);
     s_session_active = true;
     s_agent_speaking = false;
+    s_last_audio_ms = 0;
     audio_mic_enable(false);
     esp_websocket_client_start(s_ws);
 
-    xTaskCreate(mic_task, "mic", 4096, NULL, 5, NULL);
+    xTaskCreate(mic_task,        "mic",        4096, NULL, 7, NULL);
+    xTaskCreate(ws_send_task,    "ws_send",    8192, NULL, 5, NULL);
+    xTaskCreate(spk_task,        "spk",        4096, NULL, 6, NULL);
+    xTaskCreate(mute_timer_task, "mute_timer", 4096, NULL, 4, NULL);
 
     while (s_session_active) {
         vTaskDelay(pdMS_TO_TICKS(200));
     }
     audio_mic_enable(false);
+    vTaskDelay(pdMS_TO_TICKS(200));
     esp_websocket_client_stop(s_ws);
     esp_websocket_client_destroy(s_ws);
     s_ws = NULL;
+    vStreamBufferDelete(s_mic_stream);
+    s_mic_stream = NULL;
+    vStreamBufferDeleteWithCaps(s_spk_stream);
+    s_spk_stream = NULL;
     return ESP_OK;
 }

@@ -67,11 +67,22 @@ esp_err_t wifi_connect_blocking(int timeout_ms) {
     wifi_config_t wifi_cfg = {0};
     strncpy((char *)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid));
     strncpy((char *)wifi_cfg.sta.password, pass, sizeof(wifi_cfg.sta.password));
-    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    // Drop the auth threshold so WPA2/WPA3 mixed-mode + WPA3-only APs work.
+    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    // PMF capable but not required — works on both WPA2-only and WPA3 APs.
+    // Many home routers in transition mode silently reject clients without PMF.
+    wifi_cfg.sta.pmf_cfg.capable = true;
+    wifi_cfg.sta.pmf_cfg.required = false;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
+    // CRITICAL for real-time audio over WSS: disable modem sleep. Default
+    // (WIFI_PS_MIN_MODEM) buffers TX in DTIM bursts every ~100ms, which
+    // produces the "abrupt loudness jumps" and "audio duration mismatch"
+    // ElevenLabs reports. Costs ~80mA but mandatory for streaming. URAM
+    // does this for the same reason.
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     EventBits_t bits = xEventGroupWaitBits(s_event_group, WIFI_CONNECTED_BIT,
                                            pdFALSE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
