@@ -81,6 +81,14 @@
 // raw binary PCM. Relay handles ElevenAgents JSON+base64+TLS upstream.
 // (ngrok's HTTPS edge speaks HTTP/2 which esp_websocket_client doesn't, so
 // we use a TCP tunnel for plain-byte forwarding. See bambu/STATE.md.)
+#ifndef RELAY_BASE_URL
+#define RELAY_BASE_URL "ws://2.tcp.ngrok.io:20554"
+#endif
+
+#define RELAY_DUCK_URL    RELAY_BASE_URL "/ws/duck"
+#define RELAY_NOTIFY_URL  RELAY_BASE_URL "/ws/notify"
+
+// Back-compat — older code uses RELAY_WS_URL.
 #ifndef RELAY_WS_URL
-#define RELAY_WS_URL "ws://2.tcp.ngrok.io:20554/ws/duck"
+#define RELAY_WS_URL RELAY_DUCK_URL
 #endif

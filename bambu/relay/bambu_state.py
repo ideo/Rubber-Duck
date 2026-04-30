@@ -2,6 +2,10 @@
 
 Bambu's `push_status` is delta-push: a full snapshot lands on subscribe, then
 only changed fields. We merge into a single dict that tools can read.
+
+Also fires registered listener callbacks when notable events happen (FINISH /
+FAILED transitions, new HMS errors). The notification proxy uses these to
+push events to connected ducks.
 """
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ import ssl
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Callable, List
 
 import paho.mqtt.client as mqtt
 
@@ -24,7 +28,21 @@ class BambuState:
         self._state: dict[str, Any] = {}
         self._history: deque[dict] = deque(maxlen=20)
         self._last_stage: str | None = None
+        self._listeners: List[Callable[[dict], None]] = []
         self._client = self._build_client()
+
+    def add_listener(self, cb: Callable[[dict], None]) -> None:
+        """Register a callback fired on notable events. Called with a dict like
+        {"type": "finish", "subtask": "..."} or {"type": "failed", "subtask": "..."}.
+        Callback runs on the MQTT thread — keep it fast / non-blocking."""
+        self._listeners.append(cb)
+
+    def _fire(self, event: dict) -> None:
+        for cb in list(self._listeners):
+            try:
+                cb(event)
+            except Exception:
+                pass
 
     def _build_client(self) -> mqtt.Client:
         c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"duck-relay-{int(time.time())}")
@@ -81,6 +99,13 @@ class BambuState:
                         "subtask": self._state.get("subtask_name"),
                         "duration_min": self._state.get("mc_print_sub_stage"),
                     })
+                    # Only fire notification on a real transition (not the
+                    # startup-seed case where _last_stage was None).
+                    if self._last_stage is not None:
+                        self._fire({
+                            "type": stage.lower(),  # "finish" or "failed"
+                            "subtask": self._state.get("subtask_name"),
+                        })
                 self._last_stage = stage
 
     # ---- read-side helpers (called from web thread) ----

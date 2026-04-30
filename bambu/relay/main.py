@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 
 from bambu_state import BambuState
-from duck_proxy import router as duck_router
+from duck_proxy import router as duck_router, register_bambu_listener
 
 load_dotenv()
 
@@ -29,6 +29,9 @@ async def lifespan(_app: FastAPI):
         drive_in_thread(state)
     else:
         state.start()
+    # Wire notification fan-out. Captures the asyncio loop so the MQTT
+    # thread's listener can dispatch back here.
+    register_bambu_listener(state)
     yield
     if os.environ.get("MOCK") != "1":
         state.stop()

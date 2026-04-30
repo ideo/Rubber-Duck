@@ -26,7 +26,7 @@ from typing import Optional
 
 import httpx
 import websockets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 logger = logging.getLogger("duck_proxy")
 logger.setLevel(logging.INFO)
@@ -39,6 +39,53 @@ if not logger.handlers:
     logger.propagate = False
 
 router = APIRouter()
+
+# Persistent notification clients — every duck holds a /ws/notify connection
+# and we push events here when the printer state transitions.
+_notify_clients: set[WebSocket] = set()
+_main_loop: Optional[asyncio.AbstractEventLoop] = None  # captured at startup
+
+
+def _headline_for(event: dict) -> str:
+    """Build the natural-language headline the agent should lead with."""
+    t = event.get("type", "")
+    subtask = event.get("subtask") or "your print"
+    if t == "finish":
+        return f"Hey, your {subtask} just finished printing!"
+    if t == "failed":
+        return f"Heads up, the {subtask} print failed. Want to take a look?"
+    if t == "hms":
+        return "The printer's flagging an error. Want me to tell you what it says?"
+    return f"Printer event: {t}"
+
+
+async def _broadcast_notify(payload: str) -> None:
+    dead = []
+    for ws in list(_notify_clients):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _notify_clients.discard(ws)
+
+
+def fire_notification(event: dict) -> None:
+    """Push an event to all connected /ws/notify clients. Safe from MQTT thread."""
+    if _main_loop is None:
+        return
+    headline = _headline_for(event)
+    payload = json.dumps({"type": "notify", "event": event.get("type"), "headline": headline})
+    asyncio.run_coroutine_threadsafe(_broadcast_notify(payload), _main_loop)
+    logger.info("notify fired: %s — %s", event.get("type"), headline)
+
+
+def register_bambu_listener(state) -> None:
+    """Wire the bambu_state event listener to fan out via WS. Capture the
+    asyncio loop so the MQTT-thread listener can dispatch onto it."""
+    global _main_loop
+    _main_loop = asyncio.get_event_loop()
+    state.add_listener(fire_notification)
 
 ELEVENLABS_HOST = "api.elevenlabs.io"
 SIGNED_URL_PATH = "/v1/convai/conversation/get-signed-url"
@@ -56,19 +103,23 @@ async def _fetch_signed_url(api_key: str, agent_id: str) -> str:
         return r.json()["signed_url"]
 
 
-async def _send_init(upstream: websockets.WebSocketClientProtocol) -> None:
+async def _send_init(upstream: websockets.WebSocketClientProtocol,
+                     first_message: Optional[str] = None) -> None:
     """ElevenAgents requires a conversation_initiation_client_data message
     before it streams audio. Audio formats are dashboard-only — both must
     be set to pcm_16000 in the agent config.
+
+    For notification-triggered sessions we override `first_message` so the
+    agent leads with the headline instead of its default greeting. The
+    agent's **Security tab** must have `first_message` override enabled in
+    the dashboard for this to work.
     """
-    await upstream.send(
-        json.dumps({
-            "type": "conversation_initiation_client_data",
-            "conversation_config_override": {
-                "agent": {"language": "en"},
-            },
-        })
-    )
+    payload = {"type": "conversation_initiation_client_data"}
+    if first_message:
+        payload["conversation_config_override"] = {
+            "agent": {"first_message": first_message}
+        }
+    await upstream.send(json.dumps(payload))
 
 
 # 80ms of int16 silence at 16kHz = 1280 samples * 2 bytes = 2560 bytes.
@@ -133,8 +184,11 @@ async def _eleven_to_duck(duck: WebSocket,
             try:
                 event = json.loads(raw)
             except json.JSONDecodeError:
+                logger.warning("upstream non-JSON: %s", str(raw)[:200])
                 continue
             t = event.get("type", "")
+            if t and t not in ("audio","ping","vad_score","internal_tentative_agent_response"):
+                logger.info("upstream event: %s", t)
 
             if t == "audio":
                 ae = event.get("audio_event") or {}
@@ -163,6 +217,8 @@ async def _eleven_to_duck(duck: WebSocket,
 
 @router.websocket("/ws/duck")
 async def ws_duck_endpoint(duck: WebSocket) -> None:
+    # FastAPI's Query() doesn't work on WebSocket endpoints — read directly.
+    first_message = duck.query_params.get("first_message") or None
     await duck.accept()
     api_key = os.environ.get("ELEVENLABS_API_KEY")
     agent_id = os.environ.get("BAMBU_DUCK_AGENT_ID")
@@ -193,7 +249,9 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
     logger.info("duck connected, opening upstream WS")
     try:
         async with websockets.connect(signed, max_size=None) as upstream:
-            await _send_init(upstream)
+            await _send_init(upstream, first_message=first_message)
+            if first_message:
+                logger.info("session opening with first_message=%r", first_message)
             last_sent = [time.time()]
             up = asyncio.create_task(_duck_to_eleven(duck, upstream, mic_wav, last_sent))
             down = asyncio.create_task(_eleven_to_duck(duck, upstream, agent_wav))
@@ -210,3 +268,35 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
         except Exception:
             pass
         logger.info("duck disconnected; recordings saved")
+
+
+# ---------------------------------------------------------------------------
+# Notification channel — long-lived WS the duck holds at boot.
+# ---------------------------------------------------------------------------
+
+@router.websocket("/ws/notify")
+async def ws_notify_endpoint(duck: WebSocket) -> None:
+    await duck.accept()
+    _notify_clients.add(duck)
+    logger.info("notify client connected (%d total)", len(_notify_clients))
+    try:
+        # Keep alive — receive nothing meaningful (the duck only listens here).
+        while True:
+            msg = await duck.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _notify_clients.discard(duck)
+        logger.info("notify client disconnected (%d remaining)", len(_notify_clients))
+
+
+@router.post("/admin/test_notification")
+async def admin_test_notification(event: str = "finish", subtask: str = "TestPrint"):
+    """Manual trigger for testing the notification path without waiting for
+    a real print to finish. Fires the same listener as a real Bambu event.
+    Example: curl -X POST 'http://127.0.0.1:8088/admin/test_notification?event=finish&subtask=TestPrint'
+    """
+    fire_notification({"type": event, "subtask": subtask})
+    return {"ok": True, "event": event, "subtask": subtask, "clients_notified": len(_notify_clients)}

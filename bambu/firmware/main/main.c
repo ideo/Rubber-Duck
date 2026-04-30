@@ -92,6 +92,10 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(500));
     led_off();
 
+    // Spawn the long-lived notification channel — the relay pushes printer
+    // events here, the task triggers a session with the headline pre-set.
+    notify_task_start();
+
     while (1) {
         ESP_LOGI(TAG, "press the button to start a conversation");
         wait_for_button_press();
