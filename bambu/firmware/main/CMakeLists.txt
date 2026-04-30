@@ -4,6 +4,7 @@ idf_component_register(
         "wifi.c"
         "agent.c"
         "audio.c"
+        "servo.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

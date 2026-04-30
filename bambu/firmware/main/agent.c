@@ -12,6 +12,7 @@
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
+#include "servo.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -56,6 +57,7 @@ static void on_binary(const uint8_t *data, size_t len, int payload_offset, int p
     // don't carry the speaker's own voice as fake user input.
     s_agent_speaking = true;
     s_last_audio_ms = esp_timer_get_time() / 1000;
+    servo_set_speaking(true);
     size_t sent = xStreamBufferSend(s_spk_stream, data, len, pdMS_TO_TICKS(50));
     if (sent < len) {
         ESP_LOGW(TAG, "spk stream full, dropped %u bytes", (unsigned)(len - sent));
@@ -157,6 +159,8 @@ static void spk_task(void *arg) {
     while (s_session_active) {
         size_t n = xStreamBufferReceive(s_spk_stream, buf, sizeof(buf), pdMS_TO_TICKS(100));
         if (n > 0) {
+            // Feed envelope to servo for beak movement before playing.
+            servo_feed_audio_envelope(buf, n / sizeof(int16_t));
             audio_spk_write(buf, n / sizeof(int16_t));
         }
     }
@@ -181,6 +185,7 @@ static void mute_timer_task(void *arg) {
                                 xStreamBufferBytesAvailable(s_spk_stream) < 1024);
             if (quiet_long_enough && spk_drained) {
                 s_agent_speaking = false;
+                servo_set_speaking(false);
                 ESP_LOGI(TAG, "mute timer: agent done speaking, mic un-silenced");
             }
         }
@@ -235,6 +240,10 @@ esp_err_t agent_run_session(const char *unused_signed_url) {
     while (s_session_active) {
         vTaskDelay(pdMS_TO_TICKS(200));
     }
+    // Session over — clear all the speaking-state flags so the servo and
+    // mic logic don't think the agent is still mid-utterance.
+    s_agent_speaking = false;
+    servo_set_speaking(false);
     audio_mic_enable(false);
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_websocket_client_stop(s_ws);

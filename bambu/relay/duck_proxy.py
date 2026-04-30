@@ -94,8 +94,11 @@ async def _duck_to_eleven(duck: WebSocket,
                 if mic_wav is not None:
                     mic_wav.writeframes(pcm)
                 b64 = base64.b64encode(pcm).decode("ascii")
-                await upstream.send(json.dumps({"user_audio_chunk": b64}))
-                last_sent[0] = time.time()
+                try:
+                    await upstream.send(json.dumps({"user_audio_chunk": b64}))
+                    last_sent[0] = time.time()
+                except websockets.ConnectionClosed:
+                    return  # upstream gone — let outer task wait fall through
             elif "text" in msg and msg["text"]:
                 logger.debug("duck text: %s", msg["text"])
     except WebSocketDisconnect:
@@ -124,36 +127,38 @@ async def _eleven_to_duck(duck: WebSocket,
                           upstream: websockets.WebSocketClientProtocol,
                           agent_wav: Optional[wave.Wave_write]) -> None:
     """Pump server events back. Audio = binary frame; everything else = JSON text.
-    Optionally tee agent audio to a WAV."""
-    async for raw in upstream:
-        try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        t = event.get("type", "")
+    Optionally tee agent audio to a WAV. Exits cleanly on connection close."""
+    try:
+        async for raw in upstream:
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            t = event.get("type", "")
 
-        if t == "audio":
-            ae = event.get("audio_event") or {}
-            b64 = ae.get("audio_base_64")
-            if b64:
-                pcm = base64.b64decode(b64)
-                if agent_wav is not None:
-                    agent_wav.writeframes(pcm)
-                await duck.send_bytes(pcm)
-        elif t == "ping":
-            evt = event.get("ping_event") or {}
-            await upstream.send(json.dumps({"type": "pong",
-                                            "event_id": evt.get("event_id", 0)}))
-        elif t == "interruption":
-            await duck.send_text(json.dumps({"type": "interruption"}))
-        elif t == "conversation_initiation_metadata":
-            await duck.send_text(json.dumps({"type": "ready"}))
-        elif t in ("agent_response", "user_transcript"):
-            # Useful to log but no action for the duck.
-            inner_key = "agent_response_event" if t == "agent_response" else "user_transcription_event"
-            text_key = "agent_response" if t == "agent_response" else "user_transcript"
-            inner = event.get(inner_key) or {}
-            logger.info("[%s] %s", t, inner.get(text_key, ""))
+            if t == "audio":
+                ae = event.get("audio_event") or {}
+                b64 = ae.get("audio_base_64")
+                if b64:
+                    pcm = base64.b64decode(b64)
+                    if agent_wav is not None:
+                        agent_wav.writeframes(pcm)
+                    await duck.send_bytes(pcm)
+            elif t == "ping":
+                evt = event.get("ping_event") or {}
+                await upstream.send(json.dumps({"type": "pong",
+                                                "event_id": evt.get("event_id", 0)}))
+            elif t == "interruption":
+                await duck.send_text(json.dumps({"type": "interruption"}))
+            elif t == "conversation_initiation_metadata":
+                await duck.send_text(json.dumps({"type": "ready"}))
+            elif t in ("agent_response", "user_transcript"):
+                inner_key = "agent_response_event" if t == "agent_response" else "user_transcription_event"
+                text_key = "agent_response" if t == "agent_response" else "user_transcript"
+                inner = event.get(inner_key) or {}
+                logger.info("[%s] %s", t, inner.get(text_key, ""))
+    except (websockets.ConnectionClosed, asyncio.CancelledError):
+        return
 
 
 @router.websocket("/ws/duck")

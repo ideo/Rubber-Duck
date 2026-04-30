@@ -40,6 +40,42 @@
 // LED_PIN is kept as a no-op so existing main.c led_init/on/off compile.
 #define LED_PIN                38
 
+// ---- Servo (head/beak) ----
+// LEDC PWM at 50Hz, 14-bit. Pulse range ~500µs–2400µs maps to 0°–180°.
+// Constants match firmware/rubber_duck_s3_ducky/Config.h verbatim so the
+// "feel" of the head animation is identical to the existing ducks.
+#define SERVO_PIN              3
+#define SERVO_CENTER           90
+#define SERVO_RANGE            80
+#define SERVO_MIN              (SERVO_CENTER - SERVO_RANGE)
+#define SERVO_MAX              (SERVO_CENTER + SERVO_RANGE)
+#define SERVO_UPDATE_MS        20
+
+#define SPRING_K               0.06f
+#define SPRING_DAMPING         0.82f
+
+#define IDLE_HOP_RANGE         30.0f
+#define IDLE_HOP_MIN_MS        4000
+#define IDLE_HOP_MAX_MS        15000
+#define IDLE_CLUSTER_DELTA     30.0f
+#define IDLE_CLUSTER_MIN_DELTA 10.0f
+#define IDLE_CLUSTER_GAP_MIN   500
+#define IDLE_CLUSTER_GAP_MAX   1500
+
+#define AMBIENT_SPRING_K       0.03f
+#define AMBIENT_SPRING_DAMPING 0.88f
+#define AMBIENT_LERP_RATE      0.25f
+
+#define TTS_RETARGET_MS        300
+#define TTS_HOP_RANGE          8.0f
+
+// Speech-driven beak amplitude — drives a sine oscillation during agent
+// speech, modulated by audio envelope. RANGE = max degrees of movement at
+// full envelope. (Original duck had no beak swing — this is bambu-specific.)
+#define BEAK_RANGE             20.0f
+#define BEAK_ATTACK            0.45f
+#define BEAK_RELEASE           0.10f
+
 // ---- Local relay (path C-light) ----
 // Duck connects to our Python relay over plain TCP via ngrok TCP tunnel,
 // raw binary PCM. Relay handles ElevenAgents JSON+base64+TLS upstream.

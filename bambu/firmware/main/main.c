@@ -1,6 +1,7 @@
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
+#include "servo.h"
 #include "wifi.h"
 
 #include <stdio.h>
@@ -60,6 +61,7 @@ void app_main(void) {
 
     led_init();
     ESP_ERROR_CHECK(audio_init());
+    ESP_ERROR_CHECK(servo_init());
 
     // (Mic-to-serial dump removed — three independent code reviews confirmed
     // the base64-over-UART path overflowed the 115200-baud TX ring at 45 KB/s,

@@ -31,6 +31,28 @@ subscription to the printer.
 - ✅ **Agent first message arrives** — `[agent_response] Yeah?` log fires
   shortly after WS opens. Round-trip works at the JSON level.
 
+## 🟢🟢 2026-04-30 morning — printer plumbing verified end-to-end
+
+The full loop closes. User asked the duck *"what's the printer doing?"*, ElevenLabs called `get_printer_state` via the static ngrok HTTPS tunnel, relay served live mock-printer state (mid-PREPARE phase), agent translated to natural language: *"Getting ready to print a benchy — heating up right now. Nozzle's at one hundred forty, needs to get to two-twenty, give it a minute."*
+
+Plus servo animacy (idle hops + speech-driven beak swing), end_call tool ("goodbye" closes cleanly), 512KB spk buffer for long answers, self-feedback silenced via mic-zeroing-while-agent-speaking, silence pump in proxy keeping ElevenLabs sessions alive across mute windows.
+
+What's left for v1:
+- Real Bambu MQTT (currently MOCK=1 cycling fake Benchy print)
+- Hardware: drill mic port hole closer to ICS-43432 to un-muffle (acoustic, not firmware)
+
+Future-work issues filed:
+- [#29](https://github.com/ideo/Rubber-Duck/issues/29) Opus end-to-end (path C-full)
+- [#30](https://github.com/ideo/Rubber-Duck/issues/30) WiFi provisioning UX (SoftAP captive portal)
+- [#31](https://github.com/ideo/Rubber-Duck/issues/31) Per-user printer linking + multi-duck relay (STA+AP simultaneous)
+- [#32](https://github.com/ideo/Rubber-Duck/issues/32) Off-laptop deployment (Fly.io / VPS)
+- [#33](https://github.com/ideo/Rubber-Duck/issues/33) VibeVoice consideration (deferred)
+- [#34](https://github.com/ideo/Rubber-Duck/issues/34) Spoken onboarding via embedded Opus phrases
+
+Static ngrok URLs reserved (paid tier):
+- HTTPS for tools: `https://duck-duck-print.ngrok.io`
+- TCP for duck WS: `tcp://2.tcp.ngrok.io:20554` (TODO: also reserve a permanent TCP address)
+
 ## 🟢 2026-04-29 evening — Path C working on the ducky PCB
 
 End-to-end conversation working: clean mic capture, agent voice through speaker,

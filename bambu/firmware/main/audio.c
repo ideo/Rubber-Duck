@@ -30,6 +30,44 @@ static float s_mic_dc = 0.0f;
 static float s_mic_gain = 8.0f;
 static const float MIC_DC_ALPHA = 0.001f;
 
+// High-shelf biquad to compensate for the muffled enclosure response.
+// RBJ cookbook coefficients computed in audio_init() at Fc=2kHz, Q=0.7,
+// gain=+6dB. Applied per-sample after DC + gain. Shelf boosts everything
+// above ~2kHz by 6dB so consonants come through clearer.
+static float s_hs_b0 = 1, s_hs_b1 = 0, s_hs_b2 = 0;
+static float s_hs_a1 = 0, s_hs_a2 = 0;
+static float s_hs_x1 = 0, s_hs_x2 = 0, s_hs_y1 = 0, s_hs_y2 = 0;
+
+static void compute_high_shelf(float fc, float Q, float gain_db) {
+    float A = powf(10.0f, gain_db / 40.0f);
+    float w0 = 2.0f * (float)M_PI * fc / (float)AUDIO_SAMPLE_RATE_HZ;
+    float cosw0 = cosf(w0);
+    float alpha = sinf(w0) / (2.0f * Q);
+    float beta = 2.0f * sqrtf(A) * alpha;
+
+    float b0 = A * ((A + 1) + (A - 1) * cosw0 + beta);
+    float b1 = -2.0f * A * ((A - 1) + (A + 1) * cosw0);
+    float b2 = A * ((A + 1) + (A - 1) * cosw0 - beta);
+    float a0 = (A + 1) - (A - 1) * cosw0 + beta;
+    float a1 = 2.0f * ((A - 1) - (A + 1) * cosw0);
+    float a2 = (A + 1) - (A - 1) * cosw0 - beta;
+
+    s_hs_b0 = b0 / a0;
+    s_hs_b1 = b1 / a0;
+    s_hs_b2 = b2 / a0;
+    s_hs_a1 = a1 / a0;
+    s_hs_a2 = a2 / a0;
+    s_hs_x1 = s_hs_x2 = s_hs_y1 = s_hs_y2 = 0;
+}
+
+static inline float biquad_step(float x) {
+    float y = s_hs_b0 * x + s_hs_b1 * s_hs_x1 + s_hs_b2 * s_hs_x2
+              - s_hs_a1 * s_hs_y1 - s_hs_a2 * s_hs_y2;
+    s_hs_x2 = s_hs_x1; s_hs_x1 = x;
+    s_hs_y2 = s_hs_y1; s_hs_y1 = y;
+    return y;
+}
+
 esp_err_t audio_init(void) {
     // Allocate both TX (speaker) and RX (mic) on the SAME port — full-duplex.
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
@@ -77,6 +115,13 @@ esp_err_t audio_init(void) {
 
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
+
+    // ICS-43432 needs ~50ms after enable for the first samples to be valid.
+    // Wait so calibration gets real noise floor instead of garbage.
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // High-shelf EQ: boost above 2kHz by +6dB to undo enclosure muffling.
+    compute_high_shelf(2000.0f, 0.7f, 6.0f);
 
     // ---- Mic calibration: DC offset + auto-gain ----
     // Same approach as rubber_duck_s3_ducky/MicCapture.ino setupMic().
@@ -153,7 +198,7 @@ size_t audio_mic_read(int16_t *out, size_t max_samples, int timeout_ms) {
     // requested. Forwarding partial frames is fine — server reassembles.
     size_t n = bytes_read / sizeof(int16_t);
     if (n == 0) return 0;
-    // DC removal + gain in-place (per rubber_duck_s3_ducky updateMic).
+    // DC removal + gain (EQ disabled — was making audio worse, see git log)
     for (size_t i = 0; i < n; i++) {
         float r = (float)out[i];
         s_mic_dc += MIC_DC_ALPHA * (r - s_mic_dc);
