@@ -28,6 +28,7 @@ class BambuState:
         self._state: dict[str, Any] = {}
         self._history: deque[dict] = deque(maxlen=20)
         self._last_stage: str | None = None
+        self._last_hms: set | None = None  # set of HMS codes seen on prior payload
         self._listeners: List[Callable[[dict], None]] = []
         self._client = self._build_client()
 
@@ -87,26 +88,48 @@ class BambuState:
         with self._lock:
             self._state.update(push)
             stage = push.get("gcode_state")
+            subtask = self._state.get("subtask_name")
+
             if stage and stage != self._last_stage:
-                # Record terminal-state arrival as history. Note: this triggers
-                # on the FIRST snapshot too if the printer is already FINISHed
-                # when we subscribe — fixes #24's startup race where prints
-                # completed before the relay was running were invisible.
+                # Record terminal-state arrival as history.
                 if stage in ("FINISH", "FAILED"):
                     self._history.append({
                         "ts": time.time(),
                         "outcome": stage,
-                        "subtask": self._state.get("subtask_name"),
+                        "subtask": subtask,
                         "duration_min": self._state.get("mc_print_sub_stage"),
                     })
-                    # Only fire notification on a real transition (not the
-                    # startup-seed case where _last_stage was None).
-                    if self._last_stage is not None:
-                        self._fire({
-                            "type": stage.lower(),  # "finish" or "failed"
-                            "subtask": self._state.get("subtask_name"),
-                        })
+
+                # Fire notifications on real transitions only (not startup-seed).
+                if self._last_stage is not None:
+                    # Print started (was idle/finished, now actively prepping/running)
+                    if stage in ("PREPARE", "RUNNING") and \
+                       self._last_stage in ("IDLE", "FINISH", "FAILED", None):
+                        self._fire({"type": "start", "subtask": subtask})
+                    elif stage == "FINISH":
+                        self._fire({"type": "finish", "subtask": subtask})
+                    elif stage == "FAILED":
+                        self._fire({"type": "failed", "subtask": subtask})
+                    elif stage == "PAUSE":
+                        self._fire({"type": "pause", "subtask": subtask})
+                    elif stage == "RUNNING" and self._last_stage == "PAUSE":
+                        self._fire({"type": "resume", "subtask": subtask})
+
                 self._last_stage = stage
+
+            # HMS error code arrivals (was clear, now flagging something).
+            # Skip the field entirely if the push didn't include hms — Bambu
+            # delta-pushes mean a missing key just means "no change".
+            if "hms" in push:
+                new_hms = {h.get("attr") for h in (push.get("hms") or []) if h.get("attr")}
+                if self._last_hms is None:
+                    # First snapshot — seed without firing
+                    self._last_hms = new_hms
+                else:
+                    added = new_hms - self._last_hms
+                    if added:
+                        self._fire({"type": "hms", "codes": list(added), "subtask": subtask})
+                    self._last_hms = new_hms
 
     # ---- read-side helpers (called from web thread) ----
 

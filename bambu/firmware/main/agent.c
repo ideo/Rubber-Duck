@@ -304,6 +304,7 @@ static esp_websocket_client_handle_t s_notify_ws = NULL;
 // pick up — keeps the WS event handler non-blocking.
 static char s_pending_headline[600];
 static volatile bool s_pending_notify = false;
+static volatile bool s_notify_reconnect_pending = false;
 static SemaphoreHandle_t s_notify_busy = NULL;  // serialize against active session
 
 static void notify_ws_event(void *handler_args, esp_event_base_t base,
@@ -349,9 +350,12 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
         ESP_LOGI(TAG, "notify channel connected to %s", RELAY_NOTIFY_URL);
     } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED ||
                event_id == WEBSOCKET_EVENT_CLOSED) {
-        ESP_LOGI(TAG, "notify channel closed");
+        ESP_LOGI(TAG, "notify channel closed — will reconnect");
+        // Mark for reconnect; the notify_task loop kicks the client.
+        s_notify_reconnect_pending = true;
     } else if (event_id == WEBSOCKET_EVENT_ERROR) {
         ESP_LOGE(TAG, "notify channel error");
+        s_notify_reconnect_pending = true;
     }
 }
 
@@ -381,6 +385,14 @@ static void notify_task(void *arg) {
             ESP_LOGI(TAG, "starting session from notification");
             agent_run_session(headline);
             xSemaphoreGive(s_notify_busy);
+        }
+        // Reconnect if the channel got closed (relay restart, network blip).
+        if (s_notify_reconnect_pending) {
+            s_notify_reconnect_pending = false;
+            vTaskDelay(pdMS_TO_TICKS(2000));  // back-off so we don't hammer
+            ESP_LOGI(TAG, "notify channel reconnecting");
+            esp_websocket_client_stop(s_notify_ws);
+            esp_websocket_client_start(s_notify_ws);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }

@@ -68,3 +68,10 @@ def temperatures(x_relay_secret: str | None = Header(default=None)):
 def print_history(n: int = 5, x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
     return {"history": state.history(max(1, min(n, 20)))}
+
+
+@app.get("/admin/raw_state")
+def raw_state():
+    """Dump the FULL Bambu push_status payload so we can see what fields
+    are available. No auth — local diagnostic only."""
+    return state._state if state else {}

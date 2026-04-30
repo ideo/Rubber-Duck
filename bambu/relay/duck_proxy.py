@@ -46,16 +46,37 @@ _notify_clients: set[WebSocket] = set()
 _main_loop: Optional[asyncio.AbstractEventLoop] = None  # captured at startup
 
 
+def _friendly_subtask(name: Optional[str]) -> str:
+    """Turn the Bambu-provided subtask_name into something the agent can
+    speak naturally. Bambu populates this with the slicer profile name
+    (e.g. '0.16mm layer, 2 walls, 15% infill') when the gcode came from
+    Studio's send-to-printer flow — sounds awkward read aloud. Fall back
+    to a generic phrase in that case. Friendly names live in Bambu's
+    cloud metadata; getting them requires the cloud API (see #31)."""
+    if not name:
+        return "your print"
+    low = name.lower()
+    if "layer" in low and ("walls" in low or "infill" in low):
+        return "your print"
+    return name
+
+
 def _headline_for(event: dict) -> str:
     """Build the natural-language headline the agent should lead with."""
     t = event.get("type", "")
-    subtask = event.get("subtask") or "your print"
+    subtask = _friendly_subtask(event.get("subtask"))
+    if t == "start":
+        return f"Nice — got your print started on {subtask}. I'll let you know when it's done."
     if t == "finish":
         return f"Hey, your {subtask} just finished printing!"
     if t == "failed":
         return f"Heads up, the {subtask} print failed. Want to take a look?"
+    if t == "pause":
+        return f"The print's paused — looks like {subtask} hit a snag. Want me to check?"
+    if t == "resume":
+        return f"Back at it — {subtask} is printing again."
     if t == "hms":
-        return "The printer's flagging an error. Want me to tell you what it says?"
+        return "The printer's flagging a problem. Want me to check what it says?"
     return f"Printer event: {t}"
 
 
