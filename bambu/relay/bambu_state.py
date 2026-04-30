@@ -70,7 +70,11 @@ class BambuState:
             self._state.update(push)
             stage = push.get("gcode_state")
             if stage and stage != self._last_stage:
-                if self._last_stage is not None and stage in ("FINISH", "FAILED"):
+                # Record terminal-state arrival as history. Note: this triggers
+                # on the FIRST snapshot too if the printer is already FINISHed
+                # when we subscribe — fixes #24's startup race where prints
+                # completed before the relay was running were invisible.
+                if stage in ("FINISH", "FAILED"):
                     self._history.append({
                         "ts": time.time(),
                         "outcome": stage,
