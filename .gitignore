@@ -30,6 +30,11 @@ __pycache__/
 bambu/firmware/provision.local.csv
 bambu/firmware/provision.local.bin
 
+# Bambu cloud login state (single-tenant relay; will become a dict keyed
+# by duck_id when multi-tenant lands per #31). Contains access_token +
+# account email — must never be committed.
+bambu/relay/tokens.json
+
 # ESP-IDF build artifacts (apply to any IDF project under firmware/ or bambu/)
 **/build/
 **/managed_components/

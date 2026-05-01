@@ -66,7 +66,7 @@ if __name__ == "__main__":
     # Standalone smoke test: print state snapshots as the mock walks the cycle.
     from bambu_state import BambuState
 
-    s = BambuState("mock", "mock", "mock")
+    s = BambuState("mock", "mock", "mock", "mock")
     drive_in_thread(s)
     for _ in range(20):
         time.sleep(1.5)

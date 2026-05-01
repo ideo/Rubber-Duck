@@ -29,10 +29,28 @@ if not logger.handlers:
 
 
 class BambuState:
-    def __init__(self, host: str, access_code: str, serial: str):
+    """Subscribes to a Bambu MQTT broker and accumulates `print` push_status
+    deltas into a single state snapshot.
+
+    Two broker modes (same code path, different auth):
+      LAN mode    — host=<printer-ip>, username="bblp", password=<access_code>
+                    self-signed cert (verify disabled).
+      Cloud mode  — host="us.mqtt.bambulab.com", username=f"u_{user_id}",
+                    password=<access_token from bambu_cloud.login>.
+                    Real publicly-trusted cert (verify enabled).
+
+    Switching modes happens via reconfigure() — same instance, listeners
+    survive, callers (duck_proxy.py) don't need to know which broker we're
+    talking to.
+    """
+
+    def __init__(self, host: str, username: str, password: str, serial: str,
+                 verify_tls: bool = False):
         self.host = host
-        self.access_code = access_code
+        self.username = username
+        self.password = password
         self.serial = serial
+        self.verify_tls = verify_tls
         self._lock = threading.Lock()
         self._state: dict[str, Any] = {}
         self._history: deque[dict] = deque(maxlen=20)
@@ -56,10 +74,13 @@ class BambuState:
 
     def _build_client(self) -> mqtt.Client:
         c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"duck-relay-{int(time.time())}")
-        c.username_pw_set("bblp", self.access_code)
+        c.username_pw_set(self.username, self.password)
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # printer ships self-signed cert
+        if not self.verify_tls:
+            # LAN-mode default: printer ships self-signed cert. Cloud mode
+            # passes verify_tls=True and uses the real CA chain.
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         c.tls_set_context(ctx)
         c.on_connect = self._on_connect
         c.on_disconnect = self._on_disconnect
@@ -73,17 +94,45 @@ class BambuState:
 
     def start(self) -> None:
         # connect_async + loop_start = non-blocking initial connect. If the
-        # printer is unreachable when the relay boots, the relay still starts
+        # broker is unreachable when the relay boots, the relay still starts
         # and serves /ws/duck etc — the MQTT loop keeps trying in the
         # background. Was previously synchronous .connect() which raised on
         # any failure and crashed uvicorn lifespan startup.
-        logger.info("connecting to MQTT %s:8883 (async, will retry on failure)", self.host)
+        logger.info("connecting to MQTT %s:8883 as %s (async, will retry on failure)",
+                    self.host, self.username)
         self._client.connect_async(self.host, 8883, keepalive=60)
         self._client.loop_start()
 
     def stop(self) -> None:
         self._client.loop_stop()
         self._client.disconnect()
+
+    def reconfigure(self, host: str, username: str, password: str, serial: str,
+                    verify_tls: bool = False) -> None:
+        """Swap broker / credentials at runtime. Used by /admin/bambu_login
+        when the user signs in to Bambu cloud — relay transitions from LAN
+        mode (or unconfigured) to cloud mode without restarting the process,
+        which means listeners (fire_notification) survive and active /ws/duck
+        sessions don't drop. Stops the old MQTT client first to avoid two
+        clients ever being live simultaneously."""
+        logger.info("reconfiguring MQTT: %s@%s (serial=%s, verify_tls=%s)",
+                    username, host, serial, verify_tls)
+        self.stop()
+        # Reset incremental state — the previous broker's last_stage/_last_hms
+        # would otherwise leak into the cloud session and suppress legitimate
+        # transitions (e.g. relay would skip the first FINISH event because
+        # _last_stage already says "FINISH" from the LAN session).
+        with self._lock:
+            self._last_stage = None
+            self._last_hms = None
+            self._state = {}
+        self.host = host
+        self.username = username
+        self.password = password
+        self.serial = serial
+        self.verify_tls = verify_tls
+        self._client = self._build_client()
+        self.start()
 
     def _on_disconnect(self, _client, _ud, _flags, rc, _props=None):
         # paho will auto-reconnect (reconnect_delay_set above). This callback
