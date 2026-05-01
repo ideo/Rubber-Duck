@@ -42,11 +42,24 @@ static const char *TAG = "wake";
 // and the absolute floor (TAP_PEAK_MIN) is just a sanity backstop for the
 // case where the room is truly silent (floor → ~0 means even tiny noise
 // would clear the multiplier).
-#define TAP_PEAK_MIN       3000   // absolute amplitude backstop
-#define TAP_SLOPE_MIN      1500   // peak2 - peak1 minimum
-#define TAP_FLOOR_MULT     5      // peak2 must exceed N × adaptive floor
-#define TAP_FLOOR_ALPHA    0.02f  // EMA rate; ~1s adaptation at 50 frames/s
-#define TAP_COOLDOWN_MS    1000
+//
+// Asymmetric EMA — see TAP_FLOOR_ALPHA_{RISE,FALL}. Originally a single
+// alpha=0.02; that crashed during brief music lulls (floor falls 1300→70
+// in ~half a second of quiet → next drum hit looks like a tap against
+// the now-low floor → false trigger). Asymmetric keeps the floor up when
+// the room is intermittently loud.
+#define TAP_PEAK_MIN          5000   // absolute amplitude backstop
+                                     // bumped from 3000 — real taps observed
+                                     // at 7-9k peak2; drum hits cap around
+                                     // 4-5k so this rejects most music.
+#define TAP_SLOPE_MIN         1500   // peak2 - peak1 minimum (unchanged —
+                                     // can't reliably distinguish drum onset
+                                     // slope from tap slope on slope alone).
+#define TAP_FLOOR_MULT        5      // peak2 must exceed N × adaptive floor
+#define TAP_FLOOR_ALPHA_RISE  0.1f   // floor rises fast: room got louder
+#define TAP_FLOOR_ALPHA_FALL  0.005f // floor falls slow: brief quiet doesn't
+                                     // reset the room's "loud" reading
+#define TAP_COOLDOWN_MS       1000
 
 // Diagnostic log cadence. Only fires when something noisy actually
 // happened (peak > FLOOR), so a quiet duck doesn't spam its own log.
@@ -114,10 +127,17 @@ static void tap_monitor_task(void *arg) {
         // floor's tap zone) so a sustained loud noise doesn't pollute the
         // estimate. Skip updating during cooldown so the tap's own decay
         // doesn't push the floor up either.
+        //
+        // Asymmetric: when peak1 > floor (room got louder), rise fast.
+        // When peak1 < floor (room got quieter), fall slow. Without this,
+        // music with rhythmic gaps crashes the floor between beats and
+        // the next beat trips the tap detector.
         int64_t now = now_ms();
         bool in_cooldown = now < cooldown_until;
         if (!in_cooldown && peak1 < ambient_floor * TAP_FLOOR_MULT) {
-            ambient_floor += TAP_FLOOR_ALPHA * ((float)peak1 - ambient_floor);
+            float delta = (float)peak1 - ambient_floor;
+            float alpha = (delta > 0) ? TAP_FLOOR_ALPHA_RISE : TAP_FLOOR_ALPHA_FALL;
+            ambient_floor += alpha * delta;
             if (ambient_floor < 1.0f) ambient_floor = 1.0f;  // never zero
         }
 

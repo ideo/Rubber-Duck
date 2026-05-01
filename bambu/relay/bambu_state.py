@@ -57,6 +57,12 @@ class BambuState:
         self._last_stage: str | None = None
         self._last_hms: set | None = None  # set of HMS codes seen on prior payload
         self._listeners: List[Callable[[dict], None]] = []
+        # auth_failed surfaces "Bambu rejected our credentials" (CONNACK
+        # rc=5/4) so /admin/bambu_status and the duck.local recovery page
+        # can prompt for re-login. Without this, an expired token just
+        # makes paho retry forever in silence.
+        self.auth_failed: bool = False
+        self._last_message_ts: float = 0.0  # epoch seconds of last on_message
         self._client = self._build_client()
 
     def add_listener(self, cb: Callable[[dict], None]) -> None:
@@ -141,6 +147,7 @@ class BambuState:
 
     def _on_connect(self, client, _ud, _flags, rc, _props=None):
         if rc == 0:
+            self.auth_failed = False
             logger.info("MQTT connected; subscribing to device/%s/report and requesting pushall",
                         self.serial)
             client.subscribe(f"device/{self.serial}/report")
@@ -150,14 +157,37 @@ class BambuState:
                 json.dumps({"pushing": {"sequence_id": "0", "command": "pushall"}}),
             )
         else:
-            logger.warning("MQTT connect callback rc=%s (non-zero = failure)", rc)
+            # rc 4 = bad username/password (legacy MQTT 3.1)
+            # rc 5 = not authorized (legacy MQTT 3.1)
+            # rc 134 = bad user name or password (MQTT 5)
+            # rc 135 = not authorized (MQTT 5)
+            # All four mean Bambu rejected our credentials; the access_token
+            # has expired or the user revoked the device. Surface via
+            # auth_failed so /admin/bambu_status reports it and the recovery
+            # path on duck.local can prompt for re-login.
+            if rc in (4, 5, 134, 135):
+                self.auth_failed = True
+                logger.warning("MQTT auth rejected (rc=%s) — token likely expired; "
+                               "set self.auth_failed=True", rc)
+            else:
+                logger.warning("MQTT connect callback rc=%s (non-zero = failure)", rc)
 
     def _on_message(self, _client, _ud, msg):
+        self._last_message_ts = time.time()
         try:
             payload = json.loads(msg.payload)
         except json.JSONDecodeError:
             return
         self.handle_payload(payload)
+
+    def last_message_age_ms(self) -> int | None:
+        """How long ago we got an MQTT message, in ms. None if never received.
+        Used by /admin/bambu_status as a "is data still flowing?" check —
+        a long age while connected=True suggests the printer is offline
+        or we subscribed to the wrong serial."""
+        if self._last_message_ts == 0.0:
+            return None
+        return int((time.time() - self._last_message_ts) * 1000)
 
     def handle_payload(self, payload: dict) -> None:
         """Merge a push_status payload into state. Public so tests/mocks can inject."""

@@ -1,6 +1,7 @@
 """Convai webhook target. Three GET tools the LLM can call mid-conversation."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -40,6 +41,16 @@ DEFAULT_CLOUD_HOST = os.environ.get("BAMBU_CLOUD_HOST", "us.mqtt.bambulab.com")
 def _load_tokens() -> dict | None:
     if not TOKENS_PATH.exists():
         return None
+    # Defensive: heal permissions if a prior version wrote with default umask.
+    # Only chmod if the current mode is more permissive than 0600 to avoid
+    # surprising the operator who may have intentionally tightened it further.
+    try:
+        mode = TOKENS_PATH.stat().st_mode & 0o777
+        if mode & 0o077:  # any group/other bits set
+            os.chmod(TOKENS_PATH, 0o600)
+            logger.info("tokens.json perms hardened to 0600 (was %o)", mode)
+    except OSError:
+        pass
     try:
         return json.loads(TOKENS_PATH.read_text())
     except Exception as e:
@@ -48,9 +59,27 @@ def _load_tokens() -> dict | None:
 
 
 def _save_tokens(d: dict) -> None:
-    TOKENS_PATH.write_text(json.dumps(d, indent=2))
+    """Atomic write + 0600 perms. The temp-file + rename pattern protects
+    against partial writes if the process crashes mid-write or two
+    /admin/bambu_login calls race (the asyncio.Lock prevents the latter
+    in normal flow, but defensive). Permissions stay 0600 since the file
+    holds access_token + refresh_token + account_email."""
+    tmp = TOKENS_PATH.with_suffix(".json.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, TOKENS_PATH)
+    # Make sure perms are 0600 even if the file already existed (umask).
+    os.chmod(TOKENS_PATH, 0o600)
     logger.info("tokens.json updated (user_id=%s, serial=%s)",
                 d.get("user_id"), d.get("serial"))
+
+
+# Serializes /admin/bambu_login calls so two concurrent attempts can't race
+# the tokens.json write or hammer Bambu's API in a way that looks botty.
+# Created lazily inside the endpoint (FastAPI's lifespan-startup runs in a
+# different loop than the request handlers in some hot-reload setups).
+_login_lock: asyncio.Lock | None = None
 
 
 @asynccontextmanager
@@ -151,24 +180,31 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
     Single-tenant for now: the relay holds ONE token at a time. Multi-tenant
     rework lives behind #31 — body will gain duck_id, tokens.json becomes a
     dict, MQTT clients become a per-account pool."""
+    global _login_lock
+    if _login_lock is None:
+        _login_lock = asyncio.Lock()
+
     _auth(x_relay_secret)
     email = payload.get("email")
     password = payload.get("password")
     code = payload.get("code") or None
-    # Bambu's accessToken format isn't a stable JWT across firmware versions.
-    # If the user provides their user_id explicitly (visible at bambulab.com/
-    # account), we skip token parsing entirely. Body field wins; falls back
-    # to env var BAMBU_USER_ID for set-and-forget single-tenant deployments.
+    # user_id auto-derived from /preference now (see bambu_cloud.fetch_uid).
+    # Override remains as a fallback if /preference fails; body wins, env
+    # BAMBU_USER_ID as fallback.
     user_id_override = payload.get("user_id") or os.environ.get("BAMBU_USER_ID")
     if not email or not password:
         raise HTTPException(400, "email and password required")
 
-    try:
-        result = await bambu_cloud.login(email, password, code, user_id_override)
-    except bambu_cloud.TwoFARequired as e:
-        raise HTTPException(401, detail={"code": "2fa_required", "message": str(e)})
-    except bambu_cloud.LoginError as e:
-        raise HTTPException(401, detail={"code": "login_failed", "message": str(e)})
+    # Serialize concurrent login attempts. Bambu has been known to crack
+    # down on bot-shaped traffic; serializing keeps us from accidentally
+    # firing two POSTs in quick succession.
+    async with _login_lock:
+        try:
+            result = await bambu_cloud.login(email, password, code, user_id_override)
+        except bambu_cloud.TwoFARequired as e:
+            raise HTTPException(401, detail={"code": "2fa_required", "message": str(e)})
+        except bambu_cloud.LoginError as e:
+            raise HTTPException(401, detail={"code": "login_failed", "message": str(e)})
 
     # Pick which printer on the account to subscribe to. Strategy:
     #   1. If BAMBU_SERIAL env var is set AND that serial appears in the
@@ -223,14 +259,27 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
 
 
 @app.get("/admin/bambu_status")
-def bambu_status():
-    """Quick status summary — what mode is the relay in, which printer is
-    bound. No auth — local diagnostic only."""
+def bambu_status(x_relay_secret: str | None = Header(default=None)):
+    """Quick status summary — what mode the relay is in, which printer is
+    bound, whether MQTT is actually connected (vs configured-but-failing).
+
+    Auth-gated because the response includes account_email and user_id —
+    not catastrophic but no reason to leak on an open LAN."""
+    _auth(x_relay_secret)
     tokens = _load_tokens()
-    return {
+    info = {
         "mode": "cloud" if tokens else "lan",
         "host": state.host if state else None,
         "serial": state.serial if state else None,
         "user_id": tokens.get("user_id") if tokens else None,
         "account_email": tokens.get("account_email") if tokens else None,
     }
+    if state is not None:
+        # Live MQTT connection state (vs just "tokens.json exists").
+        try:
+            info["connected"] = bool(state._client.is_connected())
+        except Exception:
+            info["connected"] = False
+        info["auth_failed"] = getattr(state, "auth_failed", False)
+        info["last_message_age_ms"] = state.last_message_age_ms()
+    return info

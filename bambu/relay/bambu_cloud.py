@@ -41,6 +41,19 @@ if not logger.handlers:
 
 LOGIN_URL = "https://api.bambulab.com/v1/user-service/user/login"
 DEVICES_URL = "https://api.bambulab.com/v1/iot-service/api/user/bind"
+PREFERENCE_URL = "https://api.bambulab.com/v1/design-user-service/my/preference"
+
+
+def _safe_response_summary(text: str) -> str:
+    """Truncate + redact obvious token-ish substrings from a response body
+    before letting it appear in log lines or HTTP error details. Bambu's
+    error responses aren't supposed to contain tokens, but defensive."""
+    s = text[:200]
+    # Anything that looks like a long base64-ish string after "token" gets
+    # masked. Cheap heuristic — tokens here are 100+ chars of base64.
+    import re
+    s = re.sub(r'("(?:access|refresh)Token"\s*:\s*")[^"]+(")', r'\1<redacted>\2', s, flags=re.IGNORECASE)
+    return s
 
 
 class LoginError(Exception):
@@ -81,7 +94,11 @@ async def login(email: str, password: str, code: Optional[str] = None,
             raise LoginError(f"login HTTP error: {e}") from e
 
     if r.status_code != 200:
-        raise LoginError(f"login HTTP {r.status_code}: {r.text[:200]}")
+        # Pass through the body but with the access_token redacted in case
+        # Bambu ever returns a partial token alongside an error. Belt and
+        # suspenders — historically their error responses don't include
+        # tokens, but this prevents log/HTTP-detail leakage if that changes.
+        raise LoginError(f"login HTTP {r.status_code}: {_safe_response_summary(r.text)}")
 
     try:
         data = r.json()
@@ -91,52 +108,69 @@ async def login(email: str, password: str, code: Optional[str] = None,
     token = data.get("accessToken")
     if not token:
         # No accessToken in a 200 response means the login was structurally OK
-        # but rejected with an error code. Bambu's exact 2FA-required signal
-        # has moved around across firmware versions; sniff for 2FA-ish text
-        # in the message field as a defensive fallback. Specific known codes:
-        # `loginType="verifyCode"` is the documented 2FA challenge.
-        err_msg = str(data.get("error", data.get("message", data)))
+        # but rejected with an error code. Sniff for 2FA-ish text + use
+        # the documented `loginType="verifyCode"` signal. Don't dump the
+        # raw `data` dict in the error — it could contain a tfaKey or any
+        # future credential-shaped field; whitelist safe keys only.
+        err_msg = str(data.get("error", data.get("message", "")))
         if (data.get("loginType") == "verifyCode"
                 or "verify" in err_msg.lower()
                 or "2fa" in err_msg.lower()
                 or "two-factor" in err_msg.lower()):
-            raise TwoFARequired(err_msg)
-        raise LoginError(f"login response missing accessToken: {data}")
+            raise TwoFARequired(err_msg or "verification code required")
+        raise LoginError(
+            f"login response missing accessToken; "
+            f"loginType={data.get('loginType')!r} error={err_msg!r}"
+        )
 
-    # Resolve user_id. Caller-provided override takes precedence — that's
-    # the bombproof path since the user can read it off Bambu's website.
-    # If not provided, try JWT, then known response fields. Log keys
-    # (not the token itself) so future format changes are obvious.
+    # Resolve user_id. Order of preference:
+    #   1. Caller-provided override (bombproof — user reads it off bambulab.com).
+    #   2. /preference endpoint (clean — auto-derives from access_token).
+    #   3. JWT parse (legacy — works only when Bambu still ships JWT tokens).
+    #   4. Known response body fields.
+    # Each falls through to the next on failure. (3) and (4) are dead in
+    # current Bambu firmware but kept as forward-compat in case they fix.
     logger.info("login response keys: %s", sorted(data.keys()))
     user_id: Optional[str] = None
+
     if user_id_override:
-        # Strip common prefixes — Bambu's website shows it as "user_<digits>",
-        # MQTT username is "u_<digits>". Store bare digits; callers rebuild
-        # the prefix they need.
-        cleaned = user_id_override.strip()
+        cleaned = user_id_override.strip().lower()
         if cleaned.startswith("user_"):
             cleaned = cleaned[5:]
         elif cleaned.startswith("u_"):
             cleaned = cleaned[2:]
-        user_id = cleaned
-        logger.info("user_id from override = %s", user_id)
-    else:
+        if cleaned and cleaned.isdigit():
+            user_id = cleaned
+            logger.info("user_id from override = %s", user_id)
+        else:
+            logger.warning("user_id_override %r isn't bare digits after strip — ignoring",
+                           user_id_override)
+
+    if not user_id:
+        # /preference endpoint — the canonical path. Costs one extra HTTPS GET.
+        user_id = await fetch_uid(token)
+        if user_id:
+            logger.info("user_id from /preference = %s", user_id)
+
+    if not user_id:
         try:
             user_id = _user_id_from_jwt(token)
-        except LoginError as e:
-            logger.warning("JWT parse failed (%s); trying response body fields", e)
-        if not user_id:
-            for key in ("uid", "userId", "user_id", "id"):
-                v = data.get(key)
-                if v:
-                    user_id = str(v)
-                    logger.info("user_id extracted from response[%r] = %s", key, user_id)
-                    break
+            logger.info("user_id from JWT (legacy) = %s", user_id)
+        except LoginError:
+            pass
+
+    if not user_id:
+        for key in ("uid", "userId", "user_id", "id"):
+            v = data.get(key)
+            if v:
+                user_id = str(v)
+                logger.info("user_id from response[%r] = %s", key, user_id)
+                break
+
     if not user_id:
         raise LoginError(
-            f"login succeeded but no user_id could be extracted; "
-            f"response keys: {sorted(data.keys())}. "
-            f"Pass user_id explicitly (find it at bambulab.com/account)."
+            "login succeeded but user_id could not be resolved. "
+            "Try passing user_id explicitly (find it at bambulab.com/account)."
         )
     logger.info("login OK for user_id=%s", user_id)
     return {
@@ -155,8 +189,40 @@ async def list_devices(access_token: str) -> list[dict]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.get(DEVICES_URL, headers=headers)
     if r.status_code != 200:
-        raise LoginError(f"list devices HTTP {r.status_code}: {r.text[:200]}")
+        raise LoginError(f"list devices HTTP {r.status_code}: {_safe_response_summary(r.text)}")
     return r.json().get("devices", [])
+
+
+async def fetch_uid(access_token: str) -> Optional[str]:
+    """GET /v1/design-user-service/my/preference — returns user info
+    including `uid` (an integer). The MQTT username is `u_<uid>`. Used to
+    auto-resolve the user_id without making the user type it.
+
+    This is the one Bambu API path that reliably returns user_id given
+    only the access_token (the access_token itself is no longer a
+    parseable JWT, and the login response body doesn't include user_id).
+    Source: OpenBambuAPI/cloud-http.md and pybambu's BambuUrl.PREFERENCE.
+
+    Returns the bare uid as a string, or None if the call fails (caller
+    falls back to user_id_override or a re-prompt)."""
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(PREFERENCE_URL, headers=headers)
+        if r.status_code != 200:
+            logger.warning("/preference HTTP %s; falling back to override path",
+                           r.status_code)
+            return None
+        data = r.json()
+    except (httpx.HTTPError, json.JSONDecodeError) as e:
+        logger.warning("/preference fetch failed: %s; falling back to override", e)
+        return None
+    uid = data.get("uid")
+    if uid is None:
+        logger.warning("/preference response missing 'uid'; keys=%s",
+                       sorted(data.keys()))
+        return None
+    return str(uid)
 
 
 def _user_id_from_jwt(jwt: str) -> str:
