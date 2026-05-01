@@ -184,10 +184,20 @@ wake_trigger_t wake_wait_for_trigger(void) {
     while (1) {
         // Button check: active-low, 0 means pressed.
         if (gpio_get_level(BUTTON_PIN) == 0) {
+            // Time the press. If held >= WAKE_LONG_PRESS_MS, we return
+            // WAKE_LONG_PRESS the moment the threshold is crossed (no
+            // need to wait for release for the decision; we DO still
+            // wait for release before returning so the caller's next
+            // gpio read isn't a stuck "still pressed").
+            int64_t pressed_at = now_ms();
+            bool is_long = false;
             while (gpio_get_level(BUTTON_PIN) == 0) {
                 vTaskDelay(pdMS_TO_TICKS(20));
+                if (!is_long && (now_ms() - pressed_at) >= WAKE_LONG_PRESS_MS) {
+                    is_long = true;
+                }
             }
-            return WAKE_BUTTON;
+            return is_long ? WAKE_LONG_PRESS : WAKE_BUTTON;
         }
         // Tap check: short timeout doubles as the polling cadence.
         if (xSemaphoreTake(s_tap_signal, pdMS_TO_TICKS(50)) == pdTRUE) {

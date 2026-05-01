@@ -1,6 +1,7 @@
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
+#include "provision.h"
 #include "servo.h"
 #include "wake.h"
 #include "wifi.h"
@@ -66,44 +67,82 @@ void app_main(void) {
     audio_chirp(800, 80);
     led_off();
 
-    ESP_LOGI(TAG, "connecting to wifi (LED slow-blink while trying)...");
-    // Slow blink during WiFi connect (visual: "trying"). Run in a task so it
-    // doesn't block the connect itself.
-    bool wifi_ok = (wifi_connect_blocking(20000) == ESP_OK);
-    if (!wifi_ok) {
-        ESP_LOGE(TAG, "wifi failed; one sad chirp then quiet halt");
-        audio_chirp_down();
-        // No looping — sit forever with LED on so we know it's stuck.
-        led_on();
-        while (1) vTaskDelay(pdMS_TO_TICKS(60000));
+    // Try WiFi only if creds exist. No auto-entry into SoftAP — the user
+    // owns that decision via a button press. Keeps the duck from
+    // broadcasting an AP unprompted and keeps the boot quiet.
+    bool wifi_connected = false;
+    if (wifi_has_creds()) {
+        ESP_LOGI(TAG, "connecting to wifi...");
+        if (wifi_connect_blocking(20000) == ESP_OK) {
+            wifi_connected = true;
+            audio_chirp_up();
+            led_on();
+            vTaskDelay(pdMS_TO_TICKS(500));
+            led_off();
+            // Long-lived notification channel — relay pushes printer events
+            // here, the task triggers a session with event+subtask params.
+            notify_task_start();
+        } else {
+            ESP_LOGE(TAG, "wifi creds present but connect failed");
+            audio_chirp_down();
+            // Fall through to no-wifi idle. Long-press will wipe creds + reboot
+            // for a clean re-onboard; short press / tap will enter SoftAP.
+        }
+    } else {
+        ESP_LOGI(TAG, "no wifi creds — press button or tap to set up");
+        // "I need help" chirp: low-low-mid, distinct from the happy
+        // chirp_up that means "connected and ready."
+        audio_chirp(450, 100);
+        audio_chirp(450, 100);
+        audio_chirp(700, 150);
     }
 
-    // WiFi up: happy chirp + LED solid for a beat.
-    audio_chirp_up();
-    led_on();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    led_off();
-
-    // Spawn the long-lived notification channel — the relay pushes printer
-    // events here, the task triggers a session with the headline pre-set.
-    notify_task_start();
-
-    // Now arm tap-to-wake. All boot-time sounds (boot chirp, WiFi-up chirp)
-    // are done; the detector won't self-trigger on its own startup.
+    // Wake monitor armed regardless of WiFi state — needed for both:
+    //   - WiFi-up: tap / button → conversation
+    //   - No WiFi: tap / button → enter SoftAP wizard
     ESP_ERROR_CHECK(wake_init());
 
     while (1) {
-        ESP_LOGI(TAG, "idle — press the button OR tap the shell to start a conversation");
+        if (wifi_connected) {
+            ESP_LOGI(TAG, "idle — press / tap to talk; long-press to re-onboard WiFi");
+        } else {
+            ESP_LOGI(TAG, "no wifi — press or tap to enter setup mode");
+        }
         wake_trigger_t trigger = wake_wait_for_trigger();
         led_on();
-        // Suppress tap detection through everything we're about to do that
-        // makes noise: shake-off animation, ack chirp, session-start chirp,
-        // and the brief gap before agent_session_active() flips on. Once
-        // session_active is true, tap_monitor's gate takes over. Generous
-        // window — false positives during this stretch fire a phantom
-        // wake on the NEXT iteration of this loop.
-        wake_quiet_for_ms(1500);
+        wake_quiet_for_ms(1500);  // suppress tap detector through chirps + setup
 
+        // Routing matrix:
+        //   no wifi + any wake     → SoftAP wizard
+        //   wifi up + long press   → wipe creds + reboot (clean re-onboard)
+        //   wifi up + short / tap  → conversation
+        bool need_provision = !wifi_connected || (trigger == WAKE_LONG_PRESS);
+        if (need_provision) {
+            if (wifi_connected) {
+                // Long-press while connected: clear creds and reboot. Next boot
+                // sees no creds → falls into no-wifi idle → next press enters
+                // wizard with a fresh radio init.
+                ESP_LOGI(TAG, "long-press: clearing wifi creds and restarting for re-onboard");
+                audio_chirp(700, 100);
+                audio_chirp(500, 100);
+                audio_chirp(300, 200);
+                wifi_clear_creds();
+                vTaskDelay(pdMS_TO_TICKS(800));  // let chirps finish
+                esp_restart();
+            }
+            // No wifi: enter the wizard now.
+            ESP_LOGI(TAG, "entering SoftAP onboarding wizard");
+            audio_chirp(700, 100);
+            audio_chirp(900, 100);
+            audio_chirp(1100, 150);
+            wifi_provision_run();   // blocks; reboots on success
+            // Only reachable on AP startup failure.
+            ESP_LOGE(TAG, "provisioning failed to start; halting");
+            audio_chirp_down();
+            while (1) vTaskDelay(pdMS_TO_TICKS(60000));
+        }
+
+        // Conversation flow.
         if (trigger == WAKE_TAP) {
             ESP_LOGI(TAG, "tap detected — shaking it off");
             servo_shake_off();

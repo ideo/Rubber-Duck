@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "wifi.c"
+        "provision.c"
         "agent.c"
         "audio.c"
         "servo.c"
@@ -13,6 +14,7 @@ idf_component_register(
         esp_event
         esp_netif
         esp_websocket_client
+        esp_http_server
         mbedtls
         driver
         esp_driver_i2s

@@ -41,6 +41,46 @@ static esp_err_t load_creds(char *ssid, size_t ssid_len, char *pass, size_t pass
     return err;
 }
 
+bool wifi_has_creds(void) {
+    char ssid[33] = {0};
+    char pass[65] = {0};
+    return load_creds(ssid, sizeof(ssid), pass, sizeof(pass)) == ESP_OK;
+}
+
+esp_err_t wifi_save_creds(const char *ssid, const char *password) {
+    if (ssid == NULL || ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (password == NULL) password = "";  // open networks
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, "wifi_ssid", ssid);
+    if (err == ESP_OK) err = nvs_set_str(h, "wifi_pass", password);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "wifi creds saved (ssid=%s)", ssid);
+    } else {
+        ESP_LOGE(TAG, "wifi creds save failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t wifi_clear_creds(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_erase_key(h, "wifi_ssid");
+    nvs_erase_key(h, "wifi_pass");
+    err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "wifi creds erased");
+    } else {
+        ESP_LOGE(TAG, "wifi creds erase failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
 esp_err_t wifi_connect_blocking(int timeout_ms) {
     char ssid[33] = {0};
     char pass[65] = {0};
