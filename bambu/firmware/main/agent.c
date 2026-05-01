@@ -36,6 +36,10 @@ static volatile int64_t s_last_audio_ms = 0;
 static StreamBufferHandle_t s_spk_stream = NULL;
 static StreamBufferHandle_t s_mic_stream = NULL;
 
+// State accessors for wake.c (tap-to-wake gate).
+bool agent_session_active(void) { return s_session_active; }
+bool agent_speaking(void)        { return s_agent_speaking; }
+
 // ---- inbound handling ----
 
 static void on_text(const char *json, size_t len) {

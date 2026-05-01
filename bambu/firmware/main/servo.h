@@ -16,3 +16,11 @@ void servo_set_speaking(bool speaking);
 // Feed a chunk of speaker PCM (mono int16). The servo task uses peak
 // amplitude of recent samples to drive beak movement amount.
 void servo_feed_audio_envelope(const int16_t *pcm, size_t samples);
+
+// Comedic "shake-off" animation. Used on tap-to-wake (#37): the duck
+// reacts to being tapped with a 50° kick, counter-swing to -30°, small
+// settle to +15°, return to center. Total ~200ms. Blocks the calling
+// task for the duration; spawn it in its own task if you don't want to
+// block. Suppresses idle-hop scheduling for the duration so background
+// jitter doesn't fight the choreography.
+void servo_shake_off(void);

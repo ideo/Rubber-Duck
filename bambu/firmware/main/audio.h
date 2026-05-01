@@ -10,11 +10,32 @@
 esp_err_t audio_init(void);
 
 // Read one frame (AUDIO_FRAME_SAMPLES * sizeof(int16_t)) of mic PCM.
-// Blocks up to timeout_ms. Returns bytes read, 0 on timeout.
+// Blocks up to timeout_ms. Returns sample count, 0 on timeout.
+// Applies DC removal + auto-gain (calibrated in audio_init), and respects
+// the audio_mic_enable() gate — returns 0 when disabled.
 size_t audio_mic_read(int16_t *out, size_t max_samples, int timeout_ms);
 
+// Like audio_mic_read but bypasses the enable-gate AND skips the DC/gain
+// transform. Returns raw int16 samples straight from I2S. Used by tap-to-
+// wake's transient detector (wake.c), which wants clean amplitude without
+// the auto-gain skewing the threshold.
+//
+// Internally serialized against audio_mic_read by a mutex, so concurrent
+// callers (tap monitor + session mic_task) don't race on i2s_channel_read.
+size_t audio_mic_read_raw(int16_t *out, size_t max_samples, int timeout_ms);
+
 // Write a chunk of PCM to the speaker. Blocks until queued (DMA buffered).
+// Internally extends the audio_speaker_active() window — every write keeps
+// the speaker-busy gate alive for chunk_duration + AMP_DECAY_MS afterward.
 esp_err_t audio_spk_write(const int16_t *pcm, size_t num_samples);
+
+// True if the speaker amp is producing (or recently produced) audio. Driven
+// off the most recent audio_spk_write — the deadline extends with each
+// write, then expires AMP_DECAY_MS after the last write so the amp/cone
+// ringing tail is also covered. Used by wake.c (tap-to-wake) as a single
+// dumb gate that catches all chip-to-self audio (chirps, agent speech,
+// session boundaries) without needing to know about each code path.
+bool audio_speaker_active(void);
 
 // Gate the mic — when speaker is talking, disable to prevent self-trigger.
 void audio_mic_enable(bool on);

@@ -10,6 +10,7 @@ push events to connected ducks.
 from __future__ import annotations
 
 import json
+import logging
 import ssl
 import threading
 import time
@@ -17,6 +18,14 @@ from collections import deque
 from typing import Any, Callable, List
 
 import paho.mqtt.client as mqtt
+
+logger = logging.getLogger("bambu_state")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:bambu_state: %(message)s"))
+    logger.addHandler(_h)
+    logger.propagate = False
 
 
 class BambuState:
@@ -53,25 +62,46 @@ class BambuState:
         ctx.verify_mode = ssl.CERT_NONE  # printer ships self-signed cert
         c.tls_set_context(ctx)
         c.on_connect = self._on_connect
+        c.on_disconnect = self._on_disconnect
         c.on_message = self._on_message
+        # Auto-reconnect: paho retries on disconnect with exponential backoff,
+        # capped at 60s. Combined with connect_async, this means the relay
+        # weathers the printer being briefly unreachable (WiFi roam, AP
+        # change, brief power blip) without operator intervention.
+        c.reconnect_delay_set(min_delay=1, max_delay=60)
         return c
 
     def start(self) -> None:
-        self._client.connect(self.host, 8883, keepalive=60)
+        # connect_async + loop_start = non-blocking initial connect. If the
+        # printer is unreachable when the relay boots, the relay still starts
+        # and serves /ws/duck etc — the MQTT loop keeps trying in the
+        # background. Was previously synchronous .connect() which raised on
+        # any failure and crashed uvicorn lifespan startup.
+        logger.info("connecting to MQTT %s:8883 (async, will retry on failure)", self.host)
+        self._client.connect_async(self.host, 8883, keepalive=60)
         self._client.loop_start()
 
     def stop(self) -> None:
         self._client.loop_stop()
         self._client.disconnect()
 
+    def _on_disconnect(self, _client, _ud, _flags, rc, _props=None):
+        # paho will auto-reconnect (reconnect_delay_set above). This callback
+        # is purely so we can SEE drops in the log.
+        logger.warning("MQTT disconnected (rc=%s) — paho will auto-reconnect", rc)
+
     def _on_connect(self, client, _ud, _flags, rc, _props=None):
         if rc == 0:
+            logger.info("MQTT connected; subscribing to device/%s/report and requesting pushall",
+                        self.serial)
             client.subscribe(f"device/{self.serial}/report")
             # nudge printer to send a full snapshot
             client.publish(
                 f"device/{self.serial}/request",
                 json.dumps({"pushing": {"sequence_id": "0", "command": "pushall"}}),
             )
+        else:
+            logger.warning("MQTT connect callback rc=%s (non-zero = failure)", rc)
 
     def _on_message(self, _client, _ud, msg):
         try:

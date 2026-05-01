@@ -14,6 +14,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 static const char *TAG = "audio";
@@ -21,6 +22,24 @@ static const char *TAG = "audio";
 static i2s_chan_handle_t s_tx = NULL;  // speaker
 static i2s_chan_handle_t s_rx = NULL;  // mic
 static volatile bool s_mic_enabled = false;
+
+// Serializes i2s_channel_read across audio_mic_read (session mic_task) and
+// audio_mic_read_raw (tap-monitor task). I2S DMA is single-consumer; without
+// this mutex two concurrent reads could split a single DMA descriptor and
+// silently corrupt both consumers' frames during the brief overlap when a
+// session is starting / ending.
+static SemaphoreHandle_t s_mic_lock = NULL;
+
+// Speaker-busy deadline (epoch milliseconds). Extended on every spk_write.
+// audio_speaker_active() returns true while now() < this.
+//
+// The 800ms decay accounts for the MAX98357A amp + speaker cone ringing
+// after the last DMA frame lands. Empirical: peak ~19000 in raw int16 was
+// observed ~1s after a session-end chirp, with idle returning to peak ~300
+// by the 2nd second. 800ms is a safety-margin on real-world decay.
+#define AMP_DECAY_MS 800
+static volatile int64_t s_spk_active_until_ms = 0;
+static inline int64_t audio_now_ms(void) { return esp_timer_get_time() / 1000; }
 
 // DC removal + gain (ported from rubber_duck_s3_ducky/MicCapture.ino).
 // ICS-43432 in 16-bit mode is quiet; default gain 8× brings speech up to
@@ -116,6 +135,8 @@ esp_err_t audio_init(void) {
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
 
+    s_mic_lock = xSemaphoreCreateMutex();
+
     // ICS-43432 needs ~50ms after enable for the first samples to be valid.
     // Wait so calibration gets real noise floor instead of garbage.
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -182,8 +203,10 @@ size_t audio_mic_read(int16_t *out, size_t max_samples, int timeout_ms) {
     }
     size_t want = (max_samples < AUDIO_FRAME_SAMPLES ? max_samples : AUDIO_FRAME_SAMPLES);
     size_t bytes_read = 0;
+    xSemaphoreTake(s_mic_lock, portMAX_DELAY);
     esp_err_t err = i2s_channel_read(s_rx, out, want * sizeof(int16_t),
                                      &bytes_read, pdMS_TO_TICKS(timeout_ms));
+    xSemaphoreGive(s_mic_lock);
     if (err != ESP_OK) {
         static int64_t last_err_log = 0;
         int64_t now = esp_timer_get_time() / 1000;
@@ -210,7 +233,29 @@ size_t audio_mic_read(int16_t *out, size_t max_samples, int timeout_ms) {
     return n;
 }
 
+size_t audio_mic_read_raw(int16_t *out, size_t max_samples, int timeout_ms) {
+    // Bypasses the enable-gate AND the DC/gain transform — used by the
+    // tap-to-wake transient detector (wake.c). Mutex serializes against
+    // audio_mic_read so the two callers don't split a DMA descriptor.
+    size_t want = (max_samples < AUDIO_FRAME_SAMPLES ? max_samples : AUDIO_FRAME_SAMPLES);
+    size_t bytes_read = 0;
+    xSemaphoreTake(s_mic_lock, portMAX_DELAY);
+    esp_err_t err = i2s_channel_read(s_rx, out, want * sizeof(int16_t),
+                                     &bytes_read, pdMS_TO_TICKS(timeout_ms));
+    xSemaphoreGive(s_mic_lock);
+    if (err != ESP_OK) return 0;
+    return bytes_read / sizeof(int16_t);
+}
+
 esp_err_t audio_spk_write(const int16_t *pcm, size_t num_samples) {
+    // Extend the speaker-busy window. chunk_duration_ms is how long this
+    // chunk takes to play; +AMP_DECAY_MS covers the trailing ring afterward.
+    // Every call pushes the deadline forward, so a continuous stream of
+    // writes keeps the gate up and the trailing decay starts from the LAST
+    // write, not the first.
+    int chunk_duration_ms = (int)((num_samples * 1000) / AUDIO_SAMPLE_RATE_HZ);
+    s_spk_active_until_ms = audio_now_ms() + chunk_duration_ms + AMP_DECAY_MS;
+
     // Mono → stereo expansion: write each sample twice (L=R) for the Philips
     // stereo slot config. Use a small chunked buffer so we don't allocate
     // huge stacks. 256 mono samples = 512 stereo samples = 1024 bytes.
@@ -229,6 +274,10 @@ esp_err_t audio_spk_write(const int16_t *pcm, size_t num_samples) {
         pos += take;
     }
     return ESP_OK;
+}
+
+bool audio_speaker_active(void) {
+    return audio_now_ms() < s_spk_active_until_ms;
 }
 
 void audio_chirp(int freq_hz, int duration_ms) {

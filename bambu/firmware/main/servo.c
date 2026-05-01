@@ -36,6 +36,9 @@ static const char *TAG = "servo";
 #define SERVO_PULSE_MAX     1966  // 2400us
 
 static volatile bool s_speaking = false;
+// Block idle-hop / TTS retarget while a scripted animation (e.g. shake-off)
+// is in progress so background motion doesn't fight the choreography.
+static volatile bool s_animation_locked = false;
 
 // Audio envelope state — written by spk_task via servo_feed_audio_envelope,
 // read by the servo task. A simple peak-decay follower: each chunk we
@@ -72,6 +75,18 @@ static void servo_write_angle(int angle) {
 
 static void update_animation(void) {
     int64_t now = now_ms();
+
+    // Scripted-animation lock: skip all autonomous target changes. The lerp
+    // toward ambientTargetOffset still runs (so the choreography reaches its
+    // pose), but idle hops and TTS retargets stay out of the way.
+    if (s_animation_locked) {
+        ambientCurrentOffset += (ambientTargetOffset - ambientCurrentOffset) * AMBIENT_LERP_RATE;
+        int pos = (int)(SERVO_CENTER + ambientCurrentOffset);
+        if (pos < SERVO_MIN) pos = SERVO_MIN;
+        if (pos > SERVO_MAX) pos = SERVO_MAX;
+        servo_write_angle(pos);
+        return;
+    }
 
     // Cluster micro-hop (tight follow-up after main idle hop). Allowed during
     // speech too — fires rarely enough that it just occasionally tilts the
@@ -163,6 +178,22 @@ void servo_feed_audio_envelope(const int16_t *pcm, size_t samples) {
         if (v > peak) peak = v;
     }
     if (peak > s_recent_peak) s_recent_peak = peak;
+}
+
+void servo_shake_off(void) {
+    // Lock out idle hops + TTS retargets so they don't fight the script.
+    s_animation_locked = true;
+    // Big kick one way, counter-swing the other, small overshoot, settle.
+    // Numbers from issue #37; the ambient lerp smooths each step into the
+    // next so this looks like a snappy shake instead of three teleports.
+    ambientTargetOffset = 50.0f;  vTaskDelay(pdMS_TO_TICKS(80));
+    ambientTargetOffset = -30.0f; vTaskDelay(pdMS_TO_TICKS(60));
+    ambientTargetOffset = 15.0f;  vTaskDelay(pdMS_TO_TICKS(40));
+    ambientTargetOffset = 0.0f;   vTaskDelay(pdMS_TO_TICKS(40));
+    s_animation_locked = false;
+    // Push the next idle hop out so it doesn't fire immediately on the
+    // heels of the shake — gives the duck a beat to "be still" first.
+    nextIdleHopMs = now_ms() + IDLE_HOP_MIN_MS;
 }
 
 esp_err_t servo_init(void) {
