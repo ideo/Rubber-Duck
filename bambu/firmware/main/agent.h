@@ -1,12 +1,15 @@
 #pragma once
 #include <esp_err.h>
 
-// Run an audio session to the relay. If `first_message` is non-NULL, it's
-// passed to the relay as a query param so the agent leads with that text
-// instead of "Yeah?" — used for notification-triggered sessions.
-esp_err_t agent_run_session(const char *first_message);
+// Run an audio session to the relay. If `event` is non-NULL the relay treats
+// this as a notification-triggered session: it suppresses the agent's default
+// greeting and injects a "Printer notice: ..." user_message built from event
+// + subtask, so the LLM phrases the announcement in its own voice. When
+// event is NULL (button press), the agent opens normally. `subtask` may be
+// NULL when unknown — the relay will say "your print" instead.
+esp_err_t agent_run_session(const char *event, const char *subtask);
 
 // Spawn the long-lived /ws/notify task. Call once at boot after WiFi up.
-// On notify events, the task triggers a session via the same code path as
-// a button press, with the headline as first_message.
+// On notify events the task triggers a session via the same code path as
+// a button press, passing event+subtask through to the relay as query params.
 esp_err_t notify_task_start(void);

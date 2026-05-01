@@ -105,7 +105,7 @@ void app_main(void) {
         audio_chirp_up();
         // Path C: relay holds the ElevenAgents WS upstream; duck speaks raw
         // binary PCM to it. No signed URL fetch needed on the chip.
-        agent_run_session(NULL);
+        agent_run_session(NULL, NULL);
         ESP_LOGI(TAG, "session ended");
         audio_chirp(600, 100);
         led_off();

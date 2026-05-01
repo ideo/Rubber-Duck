@@ -26,7 +26,7 @@ from typing import Optional
 
 import httpx
 import websockets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger("duck_proxy")
 logger.setLevel(logging.INFO)
@@ -43,41 +43,30 @@ router = APIRouter()
 # Persistent notification clients — every duck holds a /ws/notify connection
 # and we push events here when the printer state transitions.
 _notify_clients: set[WebSocket] = set()
+# Live upstream ElevenAgents sessions — when a printer event fires and one of
+# these is open, we inject the notice as a user_message into the running
+# conversation instead of opening a new session. The agent naturally pivots
+# (a fresh user_message ends the current agent turn), which is exactly the
+# "interrupt" UX. /ws/notify only triggers a new session when nothing is live.
+_active_upstreams: set = set()
 _main_loop: Optional[asyncio.AbstractEventLoop] = None  # captured at startup
 
 
 def _friendly_subtask(name: Optional[str]) -> str:
-    """Turn the Bambu-provided subtask_name into something the agent can
-    speak naturally. Bambu populates this with the slicer profile name
-    (e.g. '0.16mm layer, 2 walls, 15% infill') when the gcode came from
-    Studio's send-to-printer flow — sounds awkward read aloud. Fall back
-    to a generic phrase in that case. Friendly names live in Bambu's
-    cloud metadata; getting them requires the cloud API (see #31)."""
+    """Turn the Bambu-provided subtask_name into something speakable.
+
+    Bambu's `subtask_name` is sometimes the slicer profile string (e.g.
+    '0.16mm layer, 2 walls, 15% infill') instead of a print's friendly
+    name. Heuristic detects the profile shape and falls back to "your
+    print" — sounds natural read aloud. By design: real friendly names
+    only live in Bambu's cloud metadata, which requires the cloud API
+    (tracked in #31). Until then, the heuristic is the right answer."""
     if not name:
         return "your print"
     low = name.lower()
     if "layer" in low and ("walls" in low or "infill" in low):
         return "your print"
     return name
-
-
-def _headline_for(event: dict) -> str:
-    """Build the natural-language headline the agent should lead with."""
-    t = event.get("type", "")
-    subtask = _friendly_subtask(event.get("subtask"))
-    if t == "start":
-        return f"Nice — got your print started on {subtask}. I'll let you know when it's done."
-    if t == "finish":
-        return f"Hey, your {subtask} just finished printing!"
-    if t == "failed":
-        return f"Heads up, the {subtask} print failed. Want to take a look?"
-    if t == "pause":
-        return f"The print's paused — looks like {subtask} hit a snag. Want me to check?"
-    if t == "resume":
-        return f"Back at it — {subtask} is printing again."
-    if t == "hms":
-        return "The printer's flagging a problem. Want me to check what it says?"
-    return f"Printer event: {t}"
 
 
 async def _broadcast_notify(payload: str) -> None:
@@ -91,21 +80,79 @@ async def _broadcast_notify(payload: str) -> None:
         _notify_clients.discard(ws)
 
 
+# Per-upstream "has this session already announced a printer event?" flag.
+# Drives notice-vs-update phrasing: the first event of a session uses
+# "Printer notice:" so the agent announces fresh; subsequent events in the
+# same session use "Printer update:" so the agent treats them as in-context
+# continuations and weaves them into the conversation naturally rather than
+# re-announcing from scratch.
+_session_announced: set[int] = set()
+
+
+async def _inject_into_active_sessions(event_type: str, friendly: Optional[str]) -> int:
+    """Push a printer event into any live upstream(s) immediately as a
+    user_message. Returns the number of sessions injected into.
+
+    A user_message landing mid-utterance cleanly interrupts the agent's
+    current turn — same effect as a hard session interrupt, no audio glitch.
+    The agent's response then naturally flows into addressing the new event."""
+    if not _active_upstreams:
+        return 0
+    n = 0
+    for upstream in list(_active_upstreams):
+        key = id(upstream)
+        header = "Printer update" if key in _session_announced else "Printer notice"
+        text = _printer_text_for(event_type, friendly, header)
+        try:
+            await _send_user_message(upstream, text)
+            _session_announced.add(key)
+            logger.info("notify injected: %s", text)
+            n += 1
+        except Exception as e:
+            logger.warning("inject failed (upstream gone?): %s", e)
+            _active_upstreams.discard(upstream)
+            _session_announced.discard(key)
+    return n
+
+
+async def _dispatch_event(event_type: str, friendly: Optional[str]) -> None:
+    """Route a printer event to either the live session (inject) or the
+    notify channel (broadcast → chip opens new session).
+
+    Two paths by design — they aren't redundant. Inject reuses an open
+    upstream so the agent pivots mid-conversation with no audio glitch.
+    Broadcast is the cold-start: the chip is idle, /ws/notify wakes it,
+    chip dials /ws/duck?event=...&subtask=..., and ws_duck_endpoint
+    sends the opening user_message right after init metadata."""
+    injected = await _inject_into_active_sessions(event_type, friendly)
+    if injected:
+        return
+    payload = json.dumps(
+        {"type": "notify", "event": event_type, "subtask": friendly},
+        ensure_ascii=False,
+    )
+    await _broadcast_notify(payload)
+    logger.info("notify broadcast (no active session): %s — %s",
+                event_type, friendly)
+
+
 def fire_notification(event: dict) -> None:
-    """Push an event to all connected /ws/notify clients. Safe from MQTT thread."""
+    """MQTT-thread entry point. Schedules _dispatch_event onto the asyncio
+    loop captured at startup. Wire format on /ws/notify when broadcasting:
+    {"type":"notify","event":"...","subtask":"..."} — chip extracts both."""
     if _main_loop is None:
         return
-    headline = _headline_for(event)
-    payload = json.dumps({"type": "notify", "event": event.get("type"), "headline": headline})
-    asyncio.run_coroutine_threadsafe(_broadcast_notify(payload), _main_loop)
-    logger.info("notify fired: %s — %s", event.get("type"), headline)
+    asyncio.run_coroutine_threadsafe(
+        _dispatch_event(event.get("type"), _friendly_subtask(event.get("subtask"))),
+        _main_loop,
+    )
 
 
 def register_bambu_listener(state) -> None:
     """Wire the bambu_state event listener to fan out via WS. Capture the
-    asyncio loop so the MQTT-thread listener can dispatch onto it."""
+    running asyncio loop so the MQTT-thread listener can dispatch onto it."""
     global _main_loop
-    _main_loop = asyncio.get_event_loop()
+    _main_loop = asyncio.get_running_loop()
     state.add_listener(fire_notification)
 
 ELEVENLABS_HOST = "api.elevenlabs.io"
@@ -125,22 +172,51 @@ async def _fetch_signed_url(api_key: str, agent_id: str) -> str:
 
 
 async def _send_init(upstream: websockets.WebSocketClientProtocol,
-                     first_message: Optional[str] = None) -> None:
-    """ElevenAgents requires a conversation_initiation_client_data message
-    before it streams audio. Audio formats are dashboard-only — both must
-    be set to pcm_16000 in the agent config.
+                     suppress_first_message: bool = False) -> None:
+    """ElevenAgents init. For notification-triggered sessions we suppress
+    the agent's default greeting (so it doesn't say "Yeah?" then pivot)
+    and inject a user_message right after init that tells the agent what
+    the printer just did — agent improvises the announcement in voice.
 
-    For notification-triggered sessions we override `first_message` so the
-    agent leads with the headline instead of its default greeting. The
-    agent's **Security tab** must have `first_message` override enabled in
-    the dashboard for this to work.
+    Suppressing first_message requires the agent's Security tab to have
+    first_message override enabled.
     """
     payload = {"type": "conversation_initiation_client_data"}
-    if first_message:
+    if suppress_first_message:
         payload["conversation_config_override"] = {
-            "agent": {"first_message": first_message}
+            "agent": {"first_message": ""}
         }
     await upstream.send(json.dumps(payload))
+
+
+def _printer_text_for(event_type: str, subtask: Optional[str], header: str) -> str:
+    """Build the user_message body for a printer event. Caller passes header:
+      'Printer notice' — first-in-session, agent announces fresh.
+      'Printer update' — subsequent events in same session, agent treats
+        them as in-context follow-ups and weaves them into the conversation
+        rather than re-announcing from scratch."""
+    name = subtask or "your print"
+    if event_type == "start":
+        return f"{header}: print just started, file is {name}."
+    if event_type == "finish":
+        return f"{header}: just finished a print of {name}."
+    if event_type == "failed":
+        return f"{header}: print of {name} failed."
+    if event_type == "pause":
+        return f"{header}: print of {name} paused mid-job."
+    if event_type == "resume":
+        return f"{header}: print of {name} resumed."
+    if event_type == "hms":
+        return f"{header}: the printer is flagging an error."
+    return f"{header}: event {event_type}, file {name}."
+
+
+async def _send_user_message(upstream: websockets.WebSocketClientProtocol,
+                              text: str) -> None:
+    """Push text into the conversation as if the user spoke it. Agent will
+    respond naturally — no override on its phrasing."""
+    await upstream.send(json.dumps({"type": "user_message", "text": text},
+                                    ensure_ascii=False))
 
 
 # 80ms of int16 silence at 16kHz = 1280 samples * 2 bytes = 2560 bytes.
@@ -179,12 +255,14 @@ async def _duck_to_eleven(duck: WebSocket,
 
 async def _silence_pump(upstream: websockets.WebSocketClientProtocol,
                         last_sent: list) -> None:
-    """When the duck stops sending mic frames (because firmware muted itself
-    while the agent talks), ElevenLabs sees zero user_audio_chunk traffic
-    and ends the session as 'user disconnected / turn timed out'. Send 80ms
-    of silence whenever real audio hasn't arrived in the last 80ms — keeps
-    the server's turn-timing clock happy without triggering self-transcription.
-    Mirrors what the official SDK does."""
+    """Keep ElevenLabs' turn-timing clock fed when the chip is mute.
+
+    By design — not a workaround. ElevenLabs Agents protocol expects a
+    constant stream of user_audio_chunk; if it stops, the session ends
+    as 'user disconnected / turn timed out'. The chip mutes mic during
+    agent speech (acoustic-feedback mitigation), so SOMEONE has to keep
+    pushing audio. We send 80ms of pre-encoded zero PCM whenever real
+    audio hasn't arrived in the last 80ms. Mirrors the official SDK."""
     try:
         while True:
             await asyncio.sleep(0.08)
@@ -239,7 +317,10 @@ async def _eleven_to_duck(duck: WebSocket,
 @router.websocket("/ws/duck")
 async def ws_duck_endpoint(duck: WebSocket) -> None:
     # FastAPI's Query() doesn't work on WebSocket endpoints — read directly.
-    first_message = duck.query_params.get("first_message") or None
+    # When the chip opens a notification-triggered session it appends
+    # ?event=<type>&subtask=<name>. Button-press sessions arrive bare.
+    event_type = duck.query_params.get("event") or None
+    subtask = duck.query_params.get("subtask") or None
     await duck.accept()
     api_key = os.environ.get("ELEVENLABS_API_KEY")
     agent_id = os.environ.get("BAMBU_DUCK_AGENT_ID")
@@ -255,24 +336,42 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
         await duck.close(code=1011)
         return
 
-    # Open per-session WAV files for diagnostic playback. Saved next to relay.
-    rec_dir = Path(__file__).parent / "recordings"
-    rec_dir.mkdir(exist_ok=True)
-    ts = time.strftime("%Y%m%d-%H%M%S")
-    mic_path = rec_dir / f"{ts}_mic.wav"
-    agent_path = rec_dir / f"{ts}_agent.wav"
-    mic_wav = wave.open(str(mic_path), "wb")
-    mic_wav.setnchannels(1); mic_wav.setsampwidth(2); mic_wav.setframerate(16000)
-    agent_wav = wave.open(str(agent_path), "wb")
-    agent_wav.setnchannels(1); agent_wav.setsampwidth(2); agent_wav.setframerate(16000)
-    logger.info("recording mic → %s and agent → %s", mic_path.name, agent_path.name)
+    # WAV recording is opt-in (`RECORD=1`). Was always-on while we were
+    # debugging audio cadence/quality on the chip; hardware moved past those
+    # issues. Flip it back on if you change mic/amp wiring or chase a new
+    # cadence regression — files land in ./recordings/.
+    mic_wav = agent_wav = None
+    if os.environ.get("RECORD") == "1":
+        rec_dir = Path(__file__).parent / "recordings"
+        rec_dir.mkdir(exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        mic_path = rec_dir / f"{ts}_mic.wav"
+        agent_path = rec_dir / f"{ts}_agent.wav"
+        mic_wav = wave.open(str(mic_path), "wb")
+        mic_wav.setnchannels(1); mic_wav.setsampwidth(2); mic_wav.setframerate(16000)
+        agent_wav = wave.open(str(agent_path), "wb")
+        agent_wav.setnchannels(1); agent_wav.setsampwidth(2); agent_wav.setframerate(16000)
+        logger.info("recording mic → %s and agent → %s", mic_path.name, agent_path.name)
 
     logger.info("duck connected, opening upstream WS")
+    upstream_ref = None
     try:
         async with websockets.connect(signed, max_size=None) as upstream:
-            await _send_init(upstream, first_message=first_message)
-            if first_message:
-                logger.info("session opening with first_message=%r", first_message)
+            upstream_ref = upstream
+            _active_upstreams.add(upstream)
+            # When opened from a notification, suppress the agent's default
+            # greeting and immediately inject a "Printer notice: ..."
+            # user_message so the LLM phrases the announcement in its own
+            # voice. Otherwise (button press) let the agent open normally.
+            await _send_init(upstream, suppress_first_message=bool(event_type))
+            if event_type:
+                notice = _printer_text_for(event_type, subtask, "Printer notice")
+                logger.info("session opening from notify: event=%s subtask=%r notice=%r",
+                            event_type, subtask, notice)
+                await _send_user_message(upstream, notice)
+                # Mark first announcement done — any further events that
+                # arrive during this session use "Printer update:" phrasing.
+                _session_announced.add(id(upstream))
             last_sent = [time.time()]
             up = asyncio.create_task(_duck_to_eleven(duck, upstream, mic_wav, last_sent))
             down = asyncio.create_task(_eleven_to_duck(duck, upstream, agent_wav))
@@ -283,12 +382,18 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
     except Exception as e:
         logger.exception("upstream session error: %s", e)
     finally:
-        mic_wav.close(); agent_wav.close()
+        if upstream_ref is not None:
+            _active_upstreams.discard(upstream_ref)
+            _session_announced.discard(id(upstream_ref))
+        if mic_wav is not None:
+            mic_wav.close()
+        if agent_wav is not None:
+            agent_wav.close()
         try:
             await duck.close()
         except Exception:
             pass
-        logger.info("duck disconnected; recordings saved")
+        logger.info("duck disconnected")
 
 
 # ---------------------------------------------------------------------------

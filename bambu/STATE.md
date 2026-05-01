@@ -31,6 +31,29 @@ subscription to the printer.
 - ✅ **Agent first message arrives** — `[agent_response] Yeah?` log fires
   shortly after WS opens. Round-trip works at the JSON level.
 
+## 🟢 2026-05-01 — notification UX + simplification pass
+
+Notifications now feel like a conversation, not a script. Two improvements landed:
+
+**1. Inject-into-active-session.** Previously a printer event arriving mid-conversation would either be lost (single-slot queue collision with active button session) or open a new session that fought the active one for chip globals. Now `fire_notification` checks for live upstream(s) and pushes a `user_message` straight into the running ElevenAgents WS — agent interrupts itself naturally and pivots in voice. No WS teardown, no audio glitch.
+
+**2. Notice vs update phrasing.** First printer event of a session uses `Printer notice: ...`, subsequent events use `Printer update: ...`. The "update" framing nudges the LLM to weave the new event into its in-progress response rather than re-announcing from scratch. Together with (1), bursts of events feel like updates the user is being told about, not interruptions.
+
+Other landings:
+- Relay debounced briefly, then reverted to immediate fire per UX call. ElevenLabs' user_message-mid-utterance behavior already cleanly cuts the agent's turn, no debounce needed.
+- Firmware notify queue: single-slot `s_pending_event` → 4-deep FreeRTOS queue (`notify_item_t`) so back-to-back events while chip is offline/reconnecting don't drop the middle one. Per-printer dedup deferred to [#31](https://github.com/ideo/Rubber-Duck/issues/31) (needs printer auth/linking first).
+- WAV recording in relay gated behind `RECORD=1` env. Was always-on while debugging audio cadence; hardware moved past that. Flip back on if mic/amp wiring changes.
+
+Refactor pass cut ~50 lines of incidental complexity:
+- Firmware: dropped dead `s_notify_busy` mutex (only-taker), dropped manual `s_notify_reconnect_pending` machinery (esp_websocket_client built-in reconnect already handles it), dropped `<freertos/semphr.h>` include.
+- Relay: collapsed `_printer_notice_for`/`_printer_update_for` wrappers into direct `_printer_text_for` calls, promoted `dispatch()` closure to top-level `_dispatch_event`, swapped deprecated `asyncio.get_event_loop()` → `get_running_loop()`.
+- Tier 3 design rationales baked into source comments (silence pump, friendly subtask, naive JSON parser) so they stop looking like deferred TODOs.
+
+Found and filed during the pass:
+- [#39](https://github.com/ideo/Rubber-Duck/issues/39) Tighten broad `except Exception` handlers in relay (masked a `_send_init` signature mismatch for several iterations of this session).
+
+Bug found and fixed mid-session: `_send_init` had been refactored to take `suppress_first_message: bool` but the call site still passed `first_message=...` → TypeError on every new `/ws/duck` connection, swallowed by the broad except, presenting as "follow-up conversations don't work." This is the bug #39 will prevent recurring.
+
 ## 🟢🟢 2026-04-30 morning — printer plumbing verified end-to-end
 
 The full loop closes. User asked the duck *"what's the printer doing?"*, ElevenLabs called `get_printer_state` via the static ngrok HTTPS tunnel, relay served live mock-printer state (mid-PREPARE phase), agent translated to natural language: *"Getting ready to print a benchy — heating up right now. Nozzle's at one hundred forty, needs to get to two-twenty, give it a minute."*
