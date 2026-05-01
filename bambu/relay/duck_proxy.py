@@ -89,7 +89,8 @@ async def _broadcast_notify(payload: str) -> None:
 _session_announced: set[int] = set()
 
 
-async def _inject_into_active_sessions(event_type: str, friendly: Optional[str]) -> int:
+async def _inject_into_active_sessions(event_type: str, friendly: Optional[str],
+                                        printer_name: Optional[str] = None) -> int:
     """Push a printer event into any live upstream(s) immediately as a
     user_message. Returns the number of sessions injected into.
 
@@ -102,7 +103,7 @@ async def _inject_into_active_sessions(event_type: str, friendly: Optional[str])
     for upstream in list(_active_upstreams):
         key = id(upstream)
         header = "Printer update" if key in _session_announced else "Printer notice"
-        text = _printer_text_for(event_type, friendly, header)
+        text = _printer_text_for(event_type, friendly, header, printer_name)
         try:
             await _send_user_message(upstream, text)
             _session_announced.add(key)
@@ -115,7 +116,8 @@ async def _inject_into_active_sessions(event_type: str, friendly: Optional[str])
     return n
 
 
-async def _dispatch_event(event_type: str, friendly: Optional[str]) -> None:
+async def _dispatch_event(event_type: str, friendly: Optional[str],
+                            printer_name: Optional[str] = None) -> None:
     """Route a printer event to either the live session (inject) or the
     notify channel (broadcast → chip opens new session).
 
@@ -124,16 +126,22 @@ async def _dispatch_event(event_type: str, friendly: Optional[str]) -> None:
     Broadcast is the cold-start: the chip is idle, /ws/notify wakes it,
     chip dials /ws/duck?event=...&subtask=..., and ws_duck_endpoint
     sends the opening user_message right after init metadata."""
-    injected = await _inject_into_active_sessions(event_type, friendly)
+    injected = await _inject_into_active_sessions(event_type, friendly, printer_name)
     if injected:
         return
+    # Note: printer_name not propagated to chip via /ws/notify yet —
+    # chip's JSON parser only extracts event + subtask. The session-start
+    # path (ws_duck_endpoint) reads printer_name from state directly.
+    # Multi-printer (#41) will require chip to forward the printer_serial
+    # from the notify push so the relay knows WHICH printer to read from.
     payload = json.dumps(
         {"type": "notify", "event": event_type, "subtask": friendly},
         ensure_ascii=False,
     )
     await _broadcast_notify(payload)
-    logger.info("notify broadcast (no active session): %s — %s",
-                event_type, friendly)
+    logger.info("notify broadcast (no active session): %s — %s%s",
+                event_type, friendly,
+                f" ({printer_name})" if printer_name else "")
 
 
 def fire_notification(event: dict) -> None:
@@ -143,16 +151,28 @@ def fire_notification(event: dict) -> None:
     if _main_loop is None:
         return
     asyncio.run_coroutine_threadsafe(
-        _dispatch_event(event.get("type"), _friendly_subtask(event.get("subtask"))),
+        _dispatch_event(
+            event.get("type"),
+            _friendly_subtask(event.get("subtask")),
+            event.get("printer_name") or None,
+        ),
         _main_loop,
     )
 
 
+_bambu_state = None  # captured for ws_duck_endpoint's notify-session path
+
+
 def register_bambu_listener(state) -> None:
     """Wire the bambu_state event listener to fan out via WS. Capture the
-    running asyncio loop so the MQTT-thread listener can dispatch onto it."""
-    global _main_loop
+    running asyncio loop so the MQTT-thread listener can dispatch onto it.
+    Also stash the state object so the /ws/duck endpoint can read its
+    printer_name when handling notify-triggered session opens (the chip
+    URL params don't carry printer_name yet — see the comment in
+    _dispatch_event)."""
+    global _main_loop, _bambu_state
     _main_loop = asyncio.get_running_loop()
+    _bambu_state = state
     state.add_listener(fire_notification)
 
 ELEVENLABS_HOST = "api.elevenlabs.io"
@@ -189,26 +209,34 @@ async def _send_init(upstream: websockets.WebSocketClientProtocol,
     await upstream.send(json.dumps(payload))
 
 
-def _printer_text_for(event_type: str, subtask: Optional[str], header: str) -> str:
+def _printer_text_for(event_type: str, subtask: Optional[str], header: str,
+                       printer_name: Optional[str] = None) -> str:
     """Build the user_message body for a printer event. Caller passes header:
       'Printer notice' — first-in-session, agent announces fresh.
       'Printer update' — subsequent events in same session, agent treats
         them as in-context follow-ups and weaves them into the conversation
-        rather than re-announcing from scratch."""
+        rather than re-announcing from scratch.
+    `printer_name` (when present) is the friendly name from Bambu cloud's
+    device list so the agent can disambiguate which printer fired the
+    event ("Work Bambu just started" vs "your printer just started").
+    Empty string / None falls back to a generic phrasing — same shape as
+    before this change, so LAN-mode installs are unchanged."""
     name = subtask or "your print"
+    pname = (printer_name or "").strip()
+    p = pname if pname else "the printer"
     if event_type == "start":
-        return f"{header}: print just started, file is {name}."
+        return f"{header}: {p} just started a print, file is {name}."
     if event_type == "finish":
-        return f"{header}: just finished a print of {name}."
+        return f"{header}: {p} just finished a print of {name}."
     if event_type == "failed":
-        return f"{header}: print of {name} failed."
+        return f"{header}: print of {name} failed on {p}."
     if event_type == "pause":
-        return f"{header}: print of {name} paused mid-job."
+        return f"{header}: print of {name} paused mid-job on {p}."
     if event_type == "resume":
-        return f"{header}: print of {name} resumed."
+        return f"{header}: print of {name} resumed on {p}."
     if event_type == "hms":
-        return f"{header}: the printer is flagging an error."
-    return f"{header}: event {event_type}, file {name}."
+        return f"{header}: {p} is flagging an error."
+    return f"{header}: event {event_type} on {p}, file {name}."
 
 
 async def _send_user_message(upstream: websockets.WebSocketClientProtocol,
@@ -365,9 +393,12 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
             # voice. Otherwise (button press) let the agent open normally.
             await _send_init(upstream, suppress_first_message=bool(event_type))
             if event_type:
-                notice = _printer_text_for(event_type, subtask, "Printer notice")
-                logger.info("session opening from notify: event=%s subtask=%r notice=%r",
-                            event_type, subtask, notice)
+                # Pull printer_name from state — chip's URL params don't
+                # carry it (see _dispatch_event comment about #41).
+                pname = _bambu_state.printer_name if _bambu_state else None
+                notice = _printer_text_for(event_type, subtask, "Printer notice", pname)
+                logger.info("session opening from notify: event=%s subtask=%r printer=%r",
+                            event_type, subtask, pname)
                 await _send_user_message(upstream, notice)
                 # Mark first announcement done — any further events that
                 # arrive during this session use "Printer update:" phrasing.
@@ -421,8 +452,12 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
 @router.post("/admin/test_notification")
 async def admin_test_notification(event: str = "finish", subtask: str = "TestPrint"):
     """Manual trigger for testing the notification path without waiting for
-    a real print to finish. Fires the same listener as a real Bambu event.
-    Example: curl -X POST 'http://127.0.0.1:8088/admin/test_notification?event=finish&subtask=TestPrint'
-    """
-    fire_notification({"type": event, "subtask": subtask})
-    return {"ok": True, "event": event, "subtask": subtask, "clients_notified": len(_notify_clients)}
+    a real print to finish. Stamps printer_name from the live state so the
+    synthetic event matches the shape of a real bambu_state._fire event."""
+    pname = _bambu_state.printer_name if _bambu_state else ""
+    fire_notification({"type": event, "subtask": subtask, "printer_name": pname})
+    return {
+        "ok": True, "event": event, "subtask": subtask,
+        "printer_name": pname,
+        "clients_notified": len(_notify_clients),
+    }

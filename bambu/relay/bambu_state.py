@@ -45,12 +45,17 @@ class BambuState:
     """
 
     def __init__(self, host: str, username: str, password: str, serial: str,
-                 verify_tls: bool = False):
+                 verify_tls: bool = False, printer_name: str = ""):
         self.host = host
         self.username = username
         self.password = password
         self.serial = serial
         self.verify_tls = verify_tls
+        # Friendly name from Bambu cloud's device list (e.g. "Work Bambu").
+        # Empty in LAN mode; populated in cloud mode by the bambu_login
+        # endpoint after the device pick. Single-printer today; will
+        # become a per-serial map once #41 lands.
+        self.printer_name = printer_name
         self._lock = threading.Lock()
         self._state: dict[str, Any] = {}
         self._history: deque[dict] = deque(maxlen=20)
@@ -72,6 +77,12 @@ class BambuState:
         self._listeners.append(cb)
 
     def _fire(self, event: dict) -> None:
+        # Stamp the printer's friendly name onto every event so listeners
+        # don't need to know about per-printer state. Centralized here so
+        # individual fire-callsites stay terse. Empty string when LAN mode
+        # or pre-cloud-login — listener handles the empty case gracefully.
+        if "printer_name" not in event:
+            event["printer_name"] = self.printer_name
         for cb in list(self._listeners):
             try:
                 cb(event)
@@ -114,7 +125,7 @@ class BambuState:
         self._client.disconnect()
 
     def reconfigure(self, host: str, username: str, password: str, serial: str,
-                    verify_tls: bool = False) -> None:
+                    verify_tls: bool = False, printer_name: str = "") -> None:
         """Swap broker / credentials at runtime. Used by /admin/bambu_login
         when the user signs in to Bambu cloud — relay transitions from LAN
         mode (or unconfigured) to cloud mode without restarting the process,
@@ -137,6 +148,7 @@ class BambuState:
         self.password = password
         self.serial = serial
         self.verify_tls = verify_tls
+        self.printer_name = printer_name
         self._client = self._build_client()
         self.start()
 

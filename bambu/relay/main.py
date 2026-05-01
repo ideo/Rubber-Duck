@@ -90,13 +90,15 @@ async def lifespan(_app: FastAPI):
     if tokens:
         # Cloud mode — the user has logged in to Bambu cloud previously and
         # we have their saved access_token + selected printer serial.
-        logger.info("starting in CLOUD mode (loaded tokens.json)")
+        logger.info("starting in CLOUD mode (loaded tokens.json) — printer=%r",
+                    tokens.get("printer_name") or "(unknown)")
         state = BambuState(
             host=DEFAULT_CLOUD_HOST,
             username=f"u_{tokens['user_id']}",
             password=tokens["access_token"],
             serial=tokens["serial"],
             verify_tls=True,
+            printer_name=tokens.get("printer_name", ""),
         )
     else:
         # LAN mode — fall back to env-var configuration. This is the path
@@ -227,6 +229,7 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
     if chosen is None:
         chosen = next((d for d in devices if d.get("online")), devices[0])
     serial = chosen["dev_id"]
+    printer_name = chosen.get("name", "")
 
     # Persist for restart resilience BEFORE swapping MQTT — if the swap
     # fails the user can still inspect tokens.json, and a restart will
@@ -236,6 +239,7 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
         "refresh_token": result["refresh_token"],
         "user_id": result["user_id"],
         "serial": serial,
+        "printer_name": printer_name,
         "account_email": email,  # for display / debugging only
     })
 
@@ -247,13 +251,14 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
         password=result["access_token"],
         serial=serial,
         verify_tls=True,
+        printer_name=printer_name,
     )
 
     return {
         "ok": True,
         "user_id": result["user_id"],
         "serial": serial,
-        "printer_name": chosen.get("name", "(unknown)"),
+        "printer_name": printer_name or "(unknown)",
         "online": chosen.get("online", False),
     }
 
