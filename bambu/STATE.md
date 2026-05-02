@@ -31,6 +31,49 @@ subscription to the printer.
 - ✅ **Agent first message arrives** — `[agent_response] Yeah?` log fires
   shortly after WS opens. Round-trip works at the JSON level.
 
+## 🟢🟢🟢 2026-05-01 evening — cloud OAuth + SoftAP onboarding + tap-to-wake all live
+
+**The big day.** Three flagship features landed end-to-end on real hardware, plus a tap-detector polish pass and several rounds of refactor/security hardening. Closing summary below; commit-by-commit detail in `git log`.
+
+### What can a person actually do now (vs. yesterday morning)
+
+- **Tap the duck's shell to start a conversation** — peak+slope detector with adaptive noise floor and asymmetric EMA so music doesn't trip it. Comedic servo "shake-off" animation on tap. (#37)
+- **Set up WiFi from a phone, no laptop or app** — open the duck's `DuckDuckDuck-XXXX` AP, captive portal auto-pops via DNS-hijack + 404-redirect, dropdown of nearby networks, submit, done. Cross-platform (iOS/Android/anything). Long-press to re-onboard. (#30)
+- **Sign in to Bambu cloud, talk over cloud MQTT** — relay no longer needs LAN access to the printer. The morning's "192.168.0.25 unreachable" debugging adventure is now historical: cloud broker via `us.mqtt.bambulab.com:8883`, authenticated `u_<userId>/<accessToken>`, same `device/<serial>/report` topic, full notification stream. (#31 iteration A)
+- **Hear announcements about real prints, in voice, in real time, with accurate state** — validated against an actual Bambu print: tap on printer screen → cloud push → relay listener fires → broadcast or inject → agent improvises an announcement that correctly references print name, bed warming state, etc.
+
+### Architectural choices captured
+
+- **Cloud > LAN MQTT.** LAN reachability is fundamentally fragile (band steering, AP isolation, sleep states). Cloud just works from anywhere on the internet. The relay was designed to swap broker mode at runtime; reconfigure() pivots without dropping listeners.
+- **`/preference` for user_id auto-resolve.** Bambu's accessToken stopped being a parseable JWT, and the login response body doesn't include user_id either. The canonical answer (per pybambu, OpenBambuAPI/cloud-http.md): GET `/v1/design-user-service/my/preference` with the bearer token returns `{uid, ...}`. We use it. Manual override remains as a fallback.
+- **Token refresh: don't bother.** Bambu's `/refreshtoken` endpoint returns 401 always (documented broken). Tokens last ~90 days; user re-runs the email-code dance when they expire. Aligned with how every community project handles this.
+- **Email verification is forced on every cloud login from a "new device".** Not optional, no trusted-device bypass exists in the public reverse-engineering. We accept this and design the captive portal to collect creds without code, validate post-reboot, and surface failure via the recovery path.
+- **Single-tenant relay for now.** `tokens.json` holds one entry. When multi-tenant lands (#31 follow-up), it becomes a dict keyed by `duck_id` (chip MAC). Multi-printer-per-duck (#41) ships before multi-tenant (#31) since two-printer setups are common; multi-account is rare until we actually distribute ducks.
+- **Bambu has aggressive bot detection.** Login retries are kept minimal (one `asyncio.Lock` to serialize concurrent attempts, no automatic retry, 429s pass through unchanged). No backoff fancy enough to look bot-shaped.
+
+### Hardening pass
+
+- `tokens.json` writes are atomic (temp + `os.replace`, 0600 perms). Defensive perm-heal on load.
+- Error paths redact token-shaped substrings before they can leak into logs or HTTP error details.
+- MQTT `auth_failed` flag surfaces CONNACK rc=4/5/134/135 (token rejected) so a 30-day-stale install is visible, not silent.
+- `/admin/bambu_status` is now auth-gated and reports `connected` + `last_message_age_ms` (distinguishes "tokens.json exists" from "actually authed and live").
+- Tap detector: `TAP_PEAK_MIN` 3000 → 5000, asymmetric floor adaptation (rises α=0.1, falls α=0.005). Music + drums no longer trip false taps.
+- Printer name flows through to notifications ("Work Bambu just started a print of Dragon" vs the old "your printer just started").
+
+### Issues filed
+
+- **#39** Tighten broad except handlers in relay (would have caught the `_send_init` signature mismatch sooner)
+- **#40** Double-tap as higher-confidence wake (Hoefer secret-knock pattern; defense-in-depth for false positives)
+- **#41** Multi-printer per duck (one user, multiple printers — sequences before multi-tenant #31)
+
+### What's left to make this shippable to a person who isn't me
+
+- **#31 iteration B** — extend captive portal to collect Bambu email/pw/(optional 2FA). Today's wizard only does WiFi; OAuth still requires `curl /admin/bambu_login`.
+- **#31 iteration C** — `duck.local` recovery page over STA mode for failure cases (2FA arrived after reboot, wrong password, expired token, etc.).
+- **#41 multi-printer** — relevant the moment a second printer is in the picture.
+
+Pickup pointer: iteration B is the keystone. Smallest delta from "today's win" to "shippable to a friend." Reuses everything we just built.
+
 ## 🟢 2026-05-01 — notification UX + simplification pass
 
 Notifications now feel like a conversation, not a script. Two improvements landed:
