@@ -40,7 +40,7 @@
     }
   ],
   "_template_vars": {
-    "RELAY_BASE_URL": "Public URL of the relay — e.g. https://abc123.ngrok.app during dev",
+    "RELAY_BASE_URL": "Public URL of the relay — e.g. https://duck-duck-print.fly.dev (Fly.io is the canonical deploy target; see bambu/DEPLOY.md)",
     "RELAY_SHARED_SECRET": "Must match RELAY_SHARED_SECRET in the relay's .env"
   }
 }

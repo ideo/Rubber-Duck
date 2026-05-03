@@ -10,9 +10,10 @@
 // chip can be in BOTH AP (serving the page to the phone) and STA
 // (connected to home WiFi → has internet → can talk to relay) at the
 // same time. The chip submits the user's creds to the relay over the
-// EXISTING /ws/notify WebSocket (plain TCP via ngrok), no chip-side
-// HTTPS. That's the architecture that doesn't fight the chip's mbedtls
-// quirks against ngrok's Cloudflare-fronted TLS edge.
+// EXISTING /ws/notify WebSocket — no separate HTTPS connection. The
+// relay does the real Bambu cloud TLS in Python httpx and returns
+// the result on the same WebSocket. One persistent connection does
+// double duty for printer-event push AND credential forwarding.
 //
 // State machine (rendered server-side, browser auto-refreshes during
 // transient states via <meta http-equiv=refresh>):
@@ -624,7 +625,7 @@ static void provision_worker_task(void *arg) {
     notify_task_start();
 
     // 4. Wait for WS to be connected before sending. The TCP+WS handshake
-    //    to ngrok takes ~500ms-2s typically.
+    //    to the relay's edge takes ~500ms-2s typically.
     int waited = 0;
     while (!notify_ws_is_connected() && waited < 15000) {
         vTaskDelay(pdMS_TO_TICKS(200));

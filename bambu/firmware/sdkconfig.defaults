@@ -35,18 +35,17 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # WebSocket client (added via component manager)
 CONFIG_WS_TRANSPORT=y
 
-# HTTPS / TLS — chip never makes outbound HTTPS today. All chip→relay
-# traffic is plain WebSocket via ngrok TCP tunnel. Bambu cloud login
-# (the only HTTPS user-credential dance we have) is performed by the
-# relay's Python httpx client, not by the chip. Cert bundle on FULL —
-# minimal cost, leaves the door open for future paths (OTA, telemetry)
-# that may need TLS. We tried at length to make the chip do this work
-# directly; ESP-IDF v5.3.x mbedtls reliably failed handshake against
-# ngrok's Cloudflare-fronted edge with -0x7280 INVALID_RECORD across
-# every config combination we tried (bumping IN_CONTENT_LEN, disabling
-# DYNAMIC_BUFFER, matching URAM's known-working Cloud-Run config, etc.)
-# We pivoted to APSTA + chip-relays-creds-over-WS — the chip never sees
-# TLS, the relay does Python httpx which works perfectly.
+# TLS root cert bundle — required for wss:// to the relay (Fly.io edge
+# uses Let's Encrypt). The FULL bundle is the Mozilla NSS root list
+# (~130 CAs, ~150 KB), refreshed each ESP-IDF release. Validates any
+# public-CA-fronted endpoint; no PEM management on the chip.
+#
+# Historical note: chip-side TLS previously failed against an ngrok
+# Cloudflare-fronted edge with MBEDTLS_ERR_SSL_INVALID_RECORD on every
+# record-size config we tried. Once we moved off ngrok onto Fly's
+# bespoke edge proxy (no Cloudflare record-size quirks), wss:// with
+# the default IN_CONTENT_LEN of 16384 works first try. See agent.c's
+# crt_bundle_attach wiring.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 

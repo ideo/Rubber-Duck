@@ -1,9 +1,11 @@
-// Local-relay WebSocket client.
+// Relay WebSocket client.
 //
-// The duck connects to our Python relay over LAN/ngrok and exchanges raw
-// int16 LE PCM @ 16kHz mono in WebSocket *binary* frames. The relay holds
-// the slow ElevenAgents WS upstream and does all the JSON+base64+TLS work.
-// This file used to do all that on-chip and was unstable; see bambu/STATE.md.
+// The duck connects to the Python relay over wss:// (TLS validated
+// against the bundled Mozilla NSS root list — see crt_bundle_attach
+// below) and exchanges raw int16 LE PCM @ 16kHz mono in WebSocket
+// *binary* frames. The relay holds the slow ElevenAgents WS upstream
+// and does all the JSON+base64 audio translation. This file used to
+// do that on-chip and was unstable; see bambu/STATE.md.
 //
 // Wire (duck ↔ relay):
 //   binary frame, both ways  : raw int16 LE PCM
@@ -18,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -264,11 +267,17 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
              "X-Duck-Id: %s\r\n", duck_id_get());
 
     esp_websocket_client_config_t cfg = {
-        .uri = url,  // ws:// via ngrok TCP tunnel — no TLS on chip
+        .uri = url,  // wss:// to Fly.io edge (Let's Encrypt cert)
         .buffer_size = 16384,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
         .headers = ws_headers,
+        // Validate the relay's cert against the bundled Mozilla NSS
+        // root list (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL).
+        // No PEM management on the chip; works against any
+        // public-CA-fronted endpoint. ESP-IDF v5.3+ mbedTLS 3.5+
+        // handles Let's Encrypt's ECDSA-SHA384 chains cleanly.
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
     s_ws = esp_websocket_client_init(&cfg);
     if (!s_ws) {
@@ -498,6 +507,7 @@ static void notify_task(void *arg) {
         .network_timeout_ms = 10000,
         .buffer_size = 2048,
         .headers = ws_headers,
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
     s_notify_ws = esp_websocket_client_init(&cfg);
     if (!s_notify_ws) {

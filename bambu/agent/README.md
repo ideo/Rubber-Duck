@@ -24,7 +24,7 @@ Manual at v0 — ElevenAgents doesn't expose a config API.
 4. **LLM** — Claude Sonnet 4 nails the dry tone. GPT-4o-mini is the cheap fallback.
 5. **Voice** tab — audition against criteria in [`voice.md`](voice.md), commit the choice
 6. **Tools** section → **Add tool** → **Webhook**. Three of them, matching [`tools.json`](tools.json):
-   - URLs point at your relay (ngrok URL during dev, deployed URL in prod)
+   - URLs point at your relay (`https://<your-relay-host>/tools/.../{duck_id}` — Fly.io is the canonical target, see [`bambu/DEPLOY.md`](../DEPLOY.md))
    - **Important:** add an `X-Relay-Secret` header to each, value matching `RELAY_SHARED_SECRET` in the relay's `.env`. The header is auth — without it the relay returns 401 and the duck says "I'm not seeing it right now." (We hit this. Don't skip it.)
    - For `get_print_history`, the `n` param is type **Integer** with **Value Type = LLM Prompt** so the model fills it from context
 

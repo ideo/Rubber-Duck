@@ -544,8 +544,10 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 break
             # Chip-originated text messages — the captive-portal APSTA
             # wizard sends `bambu_login` here so we handle the cloud
-            # login on the chip's behalf (chip can't do TLS to ngrok's
-            # edge reliably; relay's Python httpx works perfectly).
+            # login on the chip's behalf. Could do it on the chip now
+            # that wss:// works, but routing through the relay's
+            # existing httpx machinery is simpler than adding a second
+            # TLS path on the chip.
             text = msg.get("text")
             if not text:
                 continue

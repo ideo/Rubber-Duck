@@ -31,11 +31,11 @@ bool agent_speaking(void);
 
 // ---- Bambu login over the existing /ws/notify channel ----
 //
-// The captive-portal APSTA wizard uses this to forward credentials to
-// the relay without the chip ever doing TLS itself (chip-side mbedtls
-// reliably fails handshake against ngrok's Cloudflare edge — see git
-// log around iteration B/C). Plain WebSocket frames travel over ngrok's
-// TCP tunnel; the relay does the real Bambu cloud TLS via Python httpx.
+// The captive-portal APSTA wizard forwards credentials to the relay
+// over the same WebSocket the chip already holds open. Avoids a
+// second connection; relay does the real Bambu cloud TLS via Python
+// httpx (which has no problem with Bambu's cert chain) and replies
+// over the same WebSocket with the result.
 
 typedef enum {
     BAMBU_LOGIN_WS_OK         = 0,

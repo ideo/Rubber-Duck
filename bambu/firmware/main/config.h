@@ -114,13 +114,24 @@
 #define BEAK_ATTACK            0.45f
 #define BEAK_RELEASE           0.10f
 
-// ---- Local relay (path C-light) ----
-// Duck connects to our Python relay over plain TCP via ngrok TCP tunnel,
-// raw binary PCM. Relay handles ElevenAgents JSON+base64+TLS upstream.
-// (ngrok's HTTPS edge speaks HTTP/2 which esp_websocket_client doesn't, so
-// we use a TCP tunnel for plain-byte forwarding. See bambu/STATE.md.)
+// ---- Relay endpoint ----
+// Duck connects to the Python relay over wss:// — TLS terminated by the
+// relay host's edge (Fly.io's Let's Encrypt cert by default). The chip
+// validates against the Mozilla NSS root bundle compiled in via
+// CONFIG_MBEDTLS_CERTIFICATE_BUNDLE; no per-deployment cert management
+// needed on the chip side.
+//
+// ESP-IDF v5.3+ mbedTLS 3.5+ handles Let's Encrypt's ECDSA-SHA384
+// chains cleanly against Fly's edge. (We had a long-running impasse
+// earlier with chip-side TLS against an ngrok+Cloudflare edge —
+// MBEDTLS_ERR_SSL_INVALID_RECORD on every record-size config. Fly's
+// edge is a bespoke proxy without the Cloudflare-style record-size
+// quirks, so the bundle attach + default IN_CONTENT_LEN works.)
+//
+// Override at compile time to point at a different deployment:
+//   idf.py -DRELAY_BASE_URL='\"wss://<your-fly-app>.fly.dev\"' build
 #ifndef RELAY_BASE_URL
-#define RELAY_BASE_URL "ws://2.tcp.ngrok.io:20554"
+#define RELAY_BASE_URL "wss://duck-duck-print.fly.dev"
 #endif
 
 #define RELAY_DUCK_URL    RELAY_BASE_URL "/ws/duck"
@@ -130,16 +141,3 @@
 #ifndef RELAY_WS_URL
 #define RELAY_WS_URL RELAY_DUCK_URL
 #endif
-
-// HTTPS edge for control-plane requests (Bambu cloud login, future health
-// checks, OAuth callbacks, etc.). The ngrok HTTPS tunnel terminates TLS at
-// ngrok's edge and forwards plain HTTP to the local relay on port 8088.
-// Same pattern used by ElevenAgents to call our /tools/* endpoints. When
-// we move off ngrok onto a real cloud deployment (#32), this string is
-// the only thing that changes. mbedtls memory tuning lives in
-// sdkconfig.defaults — see URAM project for the rationale.
-#ifndef RELAY_HTTPS_BASE_URL
-#define RELAY_HTTPS_BASE_URL "https://duck-duck-print.ngrok.io"
-#endif
-
-#define RELAY_BAMBU_LOGIN_URL  RELAY_HTTPS_BASE_URL "/admin/bambu_login"
