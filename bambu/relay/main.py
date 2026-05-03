@@ -74,15 +74,35 @@ LEGACY_DUCK_ID = os.environ.get("DUCK_ID", "legacy")
 def _state_from_row(row: dict) -> BambuState:
     """Build a BambuState from a ducks DB row. Cloud mode if access_token
     is present; LAN mode otherwise (env-var fallback for serial/access
-    code). One BambuState per duck — they don't share clients or threads."""
+    code). One BambuState per duck — they don't share clients or threads.
+
+    Reads `serials`/`printer_names` JSON arrays first (#41 multi-printer
+    canonical), falls back to legacy single `serial`/`printer_name` for
+    rows that haven't been migrated."""
+    def _parse_list(s: str | None) -> list[str]:
+        if not s:
+            return []
+        try:
+            v = json.loads(s)
+            return [str(x) for x in v] if isinstance(v, list) else []
+        except (ValueError, TypeError):
+            return []
+
     if row.get("access_token") and row.get("bambu_user_id"):
+        serials = _parse_list(row.get("serials"))
+        names = _parse_list(row.get("printer_names"))
+        # Legacy single-row fallback if the migration didn't run for
+        # some reason (defensive).
+        if not serials and row.get("serial"):
+            serials = [row["serial"]]
+            names = [row.get("printer_name") or ""]
         return BambuState(
             host=row.get("cloud_host") or DEFAULT_CLOUD_HOST,
             username=f"u_{row['bambu_user_id']}",
             password=row["access_token"],
-            serial=row.get("serial") or "",
+            serials=serials,
+            printer_names=names,
             verify_tls=True,
-            printer_name=row.get("printer_name") or "",
         )
     # LAN-ish fallback. Mostly for development; once the duck has done
     # cloud login this branch is unused.
@@ -324,9 +344,22 @@ def list_ducks(x_relay_secret: str | None = Header(default=None)):
     out = []
     for r in rows:
         s = states.get(r["duck_id"])
+        # Parse JSON arrays for surfacing in the response.
+        try:
+            serials = json.loads(r["serials"]) if r.get("serials") else []
+        except (ValueError, TypeError):
+            serials = []
+        try:
+            printer_names = (json.loads(r["printer_names"])
+                             if r.get("printer_names") else [])
+        except (ValueError, TypeError):
+            printer_names = []
         out.append({
             "duck_id": r["duck_id"],
             "account_email": r.get("account_email"),
+            "printer_names": printer_names,
+            "serials": serials,
+            # Legacy singletons kept for back-compat readers.
             "printer_name": r.get("printer_name"),
             "serial": r.get("serial"),
             "cloud_host": r.get("cloud_host"),
@@ -380,14 +413,21 @@ async def _do_bambu_login(payload: dict) -> dict:
         raise HTTPException(404, detail={"code": "no_printers",
                                          "message": "Bambu account has no bound printers"})
 
+    # Multi-printer #41 Phase A — subscribe to ALL printers in the
+    # account by default. Phase B (captive-portal checkbox picker)
+    # will let the user opt out of specific printers; until then,
+    # the duck is omniscient about every printer the user owns.
+    #
+    # BAMBU_SERIAL env (legacy single-printer pin) still narrows to
+    # one if set — that's the dev / single-printer-shared-relay path.
     pinned = os.environ.get("BAMBU_SERIAL")
-    chosen = None
     if pinned:
-        chosen = next((d for d in devices if d.get("dev_id") == pinned), None)
-    if chosen is None:
-        chosen = next((d for d in devices if d.get("online")), devices[0])
-    serial = chosen["dev_id"]
-    printer_name = chosen.get("name", "")
+        chosen = [d for d in devices if d.get("dev_id") == pinned] \
+                  or devices[:1]
+    else:
+        chosen = devices
+    serials = [d["dev_id"] for d in chosen]
+    printer_names = [d.get("name", "") for d in chosen]
 
     # Persist on the duck's row. upsert_duck preserves any other fields
     # already set (cloud_host, elevenlabs_*) since we pass only what's new.
@@ -396,8 +436,8 @@ async def _do_bambu_login(payload: dict) -> dict:
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
         bambu_user_id=result["user_id"],
-        serial=serial,
-        printer_name=printer_name,
+        serials=serials,
+        printer_names=printer_names,
         account_email=email,
     )
 
@@ -415,17 +455,27 @@ async def _do_bambu_login(payload: dict) -> dict:
             host=DEFAULT_CLOUD_HOST,
             username=f"u_{result['user_id']}",
             password=result["access_token"],
-            serial=serial,
+            serials=serials,
+            printer_names=printer_names,
             verify_tls=True,
-            printer_name=printer_name,
         )
 
     return {
         "duck_id": duck_id,
         "user_id": result["user_id"],
-        "serial": serial,
-        "printer_name": printer_name or "(unknown)",
-        "online": chosen.get("online", False),
+        "printers": [
+            {"serial": d["dev_id"],
+             "name": d.get("name", ""),
+             "online": d.get("online", False)}
+            for d in chosen
+        ],
+        # Legacy single-value fields kept for the existing chip
+        # firmware (which only knows about one printer per duck).
+        # First selected printer wins. Drops in Phase B once the
+        # captive portal can render the full list.
+        "serial": serials[0] if serials else "",
+        "printer_name": printer_names[0] if printer_names else "(unknown)",
+        "online": any(d.get("online", False) for d in chosen),
     }
 
 
@@ -448,10 +498,67 @@ register_bambu_login_handler(_do_bambu_login)
 register_legacy_claim_handler(claim_legacy_if_applicable)
 
 
+@app.post("/admin/rebind_printers/{duck_id}")
+async def rebind_printers(duck_id: str,
+                          x_relay_secret: str | None = Header(default=None)):
+    """Re-list this duck's Bambu account and update the bound printer
+    set to ALL printers in the account, no re-onboarding needed.
+
+    Useful after the multi-printer #41 cutover for ducks that were
+    bound to a single printer pre-migration: pre-migration each
+    bambu_login picked one. This endpoint re-runs list_devices with
+    the stored access_token and writes back the full set.
+
+    Auth-gated (sensitive: re-issues MQTT subscriptions).
+    """
+    _auth(x_relay_secret)
+    row = db.get().get_duck(duck_id)
+    if not row or not row.get("access_token"):
+        raise HTTPException(404, "duck not found or has no Bambu binding")
+
+    try:
+        devices = await bambu_cloud.list_devices(row["access_token"])
+    except bambu_cloud.LoginError as e:
+        raise HTTPException(502, detail={
+            "code": "list_devices_failed",
+            "message": str(e),
+        })
+    if not devices:
+        raise HTTPException(404, detail={
+            "code": "no_printers",
+            "message": "Bambu account has no bound printers",
+        })
+
+    serials = [d["dev_id"] for d in devices]
+    printer_names = [d.get("name", "") for d in devices]
+    db.get().upsert_duck(duck_id, serials=serials, printer_names=printer_names)
+
+    s = states.get(duck_id)
+    if s is not None:
+        s.reconfigure(
+            host=row.get("cloud_host") or DEFAULT_CLOUD_HOST,
+            username=f"u_{row['bambu_user_id']}",
+            password=row["access_token"],
+            serials=serials,
+            printer_names=printer_names,
+            verify_tls=True,
+        )
+
+    return {
+        "ok": True,
+        "duck_id": duck_id,
+        "printers": [
+            {"serial": d["dev_id"], "name": d.get("name", ""),
+             "online": d.get("online", False)}
+            for d in devices
+        ],
+    }
+
+
 @app.get("/admin/bambu_status/{duck_id}")
 def bambu_status_scoped(duck_id: str,
                         x_relay_secret: str | None = Header(default=None)):
-    """Per-duck status: mode, printer binding, live MQTT connection
+    """Per-duck status: mode, all bound printers, live MQTT connection
     state. Auth-gated because the response includes account_email."""
     _auth(x_relay_secret)
     row = db.get().get_duck(duck_id)
@@ -460,10 +567,14 @@ def bambu_status_scoped(duck_id: str,
         "duck_id": duck_id,
         "mode": "cloud" if (row and row.get("access_token")) else "lan",
         "host": s.host if s else None,
-        "serial": s.serial if s else None,
         "user_id": row.get("bambu_user_id") if row else None,
         "account_email": row.get("account_email") if row else None,
-        "printer_name": row.get("printer_name") if row else None,
+        # Multi-printer #41 — full bound list. Legacy `serial` /
+        # `printer_name` kept as the [0] of each for back-compat.
+        "serials": (s.serials if s else []) or [],
+        "printer_names": (s.printer_names if s else []) or [],
+        "serial": s.serial if s else None,
+        "printer_name": s.printer_name if s else None,
     }
     if s is not None:
         try:

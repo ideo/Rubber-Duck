@@ -43,8 +43,16 @@ CREATE TABLE IF NOT EXISTS ducks (
     account_email     TEXT,
     access_token      TEXT,
     refresh_token     TEXT,
+    -- Legacy single-printer fields (pre-#41). Kept populated as the
+    -- first element of serials/printer_names for back-compat reads
+    -- by anything that hasn't been multi-printer-aware'd. New code
+    -- reads `serials` (JSON array) directly.
     serial            TEXT,
     printer_name      TEXT,
+    -- Multi-printer (#41): JSON arrays of strings, parallel order.
+    -- serials[i] corresponds to printer_names[i]. Added in user_version=1.
+    serials           TEXT,
+    printer_names     TEXT,
     cloud_host        TEXT NOT NULL DEFAULT 'us.mqtt.bambulab.com',
     elevenlabs_key    TEXT,
     elevenlabs_agent  TEXT,
@@ -85,7 +93,52 @@ class Database:
     def _init_schema(self) -> None:
         with self._wlock:
             self._conn.executescript(_SCHEMA)
+            self._migrate_to_v1_multiprinter()
         logger.info("db open at %s (sqlite WAL)", self.path)
+
+    def _migrate_to_v1_multiprinter(self) -> None:
+        """v1: multi-printer support (#41). Adds `serials` and
+        `printer_names` JSON-array columns. Backfills from the legacy
+        `serial`/`printer_name` single-value columns so existing rows
+        seamlessly become one-element-array rows. Idempotent — uses
+        PRAGMA user_version as the version cursor.
+
+        Held under self._wlock by the caller.
+        """
+        cur = self._conn.execute("PRAGMA user_version")
+        version = cur.fetchone()[0]
+        if version >= 1:
+            return
+
+        # The columns are already declared in _SCHEMA above (which
+        # uses CREATE TABLE IF NOT EXISTS — safe to run repeatedly).
+        # For DBs that pre-date this change the columns won't exist,
+        # so add them defensively.
+        existing_cols = {row[1] for row in self._conn.execute(
+            "PRAGMA table_info(ducks)").fetchall()}
+        if "serials" not in existing_cols:
+            self._conn.execute("ALTER TABLE ducks ADD COLUMN serials TEXT")
+        if "printer_names" not in existing_cols:
+            self._conn.execute(
+                "ALTER TABLE ducks ADD COLUMN printer_names TEXT")
+
+        # Backfill rows that have legacy serial/printer_name but no
+        # serials JSON. One-element arrays preserving the old binding.
+        cur = self._conn.execute(
+            "SELECT duck_id, serial, printer_name FROM ducks "
+            "WHERE serial IS NOT NULL AND serials IS NULL"
+        )
+        for duck_id, serial, printer_name in cur.fetchall():
+            self._conn.execute(
+                "UPDATE ducks SET serials = ?, printer_names = ? "
+                "WHERE duck_id = ?",
+                (json.dumps([serial]),
+                 json.dumps([printer_name or ""]),
+                 duck_id),
+            )
+
+        self._conn.execute("PRAGMA user_version = 1")
+        logger.info("db migrated to v1 (multi-printer #41)")
 
     # ---- duck CRUD -------------------------------------------------------
 
@@ -95,21 +148,40 @@ class Database:
         on first insert; last_seen_at is bumped on every call.
 
         Allowed fields match the schema: bambu_user_id, account_email,
-        access_token, refresh_token, serial, printer_name, cloud_host,
-        elevenlabs_key, elevenlabs_agent. Unknown fields raise KeyError so
-        typos surface immediately (we'd rather a stack trace than silently
-        dropped writes).
+        access_token, refresh_token, serial, printer_name, serials (list),
+        printer_names (list), cloud_host, elevenlabs_key, elevenlabs_agent.
+
+        `serials` and `printer_names` accept Python lists and get
+        JSON-serialized. Pass them as the canonical multi-printer
+        binding; the singular `serial`/`printer_name` legacy fields
+        get auto-populated from list[0] for back-compat readers.
+
+        Unknown fields raise KeyError so typos surface immediately
+        (we'd rather a stack trace than silently dropped writes).
         """
         allowed = {
             "bambu_user_id", "account_email", "access_token", "refresh_token",
-            "serial", "printer_name", "cloud_host",
-            "elevenlabs_key", "elevenlabs_agent",
+            "serial", "printer_name", "serials", "printer_names",
+            "cloud_host", "elevenlabs_key", "elevenlabs_agent",
         }
         unknown = set(fields) - allowed
         if unknown:
             raise KeyError(f"unknown duck fields: {sorted(unknown)}")
         # Drop None values so partial updates don't NULL out other columns.
         fields = {k: v for k, v in fields.items() if v is not None}
+
+        # Auto-derive legacy singular fields from the array if the
+        # caller passed serials/printer_names. Means callers can
+        # always write the multi-printer shape and forget about the
+        # legacy columns; old code that reads `serial` keeps working.
+        if isinstance(fields.get("serials"), list):
+            if fields["serials"] and "serial" not in fields:
+                fields["serial"] = fields["serials"][0]
+            fields["serials"] = json.dumps(fields["serials"])
+        if isinstance(fields.get("printer_names"), list):
+            if fields["printer_names"] and "printer_name" not in fields:
+                fields["printer_name"] = fields["printer_names"][0]
+            fields["printer_names"] = json.dumps(fields["printer_names"])
 
         now = int(time.time())
         with self._wlock:
