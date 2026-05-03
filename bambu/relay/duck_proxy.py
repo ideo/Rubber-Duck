@@ -491,6 +491,17 @@ def register_bambu_login_handler(fn):
     _bambu_login_handler = fn
 
 
+# Legacy-adoption hook. main.py calls register_legacy_claim_handler at
+# startup with its claim_legacy_if_applicable function. We can't import
+# main.py here without a cycle.
+_legacy_claim_fn = None
+
+
+def register_legacy_claim_handler(fn) -> None:
+    global _legacy_claim_fn
+    _legacy_claim_fn = fn
+
+
 def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
     """Pull duck_id from the WS handshake. Order of precedence:
        1. `X-Duck-Id` header — the canonical multi-tenant signal
@@ -501,10 +512,17 @@ def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
 
     Returns None only if the DB is empty AND no id was in the request,
     in which case the caller should reject the connection.
+
+    Side effect: runs the legacy-claim adoption flow if the chip
+    announces a real MAC and the DB has only "legacy" — that row
+    gets renamed to the chip's MAC so subsequent lookups land.
     """
     duck_id = duck.headers.get("x-duck-id") or duck.query_params.get("duck_id")
     if duck_id:
-        return duck_id.lower().strip()
+        normalized = duck_id.lower().strip()
+        if _legacy_claim_fn is not None:
+            normalized = _legacy_claim_fn(normalized)
+        return normalized
     return db.get().default_duck_id()  # COMPAT
 
 
@@ -537,6 +555,29 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 logger.warning("notify rx non-JSON: %s", text[:100])
                 continue
             mtype = payload.get("type")
+            if mtype == "set_eleven_creds":
+                # Persist the user's ElevenLabs key + agent on this duck's
+                # row. Captive portal sends this once during onboarding;
+                # they get used the next time /ws/duck opens. Handler is
+                # synchronous + cheap (one DB upsert) so we don't bother
+                # with an explicit ack — chip is fire-and-forget.
+                target = payload.get("duck_id") or duck_id
+                key = payload.get("elevenlabs_key")
+                agent = payload.get("elevenlabs_agent")
+                if not target or not key or not agent:
+                    logger.warning("set_eleven_creds missing fields, ignoring")
+                    continue
+                try:
+                    db.get().upsert_duck(
+                        target,
+                        elevenlabs_key=key,
+                        elevenlabs_agent=agent,
+                    )
+                    logger.info("set_eleven_creds stored for duck=%s "
+                                "(agent=%s)", target, agent)
+                except Exception as e:
+                    logger.warning("set_eleven_creds upsert failed: %s", e)
+                continue
             if mtype == "bambu_login" and _bambu_login_handler is not None:
                 # Stamp duck_id from the WS handshake into the payload so
                 # the handler stores tokens on the right row. Chip-sent

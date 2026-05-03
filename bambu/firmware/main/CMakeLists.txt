@@ -7,6 +7,7 @@ idf_component_register(
         "audio.c"
         "servo.c"
         "wake.c"
+        "duck_id.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

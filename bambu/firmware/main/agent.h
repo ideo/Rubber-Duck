@@ -56,3 +56,12 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
                                             const char *code,
                                             const char *user_id,
                                             int timeout_ms);
+
+// Send {"type":"set_eleven_creds","duck_id","elevenlabs_key","elevenlabs_agent"}
+// over /ws/notify so the relay stores ElevenLabs config on this duck's
+// row. Fire-and-forget — relay logs success/failure but the chip
+// doesn't wait for an ack (these creds are useful but not blocking
+// for the captive portal's "you're set" page). Returns true if the
+// frame was queued for send, false if the WS isn't up. Empty key OR
+// empty agent = skip (user opted into the relay's default config).
+bool eleven_creds_send_via_ws(const char *key, const char *agent);

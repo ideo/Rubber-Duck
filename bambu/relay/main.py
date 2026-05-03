@@ -35,6 +35,7 @@ from duck_proxy import (
     router as duck_router,
     register_bambu_listener,
     register_bambu_login_handler,
+    register_legacy_claim_handler,
 )
 
 load_dotenv()
@@ -163,6 +164,46 @@ def _auth(secret: str | None) -> None:
     expected = os.environ.get("RELAY_SHARED_SECRET")
     if expected and secret != expected:
         raise HTTPException(401, "bad shared secret")
+
+
+import re
+_MAC_HEX_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+def claim_legacy_if_applicable(announced_id: str) -> str:
+    """First-real-MAC adoption flow.
+
+    The tokens.json → DB migration creates a row keyed "legacy" because we
+    don't know the chip's MAC at migration time. The first real chip to
+    announce itself (via X-Duck-Id on a WS handshake) should TAKE OVER
+    that row rather than create a duplicate orphan — same Bambu account,
+    same printer binding, same MQTT client thread.
+
+    Conditions for a takeover:
+      1. The announced id looks like a chip MAC (12 lowercase hex chars).
+      2. The DB has exactly one duck and it's the "legacy" placeholder.
+      3. The announced id isn't itself "legacy" (sanity).
+
+    Returns the id the caller should treat the connection as. Almost
+    always either `announced_id` (if takeover happened or wasn't needed)
+    or the same string verbatim (if conditions weren't met — caller
+    proceeds normally, possibly hitting a 404 if the duck isn't in the
+    DB yet, which is the right answer).
+    """
+    if announced_id == "legacy" or not _MAC_HEX_RE.match(announced_id):
+        return announced_id
+    rows = db.get().list_ducks()
+    if len(rows) != 1 or rows[0]["duck_id"] != "legacy":
+        return announced_id
+    if not db.get().rename_duck("legacy", announced_id):
+        return announced_id
+    # Move the in-memory state under the new id so subsequent lookups hit.
+    s = states.pop("legacy", None)
+    if s is not None:
+        states[announced_id] = s
+    logger.info("adopted legacy duck → %s (chip's real MAC, BambuState carried over)",
+                announced_id)
+    return announced_id
 
 
 def _resolve_duck_id(duck_id: str | None) -> str:
@@ -306,6 +347,9 @@ async def _do_bambu_login(payload: dict) -> dict:
     code = payload.get("code") or None
     user_id_override = payload.get("user_id") or os.environ.get("BAMBU_USER_ID")
     duck_id = payload.get("duck_id") or _resolve_duck_id(None)  # COMPAT
+    # Same legacy-adoption pass as the WS handshake — chip-supplied real
+    # MAC takes over the "legacy" placeholder row.
+    duck_id = claim_legacy_if_applicable(duck_id)
     if not email or not password:
         raise HTTPException(400, "email and password required")
 
@@ -387,6 +431,10 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
 # Wire the duck_proxy /ws/notify handler so chip-originated bambu_login
 # messages dispatch to the same logic as the HTTP endpoint.
 register_bambu_login_handler(_do_bambu_login)
+
+# Wire the legacy-MAC adoption flow so the first real-MAC chip handshake
+# claims the migrated "legacy" row (rather than orphaning it).
+register_legacy_claim_handler(claim_legacy_if_applicable)
 
 
 @app.get("/admin/bambu_status/{duck_id}")

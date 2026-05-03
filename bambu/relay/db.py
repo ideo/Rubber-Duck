@@ -183,6 +183,32 @@ class Database:
             )
         return cur.rowcount > 0
 
+    def rename_duck(self, old_id: str, new_id: str) -> bool:
+        """Change the primary key of an existing row. Used by the
+        legacy-adoption flow: tokens.json migration creates a row keyed
+        "legacy" because we don't know the chip's MAC at migration time;
+        the first chip to announce itself with a real MAC takes over
+        that row instead of creating a duplicate orphan.
+
+        Returns True if the rename happened, False if the source row
+        didn't exist or the destination id was already taken (in which
+        case caller should fall back to "treat as a separate duck")."""
+        with self._wlock:
+            # Don't clobber an existing destination — that'd be data loss.
+            cur = self._conn.execute(
+                "SELECT 1 FROM ducks WHERE duck_id = ?", (new_id,)
+            )
+            if cur.fetchone() is not None:
+                return False
+            cur = self._conn.execute(
+                "UPDATE ducks SET duck_id = ? WHERE duck_id = ?",
+                (new_id, old_id),
+            )
+        renamed = cur.rowcount > 0
+        if renamed:
+            logger.info("renamed duck_id %s → %s", old_id, new_id)
+        return renamed
+
     # ---- migration -------------------------------------------------------
 
     def migrate_from_tokens_json(

@@ -87,6 +87,20 @@ static volatile wiz_state_t s_state = WIZ_COLLECT_WIFI;
 static char s_bambu_email[65] = {0};
 static char s_bambu_password[97] = {0};
 static char s_bambu_user_id[40] = {0};
+// ElevenLabs creds collected by the captive portal, forwarded to the
+// relay over the same /ws/notify channel as bambu_login. Chip stores
+// them in RAM only (relay holds the source-of-truth in its DB row);
+// blank means the user wants to use the relay's default/env config.
+static char s_eleven_key[80] = {0};
+static char s_eleven_agent[40] = {0};
+// Relay URL override collected from the captive portal. NOT YET USED at
+// runtime — the WS clients in agent.c still build their URLs from the
+// compile-time RELAY_BASE_URL #define. Plumbing this through requires
+// either runtime-string URL builders or NVS-backed override that the
+// boot path consults; tracked in the multi-tenant req doc, deferred to
+// the Fly.io migration PR. We collect+log it now so the captive portal
+// UX is final-shape and we can validate the full form flow.
+static char s_relay_url[96] = {0};
 static SemaphoreHandle_t s_creds_mutex = NULL;
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
@@ -272,6 +286,23 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=bpw>Password</label>"
         "<input type=password id=bpw name=bpw required autocomplete=off"
         " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+        "<h2>ElevenLabs</h2>"
+        "<p class=sub>Your ElevenLabs API key + agent ID. The relay uses these "
+        "to give the duck a voice. (Skip if you're using a relay we host — "
+        "leave both blank and we'll use ours.)</p>"
+        "<label for=ekey>API key</label>"
+        "<input type=password id=ekey name=ekey autocomplete=off "
+        " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+        "<label for=eagent>Agent ID</label>"
+        "<input type=text id=eagent name=eagent autocomplete=off "
+        " autocorrect=off autocapitalize=off spellcheck=false>"
+        "<details><summary class=sub>Advanced — relay URL</summary>"
+        "<p class=sub>If you're running your own relay, paste its WebSocket "
+        "URL here (e.g. wss://duck.fly.dev). Leave blank to use the default.</p>"
+        "<label for=rurl>Relay URL</label>"
+        "<input type=url id=rurl name=rurl placeholder=\"wss://...\" "
+        " autocomplete=off autocorrect=off autocapitalize=off spellcheck=false>"
+        "</details>"
         "<button type=submit>Set up</button>"
         "</form>";
     httpd_resp_send_chunk(req, tail, sizeof(tail) - 1);
@@ -397,6 +428,18 @@ static esp_err_t save_handler(httpd_req_t *req) {
     if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
     form_get(body, "bemail", s_bambu_email, sizeof(s_bambu_email));
     form_get(body, "bpw", s_bambu_password, sizeof(s_bambu_password));
+    // ElevenLabs creds — optional. Forwarded to the relay as a separate
+    // ws message (set_eleven_creds) after the bambu_login round-trip.
+    form_get(body, "ekey", s_eleven_key, sizeof(s_eleven_key));
+    form_get(body, "eagent", s_eleven_agent, sizeof(s_eleven_agent));
+    // Relay URL override — collected for forward-compat, currently
+    // unused at runtime (see static decl comment above).
+    form_get(body, "rurl", s_relay_url, sizeof(s_relay_url));
+    if (s_relay_url[0]) {
+        ESP_LOGI(TAG, "captive portal collected relay URL override: %s "
+                      "(NOT YET ACTIVE — requires runtime URL plumbing)",
+                 s_relay_url);
+    }
     // user_id is auto-resolved via /preference on the relay side now —
     // /preference proved reliable across testing. If Bambu ever breaks
     // /preference we fall back to relay-side env BAMBU_USER_ID, OR add
@@ -527,7 +570,23 @@ static void provision_worker_task(void *arg) {
         return;
     }
 
-    // 5. Send the login. NEED_2FA is the typical first response.
+    // 5. If the user filled in ElevenLabs creds, send them now (before
+    //    bambu_login since this side-channel is fast and order-independent
+    //    on the relay — both write to the same DB row, last writer wins).
+    char eleven_key_local[80] = {0}, eleven_agent_local[40] = {0};
+    if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+    strlcpy(eleven_key_local,   s_eleven_key,   sizeof(eleven_key_local));
+    strlcpy(eleven_agent_local, s_eleven_agent, sizeof(eleven_agent_local));
+    if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+    if (eleven_key_local[0] && eleven_agent_local[0]) {
+        eleven_creds_send_via_ws(eleven_key_local, eleven_agent_local);
+        // Forget the key on chip — relay holds it now.
+        if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+        memset(s_eleven_key, 0, sizeof(s_eleven_key));
+        if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+    }
+
+    // 6. Send the login. NEED_2FA is the typical first response.
     s_state = WIZ_LOGGING_IN;
     bambu_login_ws_result_t r = bambu_login_via_ws(
         email, password, "", user_id, 30000);

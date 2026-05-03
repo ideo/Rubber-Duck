@@ -12,6 +12,7 @@
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
+#include "duck_id.h"
 #include "servo.h"
 
 #include <stdio.h>
@@ -253,11 +254,21 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
         snprintf(url, sizeof(url), "%s", RELAY_DUCK_URL);
     }
 
+    // Identify ourselves to the relay so it routes our session to our
+    // duck row (multi-tenant — see bambu/docs/MULTI-TENANT-REQ.md). The
+    // relay's compat shim still resolves to a default duck if the
+    // header is absent, but we always send it so the relay logs which
+    // duck is talking even on shared deployments.
+    char ws_headers[64];
+    snprintf(ws_headers, sizeof(ws_headers),
+             "X-Duck-Id: %s\r\n", duck_id_get());
+
     esp_websocket_client_config_t cfg = {
         .uri = url,  // ws:// via ngrok TCP tunnel — no TLS on chip
         .buffer_size = 16384,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
+        .headers = ws_headers,
     };
     s_ws = esp_websocket_client_init(&cfg);
     if (!s_ws) {
@@ -471,11 +482,22 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
 }
 
 static void notify_task(void *arg) {
+    // Same X-Duck-Id header as /ws/duck. Long-lived connection, so we
+    // can stash the formatted header string at file scope — doesn't
+    // matter for correctness but means a future reconnect doesn't have
+    // to recompute it. Using a stack-local mirrored from agent_run_session
+    // pattern for parallelism (and because the task lifetime makes the
+    // stack-local valid for the entire connection lifetime).
+    static char ws_headers[64];
+    snprintf(ws_headers, sizeof(ws_headers),
+             "X-Duck-Id: %s\r\n", duck_id_get());
+
     esp_websocket_client_config_t cfg = {
         .uri = RELAY_NOTIFY_URL,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
         .buffer_size = 2048,
+        .headers = ws_headers,
     };
     s_notify_ws = esp_websocket_client_init(&cfg);
     if (!s_notify_ws) {
@@ -550,10 +572,12 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
     char body[512];
     int n = snprintf(body, sizeof(body),
         "{\"type\":\"bambu_login\","
+         "\"duck_id\":\"%s\","
          "\"email\":\"%s\","
          "\"password\":\"%s\","
          "\"code\":\"%s\","
          "\"user_id\":\"%s\"}",
+        duck_id_get(),
         email, password,
         code ? code : "",
         user_id ? user_id : "");
@@ -579,4 +603,34 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
         return BAMBU_LOGIN_WS_TIMEOUT;
     }
     return s_login_last_result;
+}
+
+bool eleven_creds_send_via_ws(const char *key, const char *agent) {
+    // No-op if user left fields blank — they want the relay's default
+    // (which is what shared-relay tenants do; the relay's own env vars
+    // hold the project-default key + a shared agent).
+    if (!key || !*key || !agent || !*agent) return false;
+    if (!s_notify_ws || !s_notify_ws_connected) {
+        ESP_LOGW(TAG, "eleven_creds_send_via_ws: notify WS not connected");
+        return false;
+    }
+    char body[300];
+    int n = snprintf(body, sizeof(body),
+        "{\"type\":\"set_eleven_creds\","
+         "\"duck_id\":\"%s\","
+         "\"elevenlabs_key\":\"%s\","
+         "\"elevenlabs_agent\":\"%s\"}",
+        duck_id_get(), key, agent);
+    if (n <= 0 || n >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "eleven_creds body too large: %d", n);
+        return false;
+    }
+    int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
+                                              pdMS_TO_TICKS(5000));
+    if (sent < n) {
+        ESP_LOGE(TAG, "eleven_creds send failed (sent=%d of %d)", sent, n);
+        return false;
+    }
+    ESP_LOGI(TAG, "set_eleven_creds sent (%d bytes)", n);
+    return true;
 }
