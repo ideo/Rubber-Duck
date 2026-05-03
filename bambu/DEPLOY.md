@@ -218,3 +218,52 @@ portal is the only configuration surface.
 - `fly secrets set RELAY_SHARED_SECRET="$NEW" --app "$APP_NAME"` then
   re-deploy. User has to update the ElevenLabs agent's tool auth header
   to match. Don't do this lightly.
+
+---
+
+## Optional Phase 4 — Litestream backups
+
+The relay image already includes Litestream. Deploys without an S3
+bucket configured run uvicorn directly, no replication; deploys with
+one configured stream the SQLite WAL to S3-compatible storage in real
+time and restore from latest snapshot if the local DB ever disappears.
+
+For a project at our scale (4 ducks), the Fly volume's nightly
+snapshots are usually enough. Enable Litestream when the deployment
+matters enough that "everyone re-onboards" isn't an acceptable
+recovery story.
+
+Recommended target: **Backblaze B2** — S3-compatible, cheaper than
+AWS S3 by an order of magnitude, plenty for a SQLite DB measuring
+in single-digit MB.
+
+ASK USER whether they want to enable backups. If yes:
+
+```bash
+# User creates a bucket in their B2 account named e.g. "duck-relay-backups",
+# generates an application key with write access scoped to that bucket.
+
+fly secrets set \
+    LITESTREAM_BUCKET="<bucket-name>" \
+    LITESTREAM_ENDPOINT="https://s3.us-east-005.backblazeb2.com" \
+    LITESTREAM_ACCESS_KEY_ID="<their-key-id>" \
+    LITESTREAM_SECRET_ACCESS_KEY="<their-application-key>" \
+    --app "$APP_NAME"
+```
+
+Verify replication started:
+
+```bash
+fly logs --app "$APP_NAME" | grep -i litestream
+```
+
+Should see `Litestream enabled — bucket=<name>` early, then
+`replicating to: ...` lines on subsequent activity.
+
+Restore is automatic on container start if the local DB is empty and
+a replica exists. Manual restore (e.g., spinning up a fresh dev
+machine from production data):
+
+```bash
+litestream restore -config litestream.yml /local/path/ducks.db
+```
