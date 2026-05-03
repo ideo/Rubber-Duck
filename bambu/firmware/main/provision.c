@@ -350,7 +350,8 @@ static void render_2fa_form(httpd_req_t *req, bool retry) {
     if (retry) {
         httpd_resp_send_chunk(req,
             "<div class=err>That code didn't work. Use the latest one from "
-            "your email.</div>", -1);
+            "your email — or if your Bambu email/password was wrong, start "
+            "over below.</div>", -1);
     }
     httpd_resp_send_chunk(req,
         "<p class=sub>Bambu emailed you a 6-digit code. Type it here:</p>"
@@ -359,6 +360,42 @@ static void render_2fa_form(httpd_req_t *req, bool retry) {
         "name=c maxlength=6 autocomplete='one-time-code' required "
         "autocorrect=off autocapitalize=off spellcheck=false>"
         "<button type=submit>Submit</button>"
+        "</form>"
+        "<form method=POST action=/restart style='margin-top:1.5em'>"
+        // POST /restart with `keep_wifi=1` so a 2FA-stuck user doesn't
+        // also lose their WiFi creds — most likely cause is wrong Bambu
+        // password, not WiFi. They can opt-in via the WIFI_FAILED page
+        // when WiFi is the actual problem.
+        "<input type=hidden name=keep_wifi value=1>"
+        "<button type=submit style='background:#eee;font-weight:400'>"
+        "Start over</button>"
+        "</form>", -1);
+    httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
+    httpd_resp_send_chunk(req, NULL, 0);
+}
+
+// Renders the "WiFi didn't connect" page with a POST-based restart
+// button. POST (not GET <a href>) so a browser pre-fetch / mistaken
+// reload doesn't accidentally wipe creds — the user has to actively
+// click the button to commit. Also offers a "forget WiFi too"
+// checkbox: by default we KEEP the WiFi NVS (typo in Bambu password
+// shouldn't blow away WiFi), but a wrong-password WiFi failure needs
+// the wipe.
+static void render_wifi_failed(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
+    httpd_resp_send_chunk(req,
+        "<h1>WiFi didn't connect</h1>"
+        "<p class=sub>The password might be wrong, or that network's out "
+        "of range. Try again — by default I'll forget the WiFi password "
+        "so you can re-enter it.</p>"
+        "<form method=POST action=/restart>"
+        "<label style='display:flex;align-items:center;gap:.5em;"
+        "font-weight:400'>"
+        "<input type=checkbox name=keep_wifi value=1> "
+        "Keep saved WiFi (uncheck to forget — usually the right call)"
+        "</label>"
+        "<button type=submit>Try again</button>"
         "</form>", -1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
     httpd_resp_send_chunk(req, NULL, 0);
@@ -377,9 +414,7 @@ static esp_err_t root_handler(httpd_req_t *req) {
                 "I'll be back online in a few seconds. This page will refresh.", true);
             return ESP_OK;
         case WIZ_WIFI_FAILED:
-            render_status(req, "WiFi didn't connect",
-                "The password might be wrong, or that network's out of range. "
-                "<br><br><a href='/restart'>Start over</a>.", false);
+            render_wifi_failed(req);
             return ESP_OK;
         case WIZ_LOGGING_IN:
             render_status(req, "Signing in to Bambu…",
@@ -471,6 +506,65 @@ static esp_err_t save_handler(httpd_req_t *req) {
     xTaskCreate(provision_worker_task, "prov_worker", 6144, NULL, 4, NULL);
 
     // 303 → GET / so the browser doesn't resubmit on refresh.
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+// /restart — bad-creds escape hatch. Wipes in-mem cred buffers and
+// (optionally) WiFi NVS, sets the wizard back to COLLECT_WIFI so the
+// next render is the form. Always POST so a browser pre-fetch can't
+// trigger a wipe.
+//
+// Body fields:
+//   keep_wifi=1   — preserve the stored WiFi SSID/password. Default
+//                   path from the LOGIN_BAD_CREDS page where the user
+//                   has typed Bambu creds wrong but their WiFi is fine.
+//   (absent)      — forget WiFi too. Default path from WIFI_FAILED.
+//
+// Bambu creds (email/password/2FA) are always wiped because if the
+// user is restarting they're going to retype them anyway. Same logic
+// for the ElevenLabs creds — re-collected by the form on resubmit.
+static esp_err_t restart_handler(httpd_req_t *req) {
+    char body[64] = {0};
+    int len = req->content_len < (int)sizeof(body) - 1
+                ? req->content_len : (int)sizeof(body) - 1;
+    if (len > 0) {
+        int got = httpd_req_recv(req, body, len);
+        if (got > 0) body[got] = '\0';
+    }
+    char keep_wifi[4] = {0};
+    bool keep = form_get(body, "keep_wifi", keep_wifi, sizeof(keep_wifi))
+                && keep_wifi[0] == '1';
+
+    // Wipe in-memory credential buffers under the same lock that
+    // protects the worker tasks. If a worker is mid-flight, the wipe
+    // happens between its snapshot and its next read — fine, the
+    // worker either already has its local copy or will see the empty
+    // buffers and bail.
+    if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+    memset(s_bambu_email,    0, sizeof(s_bambu_email));
+    memset(s_bambu_password, 0, sizeof(s_bambu_password));
+    memset(s_bambu_user_id,  0, sizeof(s_bambu_user_id));
+    memset(s_eleven_key,     0, sizeof(s_eleven_key));
+    memset(s_eleven_agent,   0, sizeof(s_eleven_agent));
+    memset(s_relay_url,      0, sizeof(s_relay_url));
+    if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+
+    if (!keep) {
+        // Forget WiFi too. NVS-only — the live STA association is
+        // already gone (we got here via WIFI_FAILED) or will drop
+        // when the next save triggers a reconnect. Don't bother
+        // explicitly disconnecting.
+        wifi_clear_creds();
+        ESP_LOGI(TAG, "/restart: wiped Bambu+Eleven creds AND WiFi NVS");
+    } else {
+        ESP_LOGI(TAG, "/restart: wiped Bambu+Eleven creds, kept WiFi NVS");
+    }
+
+    s_state = WIZ_COLLECT_WIFI;
+
     httpd_resp_set_status(req, "303 See Other");
     httpd_resp_set_hdr(req, "Location", "/");
     httpd_resp_send(req, NULL, 0);
@@ -713,9 +807,11 @@ esp_err_t wifi_provision_run(void) {
     httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = root_handler };
     httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = save_handler };
     httpd_uri_t code = { .uri = "/code", .method = HTTP_POST, .handler = code_handler };
+    httpd_uri_t rstr = { .uri = "/restart", .method = HTTP_POST, .handler = restart_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &save);
     httpd_register_uri_handler(server, &code);
+    httpd_register_uri_handler(server, &rstr);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect);
     xTaskCreate(dns_hijack_task, "dns_hijack", 4096, NULL, 5, NULL);
 
