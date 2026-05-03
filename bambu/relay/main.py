@@ -115,11 +115,15 @@ async def lifespan(_app: FastAPI):
     #    delay so a future hot-onboarding doesn't slam Bambu's auth
     #    endpoint when N ducks come up at once. (See #31 risks.)
     rows = database.list_ducks()
-    if not rows and os.environ.get("MOCK") != "1":
-        # Empty DB and not in mock mode = LAN-ish dev install with no
-        # tokens. Spin up one "legacy" state so /health and the wizard
-        # path keep working until a duck actually onboards.
-        logger.info("no ducks in DB — starting in LAN/env mode under id=%s",
+    has_lan_env = bool(os.environ.get("BAMBU_HOST"))
+    if not rows and (has_lan_env or os.environ.get("MOCK") == "1"):
+        # Empty DB but operator gave us LAN-mode env (or MOCK). Spin up
+        # one "legacy" placeholder state so local dev can run before
+        # any real duck has onboarded. On a fresh Fly deploy with
+        # neither BAMBU_HOST nor MOCK set, we skip this and the relay
+        # simply has zero ducks until one onboards via captive portal.
+        logger.info("no ducks in DB but LAN/MOCK env present — "
+                    "starting placeholder state under id=%s",
                     LEGACY_DUCK_ID)
         s = _state_from_row({})
         states[LEGACY_DUCK_ID] = s
@@ -129,6 +133,13 @@ async def lifespan(_app: FastAPI):
         else:
             s.start()
         register_bambu_listener(LEGACY_DUCK_ID, s)
+    elif not rows:
+        # Truly empty — fresh deploy, no operator-provided LAN config,
+        # and tokens.json migration didn't happen (no file). Nothing
+        # to start. /health will report 0 ducks; first chip to
+        # bambu_login will create a row and spin up its state on the
+        # fly via _do_bambu_login.
+        logger.info("no ducks registered — relay idle, awaiting first onboard")
     else:
         for row in rows:
             duck_id = row["duck_id"]
