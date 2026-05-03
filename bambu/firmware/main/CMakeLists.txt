@@ -16,6 +16,7 @@ idf_component_register(
         esp_websocket_client
         esp_http_server
         mbedtls
+        json
         driver
         esp_driver_i2s
 )

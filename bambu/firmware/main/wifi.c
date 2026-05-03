@@ -81,6 +81,93 @@ esp_err_t wifi_clear_creds(void) {
     return err;
 }
 
+// ---- Bambu cloud creds ----
+
+bool bambu_has_creds(void) {
+    nvs_handle_t h;
+    if (nvs_open("duck", NVS_READONLY, &h) != ESP_OK) return false;
+    // Pass NULL out_value to query just the value size — returns ESP_OK
+    // if the key exists. sz > 1 means the value is non-empty (sz counts
+    // the trailing nul).
+    size_t sz = 0;
+    bool ok = (nvs_get_str(h, "bambu_email", NULL, &sz) == ESP_OK) && sz > 1;
+    nvs_close(h);
+    return ok;
+}
+
+esp_err_t bambu_load_creds(char *email_out, size_t email_cap,
+                           char *pw_out, size_t pw_cap,
+                           char *user_id_out, size_t user_id_cap) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+
+    size_t s = email_cap;
+    err = nvs_get_str(h, "bambu_email", email_out, &s);
+    if (err != ESP_OK) { nvs_close(h); return err; }
+
+    // Password may be absent post-successful-login (we clear it once the
+    // relay holds the access_token). Empty string is fine.
+    s = pw_cap;
+    if (nvs_get_str(h, "bambu_pw", pw_out, &s) != ESP_OK) {
+        if (pw_cap > 0) pw_out[0] = '\0';
+    }
+
+    // user_id is optional — /preference auto-resolves it.
+    s = user_id_cap;
+    if (nvs_get_str(h, "bambu_uid", user_id_out, &s) != ESP_OK) {
+        if (user_id_cap > 0) user_id_out[0] = '\0';
+    }
+
+    nvs_close(h);
+    return ESP_OK;
+}
+
+esp_err_t bambu_save_creds(const char *email, const char *password,
+                           const char *user_id) {
+    if (email == NULL || email[0] == '\0') return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, "bambu_email", email);
+    if (err == ESP_OK) err = nvs_set_str(h, "bambu_pw", password ? password : "");
+    if (err == ESP_OK) err = nvs_set_str(h, "bambu_uid", user_id ? user_id : "");
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "bambu creds saved (email=%s, user_id=%s%s)",
+                 email, user_id && user_id[0] ? user_id : "(empty/auto)",
+                 password && password[0] ? "" : ", no password");
+    }
+    return err;
+}
+
+esp_err_t bambu_clear_password(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_set_str(h, "bambu_pw", "");  // intentionally not erase_key — keep slot
+    err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) ESP_LOGI(TAG, "bambu password cleared (relay has token now)");
+    return err;
+}
+
+esp_err_t bambu_clear_creds(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_erase_key(h, "bambu_email");
+    nvs_erase_key(h, "bambu_pw");
+    nvs_erase_key(h, "bambu_uid");
+    err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) ESP_LOGI(TAG, "bambu creds erased");
+    return err;
+}
+
+// ---- WiFi connect ----
+
 esp_err_t wifi_connect_blocking(int timeout_ms) {
     char ssid[33] = {0};
     char pass[65] = {0};

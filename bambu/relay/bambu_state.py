@@ -28,6 +28,23 @@ if not logger.handlers:
     logger.propagate = False
 
 
+def _hms_severity(attr: int) -> int:
+    """Decode the severity nibble from a Bambu HMS uint32 `attr`. Format
+    (per community reverse-engineering of Bambu's MQTT protocol):
+        bits 31-16  module + severity (severity = lower nibble of upper16)
+        bits 15-0   error code within that module
+    Severity values:
+        0 — NONE / INFO  (status notice, e.g. "AMS opened" or stale info)
+        1 — FATAL
+        2 — SERIOUS
+        3 — COMMON       (warning)
+    Filtering level-0 out keeps the agent from reporting "the printer is
+    flagging errors" when it's actually just background noise that the
+    printer screen never shows the user. Real user-visible issues are
+    level 1 and up."""
+    return (attr >> 16) & 0xF
+
+
 class BambuState:
     """Subscribes to a Bambu MQTT broker and accumulates `print` push_status
     deltas into a single state snapshot.
@@ -242,7 +259,13 @@ class BambuState:
             # Skip the field entirely if the push didn't include hms — Bambu
             # delta-pushes mean a missing key just means "no change".
             if "hms" in push:
-                new_hms = {h.get("attr") for h in (push.get("hms") or []) if h.get("attr")}
+                # Only track / fire on severity >= 1 (FATAL / SERIOUS / COMMON
+                # warning). Level-0 codes are background informational chatter
+                # that doesn't surface on the printer's own UI — firing on them
+                # made the agent perpetually report "the printer's flagging
+                # errors" when nothing was actually wrong. See _hms_severity.
+                new_hms = {h.get("attr") for h in (push.get("hms") or [])
+                           if h.get("attr") and _hms_severity(h.get("attr", 0)) >= 1}
                 if self._last_hms is None:
                     # First snapshot — seed without firing
                     self._last_hms = new_hms
@@ -269,7 +292,10 @@ class BambuState:
                 "bed_target_c": s.get("bed_target_temper"),
                 "bed_c": s.get("bed_temper"),
                 "chamber_c": s.get("chamber_temper"),
-                "hms_codes": [h.get("attr") for h in (s.get("hms") or [])],
+                # Surface only severity >= 1 (real warnings/errors). Level-0
+                # codes are informational chatter — see _hms_severity.
+                "hms_codes": [h.get("attr") for h in (s.get("hms") or [])
+                              if h.get("attr") and _hms_severity(h.get("attr", 0)) >= 1],
             }
 
     def temperatures(self) -> dict:

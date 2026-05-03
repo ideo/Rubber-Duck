@@ -13,7 +13,11 @@ from fastapi import FastAPI, Header, HTTPException
 
 import bambu_cloud
 from bambu_state import BambuState
-from duck_proxy import router as duck_router, register_bambu_listener
+from duck_proxy import (
+    router as duck_router,
+    register_bambu_listener,
+    register_bambu_login_handler,
+)
 
 load_dotenv()
 
@@ -166,40 +170,21 @@ def raw_state():
     return state._state if state else {}
 
 
-@app.post("/admin/bambu_login")
-async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Header(default=None)):
-    """Log the relay into a Bambu cloud account.
-
-    Body: {"email": str, "password": str, "code": str|""}
-    On success: stops the LAN/previous MQTT client, opens a new one against
-    Bambu's cloud broker (us.mqtt.bambulab.com:8883) authenticated as
-    u_<userId> / <accessToken>, persists the token to tokens.json, and
-    returns the chosen printer's serial.
-
-    On 2FA-required: returns HTTP 401 with code "2fa_required" so the duck
-    or duck.local recovery page can re-prompt for the code.
-
-    Single-tenant for now: the relay holds ONE token at a time. Multi-tenant
-    rework lives behind #31 — body will gain duck_id, tokens.json becomes a
-    dict, MQTT clients become a per-account pool."""
+async def _do_bambu_login(payload: dict) -> dict:
+    """Core login logic — used by both the HTTP endpoint and the chip-
+    initiated WS message handler. Raises HTTPException on failure so
+    both callers get consistent error shapes."""
     global _login_lock
     if _login_lock is None:
         _login_lock = asyncio.Lock()
 
-    _auth(x_relay_secret)
     email = payload.get("email")
     password = payload.get("password")
     code = payload.get("code") or None
-    # user_id auto-derived from /preference now (see bambu_cloud.fetch_uid).
-    # Override remains as a fallback if /preference fails; body wins, env
-    # BAMBU_USER_ID as fallback.
     user_id_override = payload.get("user_id") or os.environ.get("BAMBU_USER_ID")
     if not email or not password:
         raise HTTPException(400, "email and password required")
 
-    # Serialize concurrent login attempts. Bambu has been known to crack
-    # down on bot-shaped traffic; serializing keeps us from accidentally
-    # firing two POSTs in quick succession.
     async with _login_lock:
         try:
             result = await bambu_cloud.login(email, password, code, user_id_override)
@@ -208,19 +193,13 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
         except bambu_cloud.LoginError as e:
             raise HTTPException(401, detail={"code": "login_failed", "message": str(e)})
 
-    # Pick which printer on the account to subscribe to. Strategy:
-    #   1. If BAMBU_SERIAL env var is set AND that serial appears in the
-    #      account's device list, use it (lets the operator pin a specific
-    #      printer when an account has multiple).
-    #   2. Otherwise prefer the first online printer.
-    #   3. Otherwise fall back to the first printer in the list.
     try:
         devices = await bambu_cloud.list_devices(result["access_token"])
     except bambu_cloud.LoginError as e:
         raise HTTPException(502, detail={"code": "list_devices_failed", "message": str(e)})
-
     if not devices:
-        raise HTTPException(404, detail={"code": "no_printers", "message": "Bambu account has no bound printers"})
+        raise HTTPException(404, detail={"code": "no_printers",
+                                         "message": "Bambu account has no bound printers"})
 
     pinned = os.environ.get("BAMBU_SERIAL")
     chosen = None
@@ -231,20 +210,15 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
     serial = chosen["dev_id"]
     printer_name = chosen.get("name", "")
 
-    # Persist for restart resilience BEFORE swapping MQTT — if the swap
-    # fails the user can still inspect tokens.json, and a restart will
-    # come up in cloud mode with the saved creds.
     _save_tokens({
         "access_token": result["access_token"],
         "refresh_token": result["refresh_token"],
         "user_id": result["user_id"],
         "serial": serial,
         "printer_name": printer_name,
-        "account_email": email,  # for display / debugging only
+        "account_email": email,
     })
 
-    # Swap the live MQTT client to cloud. Listeners (fire_notification) and
-    # active /ws/duck sessions survive — only the broker connection changes.
     state.reconfigure(
         host=DEFAULT_CLOUD_HOST,
         username=f"u_{result['user_id']}",
@@ -255,12 +229,26 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
     )
 
     return {
-        "ok": True,
         "user_id": result["user_id"],
         "serial": serial,
         "printer_name": printer_name or "(unknown)",
         "online": chosen.get("online", False),
     }
+
+
+@app.post("/admin/bambu_login")
+async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Header(default=None)):
+    """HTTP entry point for cloud login. Body: {email, password, code,
+    user_id}. Same logic as the chip's WS-initiated path — this exists
+    for curl-based development + future debugging."""
+    _auth(x_relay_secret)
+    result = await _do_bambu_login(payload)
+    return {"ok": True, **result}
+
+
+# Wire the duck_proxy /ws/notify handler so chip-originated bambu_login
+# messages dispatch to the same logic as the HTTP endpoint.
+register_bambu_login_handler(_do_bambu_login)
 
 
 @app.get("/admin/bambu_status")

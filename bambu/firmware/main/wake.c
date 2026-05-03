@@ -48,10 +48,14 @@ static const char *TAG = "wake";
 // in ~half a second of quiet → next drum hit looks like a tap against
 // the now-low floor → false trigger). Asymmetric keeps the floor up when
 // the room is intermittently loud.
-#define TAP_PEAK_MIN          5000   // absolute amplitude backstop
-                                     // bumped from 3000 — real taps observed
-                                     // at 7-9k peak2; drum hits cap around
-                                     // 4-5k so this rejects most music.
+#define TAP_PEAK_MIN         10000   // absolute amplitude backstop
+                                     // History: 3000 → 5000 → 2500 → 10000.
+                                     // Real taps observed at peak2 = 18000+
+                                     // (mic-cal gain=2.4 era); ambient + speech
+                                     // floor caps under 2k. 10k is safely above
+                                     // every non-tap source without losing real
+                                     // taps. Slope check + adaptive floor still
+                                     // do the music rejection on top of this.
 #define TAP_SLOPE_MIN         1500   // peak2 - peak1 minimum (unchanged —
                                      // can't reliably distinguish drum onset
                                      // slope from tap slope on slope alone).

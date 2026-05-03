@@ -317,6 +317,13 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
 // ---------------------------------------------------------------------------
 
 static esp_websocket_client_handle_t s_notify_ws = NULL;
+static volatile bool s_notify_ws_connected = false;
+
+// Pending bambu_login response — set by notify_ws_event when the relay
+// replies, consumed by bambu_login_via_ws. One slot is enough; we
+// serialize login attempts in the wizard.
+static SemaphoreHandle_t s_login_done = NULL;
+static volatile bambu_login_ws_result_t s_login_last_result = BAMBU_LOGIN_WS_TIMEOUT;
 
 // Queue of pending notifications. Single-slot used to lose events when two
 // arrived back-to-back while a session was active (P0-2 in the agent review).
@@ -375,6 +382,19 @@ static bool extract_json_string(const char *data, size_t data_len,
 static void notify_ws_event(void *handler_args, esp_event_base_t base,
                              int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *d = event_data;
+    if (event_id == WEBSOCKET_EVENT_CONNECTED) {
+        ESP_LOGI(TAG, "notify channel connected to %s", RELAY_NOTIFY_URL);
+        s_notify_ws_connected = true;
+        return;
+    } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED ||
+               event_id == WEBSOCKET_EVENT_CLOSED) {
+        ESP_LOGI(TAG, "notify channel closed — auto-reconnecting");
+        s_notify_ws_connected = false;
+        return;
+    } else if (event_id == WEBSOCKET_EVENT_ERROR) {
+        ESP_LOGE(TAG, "notify channel error (auto-reconnect will retry)");
+        return;
+    }
     if (event_id == WEBSOCKET_EVENT_DATA) {
         ESP_LOGI(TAG, "notify ws data: op_code=%d len=%d", d->op_code, d->data_len);
         if (d->op_code == 1 || d->op_code == 0) {
@@ -384,6 +404,45 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
             memcpy(preview, d->data_ptr, n);
             preview[n] = '\0';
             ESP_LOGI(TAG, "notify text preview: %s", preview);
+
+            // Dispatch by message type. Three types today:
+            //   "notify"             — printer event (queue → trigger session)
+            //   "bambu_login_result" — captive-portal login response
+            //   anything else        — log and drop
+            char type_field[32] = {0};
+            if (extract_json_string(d->data_ptr, d->data_len, "type",
+                                     type_field, sizeof(type_field))
+                && strcmp(type_field, "bambu_login_result") == 0) {
+                // Decode the result. Relay sends:
+                //   {"type":"bambu_login_result","ok":true|false,"code":"..."}
+                // We sniff the literal substring "true" right after "ok"
+                // (avoid pulling in cJSON for one boolean).
+                const char *ok_pos = memmem(d->data_ptr, d->data_len, "\"ok\"", 4);
+                bool ok_true = false;
+                if (ok_pos) {
+                    const char *limit = (const char *)d->data_ptr + d->data_len;
+                    const char *cursor = ok_pos + 4;
+                    while (cursor < limit && (*cursor == ' ' || *cursor == ':' || *cursor == '\t')) cursor++;
+                    ok_true = (cursor + 4 <= limit) && memcmp(cursor, "true", 4) == 0;
+                }
+                if (ok_true) {
+                    s_login_last_result = BAMBU_LOGIN_WS_OK;
+                } else {
+                    char code_field[32] = {0};
+                    extract_json_string(d->data_ptr, d->data_len, "code",
+                                         code_field, sizeof(code_field));
+                    if (strcmp(code_field, "2fa_required") == 0)
+                        s_login_last_result = BAMBU_LOGIN_WS_NEED_2FA;
+                    else if (strcmp(code_field, "login_failed") == 0)
+                        s_login_last_result = BAMBU_LOGIN_WS_BAD_CREDS;
+                    else
+                        s_login_last_result = BAMBU_LOGIN_WS_BAD_CREDS;
+                }
+                ESP_LOGI(TAG, "bambu_login_result: %d (ok=%d)",
+                         s_login_last_result, ok_true);
+                if (s_login_done) xSemaphoreGive(s_login_done);
+                return;
+            }
 
             notify_item_t item = {0};
             if (!extract_json_string(d->data_ptr, d->data_len, "event",
@@ -407,15 +466,8 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                          item.event, item.subtask);
             }
         }
-    } else if (event_id == WEBSOCKET_EVENT_CONNECTED) {
-        ESP_LOGI(TAG, "notify channel connected to %s", RELAY_NOTIFY_URL);
-    } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED ||
-               event_id == WEBSOCKET_EVENT_CLOSED) {
-        // esp_websocket_client auto-reconnects per cfg.reconnect_timeout_ms.
-        ESP_LOGI(TAG, "notify channel closed — auto-reconnecting");
-    } else if (event_id == WEBSOCKET_EVENT_ERROR) {
-        ESP_LOGE(TAG, "notify channel error (auto-reconnect will retry)");
     }
+    // CONNECTED / DISCONNECTED / ERROR handled at top of function.
 }
 
 static void notify_task(void *arg) {
@@ -450,6 +502,8 @@ static void notify_task(void *arg) {
 }
 
 esp_err_t notify_task_start(void) {
+    static bool s_notify_started = false;
+    if (s_notify_started) return ESP_OK;  // idempotent
     if (s_notify_queue == NULL) {
         s_notify_queue = xQueueCreate(NOTIFY_QUEUE_DEPTH, sizeof(notify_item_t));
         if (s_notify_queue == NULL) {
@@ -457,6 +511,64 @@ esp_err_t notify_task_start(void) {
             return ESP_ERR_NO_MEM;
         }
     }
+    if (s_login_done == NULL) {
+        s_login_done = xSemaphoreCreateBinary();
+    }
     xTaskCreate(notify_task, "notify", 6144, NULL, 4, NULL);
+    s_notify_started = true;
     return ESP_OK;
+}
+
+bool notify_ws_is_connected(void) {
+    return s_notify_ws_connected;
+}
+
+bambu_login_ws_result_t bambu_login_via_ws(const char *email,
+                                            const char *password,
+                                            const char *code,
+                                            const char *user_id,
+                                            int timeout_ms) {
+    if (!s_notify_ws || !s_notify_ws_connected) {
+        ESP_LOGW(TAG, "bambu_login_via_ws: notify WS not connected");
+        return BAMBU_LOGIN_WS_RELAY_DOWN;
+    }
+    if (!email || !password) {
+        return BAMBU_LOGIN_WS_BAD_CREDS;
+    }
+    // Build the JSON body. We hand-roll instead of pulling cJSON into
+    // agent.c — the schema is fixed and the values are short. Caller is
+    // responsible for sanitizing inputs (provision.c uses url_decode on
+    // form-urlencoded fields which produces clean ASCII for our cases).
+    char body[512];
+    int n = snprintf(body, sizeof(body),
+        "{\"type\":\"bambu_login\","
+         "\"email\":\"%s\","
+         "\"password\":\"%s\","
+         "\"code\":\"%s\","
+         "\"user_id\":\"%s\"}",
+        email, password,
+        code ? code : "",
+        user_id ? user_id : "");
+    if (n <= 0 || n >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "bambu_login body too large or snprintf err: %d", n);
+        return BAMBU_LOGIN_WS_BAD_CREDS;
+    }
+
+    // Drain any stale signal from a previous attempt.
+    xSemaphoreTake(s_login_done, 0);
+    s_login_last_result = BAMBU_LOGIN_WS_TIMEOUT;
+
+    int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
+                                              pdMS_TO_TICKS(5000));
+    if (sent < n) {
+        ESP_LOGE(TAG, "bambu_login send failed (sent=%d of %d)", sent, n);
+        return BAMBU_LOGIN_WS_RELAY_DOWN;
+    }
+    ESP_LOGI(TAG, "bambu_login sent (%d bytes), waiting for result", n);
+
+    if (xSemaphoreTake(s_login_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "bambu_login timeout (%d ms)", timeout_ms);
+        return BAMBU_LOGIN_WS_TIMEOUT;
+    }
+    return s_login_last_result;
 }

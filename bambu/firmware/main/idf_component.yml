@@ -1,5 +1,10 @@
 dependencies:
   espressif/esp_websocket_client:
     version: "^1.3.0"
+  espressif/mdns:
+    # Used by recovery.c to advertise duck.local on STA mode. Moved out of
+    # ESP-IDF core into the component registry around v5.x; pulled in here
+    # via the component manager.
+    version: "^1.2.0"
   idf:
     version: ">=5.3.0"

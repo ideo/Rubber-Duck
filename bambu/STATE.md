@@ -31,6 +31,47 @@ subscription to the printer.
 - ✅ **Agent first message arrives** — `[agent_response] Yeah?` log fires
   shortly after WS opens. Round-trip works at the JSON level.
 
+## 🟢🟢🟢 2026-05-02 — APSTA wizard: phone-only end-to-end onboarding
+
+**The setup story is now zero-touch from a stranger's phone.** Plug in a fresh duck, press the button, join `DuckDuckDuck-XXXX`, fill one form, type the email-2FA code, you're done. No reboot mid-flow, no `duck.local` hop, no chip-side TLS, no command line. Phone never disconnects from the duck's AP during the whole wizard. ~76 seconds button-press to logged in (validated end-to-end).
+
+This is the architecture the user had been pointing at since iteration B was scoped (issue #42). It took a long detour through a chip-side HTTPS path that we couldn't get working against ngrok's edge — `mbedtls_ssl_handshake returned -0x7280` (`MBEDTLS_ERR_SSL_INVALID_RECORD`) reliably, against every config combination tried (URAM-matched config, IN_CONTENT_LEN bumped to 16384, DYNAMIC_BUFFER toggled, HARDWARE_AES toggled, TLS 1.2 forced). Two research agents and a lot of tokens later, the right answer turned out to be: **don't do TLS on the chip.** The chip has a working plain-WebSocket channel to the relay (via ngrok TCP tunnel); the relay has a working Python httpx client (TLS just works in CPython). Forward credentials chip→relay over the WebSocket, relay does the cloud TLS, return result over the same WebSocket.
+
+### Architecture
+
+- **`provision.c`**: APSTA mode from the start. AP comes up first (`DuckDuckDuck-XXXX`, captive-portal DNS hijack pops the form on iOS/Android). When user submits, the chip switches to APSTA — AP stays up, STA connects to home WiFi in parallel. A worker task waits for STA got_ip, brings up the long-lived `/ws/notify` connection, and calls `bambu_login_via_ws()`. State machine drives page rendering: `COLLECT_WIFI` → `CONNECTING_WIFI` → `LOGGING_IN` → `NEED_2FA` (if applicable) → `DONE`. Browser auto-refreshes during transient states via `<meta http-equiv="refresh">` — no JavaScript, works in every captive-portal in-app browser.
+- **`agent.c`**: gained `bambu_login_via_ws(email, password, code, user_id, timeout_ms)`. Sends `{"type":"bambu_login",...}` over the existing notify WS, blocks on a binary semaphore until the relay's `{"type":"bambu_login_result",...}` message arrives. Idempotent `notify_task_start`. Plus `notify_ws_is_connected()` so callers can wait for the WS before sending.
+- **`duck_proxy.py`**: `/ws/notify` endpoint dispatches chip-originated `bambu_login` text frames to a registered handler. `main.py` registers `_do_bambu_login` (extracted from the HTTP `/admin/bambu_login` endpoint) at module load. Reply travels back over the same WS as `bambu_login_result`.
+- **`bambu_state.py`**: HMS code filtering — `_hms_severity()` decodes the severity nibble from each `attr` uint32 (Bambu uses bits 31-16 lower-nibble). Snapshot + notifications now only include severity ≥ 1 (FATAL / SERIOUS / WARNING). Level-0 informational codes that Bambu's cloud reports but the printer UI hides no longer reach the agent. Fixes "the agent keeps saying the printer is flagging errors when nothing is wrong."
+- **Deleted**: `bambu_login.c/.h` (chip-HTTPS), `recovery.c/.h` (duck.local fallback — captive portal handles the full flow now). URAM-pattern mbedtls memory tuning reverted from `sdkconfig.defaults` (no chip TLS = no need).
+- **`user_id` field** removed from captive portal form. `/preference` auto-resolves it reliably; manual override stays as relay-side env var (`BAMBU_USER_ID`) in case Bambu ever changes that endpoint.
+
+### Validated end-to-end on real hardware
+
+```
+448162 main: entering APSTA onboarding wizard
+451517 provision: APSTA up: AP=DuckDuckDuck-0259, STA idle
+465635 (iOS captive portal probe → page pops up)
+493322 wifi: wifi creds saved
+495921 wifi: connected with Bolinha (RSSI -47)
+497176 notify channel connected
+497359 bambu_login sent (97 bytes)
+497949 notify text: {"type":"bambu_login_result","ok":false,"code":"2fa_required",...}
+512020 bambu_login sent (103 bytes)   ← retry with code from email
+513793 notify text: {"type":"bambu_login_result","ok":true,...}
+513883 wizard reached DONE
+```
+
+### What this unlocks
+
+The duck is shippable to anyone who isn't the developer. Hand someone a duck + a printed sticker that says "plug in, press the button, look for `DuckDuckDuck-XXXX` on your WiFi list." That's it. They handle the rest from their phone.
+
+### Issues impacted
+
+- **#42** APSTA — closed by this milestone
+- **#31** cloud OAuth iteration B+C — folded into #42's APSTA delivery; full chip-side onboarding flow complete
+- **#30** SoftAP onboarding — fully delivered (initial landing was 2026-05-01; APSTA is the polish)
+
 ## 🟢🟢🟢 2026-05-01 evening — cloud OAuth + SoftAP onboarding + tap-to-wake all live
 
 **The big day.** Three flagship features landed end-to-end on real hardware, plus a tap-detector polish pass and several rounds of refactor/security hardening. Closing summary below; commit-by-commit detail in `git log`.

@@ -431,17 +431,64 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
 # Notification channel — long-lived WS the duck holds at boot.
 # ---------------------------------------------------------------------------
 
+_bambu_login_handler = None  # set by main.py at startup so we don't import-cycle
+
+
+def register_bambu_login_handler(fn):
+    """main.py wires its bambu_login_endpoint logic in here so /ws/notify
+    can dispatch chip-originated `bambu_login` messages to the same code
+    path as the HTTP endpoint."""
+    global _bambu_login_handler
+    _bambu_login_handler = fn
+
+
 @router.websocket("/ws/notify")
 async def ws_notify_endpoint(duck: WebSocket) -> None:
     await duck.accept()
     _notify_clients.add(duck)
     logger.info("notify client connected (%d total)", len(_notify_clients))
     try:
-        # Keep alive — receive nothing meaningful (the duck only listens here).
         while True:
             msg = await duck.receive()
             if msg.get("type") == "websocket.disconnect":
                 break
+            # Chip-originated text messages — the captive-portal APSTA
+            # wizard sends `bambu_login` here so we handle the cloud
+            # login on the chip's behalf (chip can't do TLS to ngrok's
+            # edge reliably; relay's Python httpx works perfectly).
+            text = msg.get("text")
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                logger.warning("notify rx non-JSON: %s", text[:100])
+                continue
+            mtype = payload.get("type")
+            if mtype == "bambu_login" and _bambu_login_handler is not None:
+                # Run the handler off the main loop — it's an async fn
+                # that calls Bambu's API + reconfigures MQTT. Reply via
+                # the same WebSocket with the result so the chip wizard
+                # can advance its state machine.
+                logger.info("notify rx bambu_login (email=%s)",
+                            payload.get("email", "?"))
+                try:
+                    result = await _bambu_login_handler(payload)
+                    reply = {"type": "bambu_login_result", "ok": True, **result}
+                except Exception as e:
+                    code = "login_failed"
+                    msg_text = str(e)
+                    # Pull through structured fields if HTTPException-shaped
+                    detail = getattr(e, "detail", None)
+                    if isinstance(detail, dict):
+                        code = detail.get("code", code)
+                        msg_text = detail.get("message", msg_text)
+                    reply = {"type": "bambu_login_result", "ok": False,
+                             "code": code, "message": msg_text}
+                    logger.warning("bambu_login failed: %s", reply)
+                await duck.send_text(json.dumps(reply, ensure_ascii=False))
+                continue
+            # Unknown message types — silently ignore.
     except WebSocketDisconnect:
         pass
     finally:

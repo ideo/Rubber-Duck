@@ -92,3 +92,16 @@
 #ifndef RELAY_WS_URL
 #define RELAY_WS_URL RELAY_DUCK_URL
 #endif
+
+// HTTPS edge for control-plane requests (Bambu cloud login, future health
+// checks, OAuth callbacks, etc.). The ngrok HTTPS tunnel terminates TLS at
+// ngrok's edge and forwards plain HTTP to the local relay on port 8088.
+// Same pattern used by ElevenAgents to call our /tools/* endpoints. When
+// we move off ngrok onto a real cloud deployment (#32), this string is
+// the only thing that changes. mbedtls memory tuning lives in
+// sdkconfig.defaults — see URAM project for the rationale.
+#ifndef RELAY_HTTPS_BASE_URL
+#define RELAY_HTTPS_BASE_URL "https://duck-duck-print.ngrok.io"
+#endif
+
+#define RELAY_BAMBU_LOGIN_URL  RELAY_HTTPS_BASE_URL "/admin/bambu_login"

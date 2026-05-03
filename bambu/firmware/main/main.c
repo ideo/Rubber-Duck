@@ -81,6 +81,14 @@ void app_main(void) {
             led_off();
             // Long-lived notification channel — relay pushes printer events
             // here, the task triggers a session with event+subtask params.
+            //
+            // Bambu cloud login is NOT attempted here. By the time we reach
+            // this branch, either (a) the relay already has tokens.json from
+            // a previous onboarding and is in cloud mode, or (b) the user
+            // hasn't done Bambu setup yet and the duck just runs in LAN
+            // mode. Initial Bambu setup happens during the APSTA captive
+            // portal flow in provision.c — that's the only place chip-side
+            // creds touch the relay.
             notify_task_start();
         } else {
             ESP_LOGE(TAG, "wifi creds present but connect failed");
@@ -119,27 +127,43 @@ void app_main(void) {
         bool need_provision = !wifi_connected || (trigger == WAKE_LONG_PRESS);
         if (need_provision) {
             if (wifi_connected) {
-                // Long-press while connected: clear creds and reboot. Next boot
-                // sees no creds → falls into no-wifi idle → next press enters
-                // wizard with a fresh radio init.
-                ESP_LOGI(TAG, "long-press: clearing wifi creds and restarting for re-onboard");
+                // Long-press while connected: clear all setup state and reboot.
+                // Next boot sees no creds → no-wifi idle → next press enters
+                // wizard with a fresh radio init. We wipe BOTH wifi and bambu
+                // creds so the re-onboard wizard starts fully clean — partial
+                // state would be confusing ("why is it asking for WiFi but
+                // remembered my old Bambu account?").
+                ESP_LOGI(TAG, "long-press: clearing wifi+bambu creds and restarting");
                 audio_chirp(700, 100);
                 audio_chirp(500, 100);
                 audio_chirp(300, 200);
                 wifi_clear_creds();
+                bambu_clear_creds();
                 vTaskDelay(pdMS_TO_TICKS(800));  // let chirps finish
                 esp_restart();
             }
-            // No wifi: enter the wizard now.
-            ESP_LOGI(TAG, "entering SoftAP onboarding wizard");
+            // No wifi: enter the APSTA wizard now. It blocks until the
+            // user has finished onboarding (WiFi connected + optionally
+            // Bambu signed in). Returns ESP_OK with WiFi STA up and
+            // notify_task running. We then drop into the normal idle
+            // loop without needing to reboot.
+            ESP_LOGI(TAG, "entering APSTA onboarding wizard");
             audio_chirp(700, 100);
             audio_chirp(900, 100);
             audio_chirp(1100, 150);
-            wifi_provision_run();   // blocks; reboots on success
-            // Only reachable on AP startup failure.
-            ESP_LOGE(TAG, "provisioning failed to start; halting");
-            audio_chirp_down();
-            while (1) vTaskDelay(pdMS_TO_TICKS(60000));
+            esp_err_t err = wifi_provision_run();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "provisioning failed: %s", esp_err_to_name(err));
+                audio_chirp_down();
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+            // Wizard succeeded. STA is connected, notify_task is running,
+            // Bambu may be set up. Mark wifi_connected and chirp success.
+            wifi_connected = true;
+            audio_chirp_up();
+            ESP_LOGI(TAG, "onboarding complete; back to normal idle");
+            continue;
         }
 
         // Conversation flow.
