@@ -498,6 +498,87 @@ register_bambu_login_handler(_do_bambu_login)
 register_legacy_claim_handler(claim_legacy_if_applicable)
 
 
+@app.post("/admin/import_duck")
+async def import_duck(payload: dict,
+                      x_relay_secret: str | None = Header(default=None)):
+    """Transplant an existing duck row from another relay (e.g. local
+    dev → Fly cutover) without making the user re-onboard via captive
+    portal. Body carries the access_token directly, so no Bambu
+    re-login is needed; we just call list_devices with the supplied
+    token and populate the row.
+
+    Required: duck_id, bambu_user_id, access_token, account_email.
+    Optional: refresh_token, cloud_host, elevenlabs_key, elevenlabs_agent.
+
+    Auth-gated. Sensitive — same exposure as /admin/bambu_login since
+    we're stamping a long-lived access_token onto a row.
+    """
+    _auth(x_relay_secret)
+    duck_id = payload.get("duck_id")
+    user_id = payload.get("bambu_user_id")
+    access_token = payload.get("access_token")
+    account_email = payload.get("account_email")
+    if not all([duck_id, user_id, access_token, account_email]):
+        raise HTTPException(400, "duck_id, bambu_user_id, access_token, "
+                                  "account_email all required")
+
+    try:
+        devices = await bambu_cloud.list_devices(access_token)
+    except bambu_cloud.LoginError as e:
+        raise HTTPException(502, detail={
+            "code": "list_devices_failed", "message": str(e)})
+    if not devices:
+        raise HTTPException(404, "Bambu account has no bound printers")
+
+    serials = [d["dev_id"] for d in devices]
+    printer_names = [d.get("name", "") for d in devices]
+    cloud_host = payload.get("cloud_host") or DEFAULT_CLOUD_HOST
+
+    upsert_kwargs = {
+        "bambu_user_id": user_id,
+        "access_token": access_token,
+        "account_email": account_email,
+        "serials": serials,
+        "printer_names": printer_names,
+        "cloud_host": cloud_host,
+    }
+    if payload.get("refresh_token"):
+        upsert_kwargs["refresh_token"] = payload["refresh_token"]
+    if payload.get("elevenlabs_key"):
+        upsert_kwargs["elevenlabs_key"] = payload["elevenlabs_key"]
+    if payload.get("elevenlabs_agent"):
+        upsert_kwargs["elevenlabs_agent"] = payload["elevenlabs_agent"]
+    db.get().upsert_duck(duck_id, **upsert_kwargs)
+
+    # Spin up (or reconfigure) the BambuState. Same flow as bambu_login.
+    s = states.get(duck_id)
+    if s is None:
+        row = db.get().get_duck(duck_id) or {}
+        s = _state_from_row(row)
+        states[duck_id] = s
+        s.start()
+        register_bambu_listener(duck_id, s)
+    else:
+        s.reconfigure(
+            host=cloud_host,
+            username=f"u_{user_id}",
+            password=access_token,
+            serials=serials,
+            printer_names=printer_names,
+            verify_tls=True,
+        )
+
+    return {
+        "ok": True,
+        "duck_id": duck_id,
+        "printers": [
+            {"serial": d["dev_id"], "name": d.get("name", ""),
+             "online": d.get("online", False)}
+            for d in devices
+        ],
+    }
+
+
 @app.post("/admin/rebind_printers/{duck_id}")
 async def rebind_printers(duck_id: str,
                           x_relay_secret: str | None = Header(default=None)):
