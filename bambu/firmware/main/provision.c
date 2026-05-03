@@ -362,11 +362,6 @@ static void render_2fa_form(httpd_req_t *req, bool retry) {
         "<button type=submit>Submit</button>"
         "</form>"
         "<form method=POST action=/restart style='margin-top:1.5em'>"
-        // POST /restart with `keep_wifi=1` so a 2FA-stuck user doesn't
-        // also lose their WiFi creds — most likely cause is wrong Bambu
-        // password, not WiFi. They can opt-in via the WIFI_FAILED page
-        // when WiFi is the actual problem.
-        "<input type=hidden name=keep_wifi value=1>"
         "<button type=submit style='background:#eee;font-weight:400'>"
         "Start over</button>"
         "</form>", -1);
@@ -374,27 +369,20 @@ static void render_2fa_form(httpd_req_t *req, bool retry) {
     httpd_resp_send_chunk(req, NULL, 0);
 }
 
-// Renders the "WiFi didn't connect" page with a POST-based restart
-// button. POST (not GET <a href>) so a browser pre-fetch / mistaken
-// reload doesn't accidentally wipe creds — the user has to actively
-// click the button to commit. Also offers a "forget WiFi too"
-// checkbox: by default we KEEP the WiFi NVS (typo in Bambu password
-// shouldn't blow away WiFi), but a wrong-password WiFi failure needs
-// the wipe.
+// Renders the "WiFi didn't connect" page with a POST-based "Try again"
+// button. POST (not GET <a href>) so browser pre-fetch / mistaken
+// reload doesn't trigger the state reset on its own — the user has
+// to actively click. /restart wipes the in-memory creds and goes back
+// to the form; if the user types a new WiFi password there, /save
+// overwrites NVS. No explicit "forget WiFi" UI needed.
 static void render_wifi_failed(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
     httpd_resp_send_chunk(req,
         "<h1>WiFi didn't connect</h1>"
         "<p class=sub>The password might be wrong, or that network's out "
-        "of range. Try again — by default I'll forget the WiFi password "
-        "so you can re-enter it.</p>"
+        "of range.</p>"
         "<form method=POST action=/restart>"
-        "<label style='display:flex;align-items:center;gap:.5em;"
-        "font-weight:400'>"
-        "<input type=checkbox name=keep_wifi value=1> "
-        "Keep saved WiFi (uncheck to forget — usually the right call)"
-        "</label>"
         "<button type=submit>Try again</button>"
         "</form>", -1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
@@ -512,37 +500,32 @@ static esp_err_t save_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// /restart — bad-creds escape hatch. Wipes in-mem cred buffers and
-// (optionally) WiFi NVS, sets the wizard back to COLLECT_WIFI so the
-// next render is the form. Always POST so a browser pre-fetch can't
-// trigger a wipe.
+// /restart — escape hatch from a stuck wizard state (WIFI_FAILED,
+// LOGIN_BAD_CREDS, or 2FA-with-wrong-Bambu-password). Just clears the
+// in-memory cred buffers and rewinds state to COLLECT_WIFI so the
+// next render is the form. WiFi NVS is left alone — if the user types
+// new WiFi creds in the form, /save overwrites NVS automatically; if
+// they leave WiFi alone, the existing values stay.
 //
-// Body fields:
-//   keep_wifi=1   — preserve the stored WiFi SSID/password. Default
-//                   path from the LOGIN_BAD_CREDS page where the user
-//                   has typed Bambu creds wrong but their WiFi is fine.
-//   (absent)      — forget WiFi too. Default path from WIFI_FAILED.
+// POST (not GET) so a browser pre-fetch can't accidentally wipe state.
 //
-// Bambu creds (email/password/2FA) are always wiped because if the
-// user is restarting they're going to retype them anyway. Same logic
-// for the ElevenLabs creds — re-collected by the form on resubmit.
+// We don't expose a "factory wipe NVS" button here on purpose — the
+// soft long-press path (set provision_pending + reboot) preserves
+// creds by design, and a user who actually wants a hard reset can
+// re-flash or use a serial command. Keeps the captive-portal UX
+// reversible-by-default.
 static esp_err_t restart_handler(httpd_req_t *req) {
-    char body[64] = {0};
-    int len = req->content_len < (int)sizeof(body) - 1
-                ? req->content_len : (int)sizeof(body) - 1;
-    if (len > 0) {
-        int got = httpd_req_recv(req, body, len);
-        if (got > 0) body[got] = '\0';
+    // Drain any body bytes (we don't use them, but the httpd needs us
+    // to consume them so the keepalive connection stays clean).
+    char buf[64];
+    int remaining = req->content_len;
+    while (remaining > 0) {
+        int n = httpd_req_recv(req, buf, remaining < (int)sizeof(buf)
+                                          ? remaining : (int)sizeof(buf));
+        if (n <= 0) break;
+        remaining -= n;
     }
-    char keep_wifi[4] = {0};
-    bool keep = form_get(body, "keep_wifi", keep_wifi, sizeof(keep_wifi))
-                && keep_wifi[0] == '1';
 
-    // Wipe in-memory credential buffers under the same lock that
-    // protects the worker tasks. If a worker is mid-flight, the wipe
-    // happens between its snapshot and its next read — fine, the
-    // worker either already has its local copy or will see the empty
-    // buffers and bail.
     if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
     memset(s_bambu_email,    0, sizeof(s_bambu_email));
     memset(s_bambu_password, 0, sizeof(s_bambu_password));
@@ -552,17 +535,7 @@ static esp_err_t restart_handler(httpd_req_t *req) {
     memset(s_relay_url,      0, sizeof(s_relay_url));
     if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
 
-    if (!keep) {
-        // Forget WiFi too. NVS-only — the live STA association is
-        // already gone (we got here via WIFI_FAILED) or will drop
-        // when the next save triggers a reconnect. Don't bother
-        // explicitly disconnecting.
-        wifi_clear_creds();
-        ESP_LOGI(TAG, "/restart: wiped Bambu+Eleven creds AND WiFi NVS");
-    } else {
-        ESP_LOGI(TAG, "/restart: wiped Bambu+Eleven creds, kept WiFi NVS");
-    }
-
+    ESP_LOGI(TAG, "/restart: cleared in-mem creds, back to COLLECT_WIFI");
     s_state = WIZ_COLLECT_WIFI;
 
     httpd_resp_set_status(req, "303 See Other");

@@ -50,3 +50,13 @@ esp_err_t bambu_clear_password(void);
 // Wipe all Bambu creds. Pairs with wifi_clear_creds in the long-press
 // re-onboard path so re-onboarding starts fresh on both fronts.
 esp_err_t bambu_clear_creds(void);
+
+// "Open the captive portal on next boot" flag. Set by the soft long-
+// press path so a user can update their config without first wiping
+// what's already there: the chip reboots, sees the flag, clears it,
+// and enters the wizard regardless of whether NVS still has WiFi.
+// Pure NVS bool — call set_provision_pending(true) before
+// esp_restart() and provision_pending_take() at the top of main to
+// consume + clear it atomically.
+esp_err_t set_provision_pending(bool pending);
+bool provision_pending_take(void);

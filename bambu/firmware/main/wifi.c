@@ -166,6 +166,39 @@ esp_err_t bambu_clear_creds(void) {
     return err;
 }
 
+esp_err_t set_provision_pending(bool pending) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    if (pending) {
+        err = nvs_set_u8(h, "prov_pending", 1);
+    } else {
+        // Treat absent and 0 the same; erase rather than write 0 so
+        // provision_pending_take's read-default returns false cleanly.
+        nvs_erase_key(h, "prov_pending");
+        err = ESP_OK;
+    }
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+bool provision_pending_take(void) {
+    nvs_handle_t h;
+    if (nvs_open("duck", NVS_READWRITE, &h) != ESP_OK) return false;
+    uint8_t v = 0;
+    if (nvs_get_u8(h, "prov_pending", &v) != ESP_OK) {
+        nvs_close(h);
+        return false;
+    }
+    // Atomic-ish take: clear the flag now so a crash mid-wizard
+    // doesn't trap us in a re-provision loop on every boot.
+    nvs_erase_key(h, "prov_pending");
+    nvs_commit(h);
+    nvs_close(h);
+    return v != 0;
+}
+
 // ---- WiFi connect ----
 
 esp_err_t wifi_connect_blocking(int timeout_ms) {

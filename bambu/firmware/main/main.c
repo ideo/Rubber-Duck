@@ -67,11 +67,22 @@ void app_main(void) {
     audio_chirp(800, 80);
     led_off();
 
-    // Try WiFi only if creds exist. No auto-entry into SoftAP — the user
-    // owns that decision via a button press. Keeps the duck from
-    // broadcasting an AP unprompted and keeps the boot quiet.
+    // Soft-reonboard hand-off: a previous boot's long-press set the
+    // provision_pending flag and rebooted. Honor it now — skip the
+    // normal "connect to saved WiFi" path and force entry into the
+    // wizard regardless of NVS contents. The wizard's form lets the
+    // user update WiFi/Bambu/ElevenLabs without first wiping anything.
+    bool force_provision = provision_pending_take();
+    if (force_provision) {
+        ESP_LOGI(TAG, "provision_pending flag was set — entering wizard fresh");
+    }
+
+    // Try WiFi only if creds exist AND we aren't being forced into the
+    // wizard. No auto-entry into SoftAP — the user owns that decision
+    // via a button press. Keeps the duck from broadcasting an AP
+    // unprompted and keeps the boot quiet.
     bool wifi_connected = false;
-    if (wifi_has_creds()) {
+    if (!force_provision && wifi_has_creds()) {
         ESP_LOGI(TAG, "connecting to wifi...");
         if (wifi_connect_blocking(20000) == ESP_OK) {
             wifi_connected = true;
@@ -121,25 +132,31 @@ void app_main(void) {
         wake_quiet_for_ms(1500);  // suppress tap detector through chirps + setup
 
         // Routing matrix:
-        //   no wifi + any wake     → SoftAP wizard
-        //   wifi up + long press   → wipe creds + reboot (clean re-onboard)
+        //   no wifi + any wake     → SoftAP wizard (in-place, no reboot)
+        //   wifi up + long press   → soft re-onboard (preserves creds,
+        //                             flag-and-reboot into wizard)
         //   wifi up + short / tap  → conversation
+        // For "factory reset" — wipe everything cleanly — use POST /restart
+        // from inside the wizard with the "forget WiFi" checkbox active.
         bool need_provision = !wifi_connected || (trigger == WAKE_LONG_PRESS);
         if (need_provision) {
             if (wifi_connected) {
-                // Long-press while connected: clear all setup state and reboot.
-                // Next boot sees no creds → no-wifi idle → next press enters
-                // wizard with a fresh radio init. We wipe BOTH wifi and bambu
-                // creds so the re-onboard wizard starts fully clean — partial
-                // state would be confusing ("why is it asking for WiFi but
-                // remembered my old Bambu account?").
-                ESP_LOGI(TAG, "long-press: clearing wifi+bambu creds and restarting");
+                // Long-press while connected: enter the wizard on next
+                // boot WITHOUT wiping anything. The wizard's form lets
+                // the user update WiFi / Bambu / ElevenLabs piecemeal,
+                // and POST /restart from inside the wizard wipes only
+                // what the user explicitly checks.
+                //
+                // Reboot is the simplest way to get back into APSTA mode
+                // without unwinding the netif/event-loop singletons that
+                // wifi_provision_run created on first boot. Cheap (~3s)
+                // and the user has triggered the action so a brief drop-
+                // out is expected.
+                ESP_LOGI(TAG, "long-press: setting provision_pending and restarting");
                 audio_chirp(700, 100);
-                audio_chirp(500, 100);
-                audio_chirp(300, 200);
-                wifi_clear_creds();
-                bambu_clear_creds();
-                vTaskDelay(pdMS_TO_TICKS(800));  // let chirps finish
+                audio_chirp(900, 120);
+                set_provision_pending(true);
+                vTaskDelay(pdMS_TO_TICKS(600));  // let chirp finish
                 esp_restart();
             }
             // No wifi: enter the APSTA wizard now. It blocks until the
