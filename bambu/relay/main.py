@@ -1,4 +1,21 @@
-"""Convai webhook target. Three GET tools the LLM can call mid-conversation."""
+"""Convai webhook target. Per-duck tools the LLM can call mid-conversation.
+
+Multi-tenant since 2026-05-03 (#31): the relay holds N BambuState
+instances, one per duck_id, in the `states` registry. Routes that the
+ElevenLabs agent calls are now path-scoped (`/tools/printer_state/{duck_id}`).
+Old un-scoped routes are kept as compatibility shims that resolve to the
+"default" duck (oldest row in the DB) so existing chip firmware and a
+pre-update ElevenLabs agent config keep working through the cutover.
+
+The cutover plan, per bambu/docs/MULTI-TENANT-REQ.md:
+1. Land this PR — relay becomes multi-tenant, existing duck still works
+   as-is via compat shims.
+2. Update chip firmware to send `X-Duck-Id` on /ws/notify and /ws/duck
+   handshakes (separate PR; tracked in #31).
+3. Update ElevenLabs agent's tool URLs to include the duck_id (manual,
+   per-tenant — done via the setup helper page; tracked in #48).
+4. Drop compat shims — search "# COMPAT" markers.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +29,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 
 import bambu_cloud
+import db
 from bambu_state import BambuState
 from duck_proxy import (
     router as duck_router,
@@ -29,105 +47,112 @@ if not logger.handlers:
     logger.addHandler(_h)
     logger.propagate = False
 
-state: BambuState | None = None
+# Per-duck BambuState registry. Populated in lifespan startup from the DB.
+# All other code that needs printer state goes through get_state(duck_id).
+states: dict[str, BambuState] = {}
 
-# Saved cloud-mode credentials (so the relay can come up in cloud mode after
-# a restart without the duck having to re-onboard). Single-entry today; will
-# become a dict keyed by duck_id when multi-tenant lands (#31).
+# Legacy single-tenant tokens.json. Migration reads this once on startup
+# and writes one row into ducks.db; the file is left on disk for safety
+# (operator decides when to delete). See db.migrate_from_tokens_json.
 TOKENS_PATH = Path(__file__).parent / "tokens.json"
+DB_PATH = Path(os.environ.get("DUCKS_DB_PATH",
+                              str(Path(__file__).parent / "ducks.db")))
 
 # Default cloud broker. Bambu has US, EU, and CN regional brokers — the
 # user_id is global so any region works, but lower-latency to the user's
-# region. Override via env if needed.
+# region. Override via env if needed. Per-duck override lives in the DB row.
 DEFAULT_CLOUD_HOST = os.environ.get("BAMBU_CLOUD_HOST", "us.mqtt.bambulab.com")
 
-
-def _load_tokens() -> dict | None:
-    if not TOKENS_PATH.exists():
-        return None
-    # Defensive: heal permissions if a prior version wrote with default umask.
-    # Only chmod if the current mode is more permissive than 0600 to avoid
-    # surprising the operator who may have intentionally tightened it further.
-    try:
-        mode = TOKENS_PATH.stat().st_mode & 0o777
-        if mode & 0o077:  # any group/other bits set
-            os.chmod(TOKENS_PATH, 0o600)
-            logger.info("tokens.json perms hardened to 0600 (was %o)", mode)
-    except OSError:
-        pass
-    try:
-        return json.loads(TOKENS_PATH.read_text())
-    except Exception as e:
-        logger.warning("tokens.json unreadable (%s) — starting in LAN/env mode", e)
-        return None
+# duck_id used when migrating legacy tokens.json (no chip MAC available
+# at migration time). Operator can set DUCK_ID env to a real chip MAC; if
+# unset, "legacy" is used as a sentinel that the firmware update can
+# rename to its real MAC on first connect (next checkpoint).
+LEGACY_DUCK_ID = os.environ.get("DUCK_ID", "legacy")
 
 
-def _save_tokens(d: dict) -> None:
-    """Atomic write + 0600 perms. The temp-file + rename pattern protects
-    against partial writes if the process crashes mid-write or two
-    /admin/bambu_login calls race (the asyncio.Lock prevents the latter
-    in normal flow, but defensive). Permissions stay 0600 since the file
-    holds access_token + refresh_token + account_email."""
-    tmp = TOKENS_PATH.with_suffix(".json.tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(d, f, indent=2)
-    os.replace(tmp, TOKENS_PATH)
-    # Make sure perms are 0600 even if the file already existed (umask).
-    os.chmod(TOKENS_PATH, 0o600)
-    logger.info("tokens.json updated (user_id=%s, serial=%s)",
-                d.get("user_id"), d.get("serial"))
+def _state_from_row(row: dict) -> BambuState:
+    """Build a BambuState from a ducks DB row. Cloud mode if access_token
+    is present; LAN mode otherwise (env-var fallback for serial/access
+    code). One BambuState per duck — they don't share clients or threads."""
+    if row.get("access_token") and row.get("bambu_user_id"):
+        return BambuState(
+            host=row.get("cloud_host") or DEFAULT_CLOUD_HOST,
+            username=f"u_{row['bambu_user_id']}",
+            password=row["access_token"],
+            serial=row.get("serial") or "",
+            verify_tls=True,
+            printer_name=row.get("printer_name") or "",
+        )
+    # LAN-ish fallback. Mostly for development; once the duck has done
+    # cloud login this branch is unused.
+    return BambuState(
+        host=os.environ.get("BAMBU_HOST", "mock"),
+        username="bblp",
+        password=os.environ.get("BAMBU_ACCESS_CODE", "mock"),
+        serial=os.environ.get("BAMBU_SERIAL", "mock"),
+        verify_tls=False,
+    )
 
 
 # Serializes /admin/bambu_login calls so two concurrent attempts can't race
-# the tokens.json write or hammer Bambu's API in a way that looks botty.
-# Created lazily inside the endpoint (FastAPI's lifespan-startup runs in a
-# different loop than the request handlers in some hot-reload setups).
+# the DB write or hammer Bambu's API in a way that looks botty.
 _login_lock: asyncio.Lock | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global state
-    tokens = _load_tokens()
+    # 1. Open the DB and run the one-shot migration from tokens.json.
+    #    Migration is idempotent (skipped if the DB has any rows or the
+    #    file is missing) and never deletes the file.
+    database = db.init(DB_PATH)
+    migrated = database.migrate_from_tokens_json(TOKENS_PATH, LEGACY_DUCK_ID)
+    if migrated:
+        logger.info("first-run migration: tokens.json → ducks.db (id=%s)",
+                    LEGACY_DUCK_ID)
 
-    if tokens:
-        # Cloud mode — the user has logged in to Bambu cloud previously and
-        # we have their saved access_token + selected printer serial.
-        logger.info("starting in CLOUD mode (loaded tokens.json) — printer=%r",
-                    tokens.get("printer_name") or "(unknown)")
-        state = BambuState(
-            host=DEFAULT_CLOUD_HOST,
-            username=f"u_{tokens['user_id']}",
-            password=tokens["access_token"],
-            serial=tokens["serial"],
-            verify_tls=True,
-            printer_name=tokens.get("printer_name", ""),
-        )
+    # 2. Spin up a BambuState per row. Done sequentially with a small
+    #    delay so a future hot-onboarding doesn't slam Bambu's auth
+    #    endpoint when N ducks come up at once. (See #31 risks.)
+    rows = database.list_ducks()
+    if not rows and os.environ.get("MOCK") != "1":
+        # Empty DB and not in mock mode = LAN-ish dev install with no
+        # tokens. Spin up one "legacy" state so /health and the wizard
+        # path keep working until a duck actually onboards.
+        logger.info("no ducks in DB — starting in LAN/env mode under id=%s",
+                    LEGACY_DUCK_ID)
+        s = _state_from_row({})
+        states[LEGACY_DUCK_ID] = s
+        if os.environ.get("MOCK") == "1":
+            from mock_printer import drive_in_thread
+            drive_in_thread(s)
+        else:
+            s.start()
+        register_bambu_listener(LEGACY_DUCK_ID, s)
     else:
-        # LAN mode — fall back to env-var configuration. This is the path
-        # used during development and before the duck has done OAuth.
-        logger.info("starting in LAN mode (no tokens.json)")
-        state = BambuState(
-            host=os.environ.get("BAMBU_HOST", "mock"),
-            username="bblp",
-            password=os.environ.get("BAMBU_ACCESS_CODE", "mock"),
-            serial=os.environ.get("BAMBU_SERIAL", "mock"),
-            verify_tls=False,
-        )
+        for row in rows:
+            duck_id = row["duck_id"]
+            logger.info("starting BambuState for duck_id=%s (printer=%r, host=%s)",
+                        duck_id,
+                        row.get("printer_name") or "(unknown)",
+                        row.get("cloud_host"))
+            s = _state_from_row(row)
+            states[duck_id] = s
+            if os.environ.get("MOCK") == "1":
+                from mock_printer import drive_in_thread
+                drive_in_thread(s)
+            else:
+                s.start()
+            register_bambu_listener(duck_id, s)
+            await asyncio.sleep(0.5)  # spread MQTT auths
 
-    if os.environ.get("MOCK") == "1":
-        # Mock mode: don't connect to a broker, let mock_printer.py drive state via injection.
-        from mock_printer import drive_in_thread
-        drive_in_thread(state)
-    else:
-        state.start()
-    # Wire notification fan-out. Captures the asyncio loop so the MQTT
-    # thread's listener can dispatch back here.
-    register_bambu_listener(state)
     yield
+
     if os.environ.get("MOCK") != "1":
-        state.stop()
+        for duck_id, s in states.items():
+            try:
+                s.stop()
+            except Exception as e:
+                logger.warning("stop failed for %s: %s", duck_id, e)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -140,40 +165,138 @@ def _auth(secret: str | None) -> None:
         raise HTTPException(401, "bad shared secret")
 
 
+def _resolve_duck_id(duck_id: str | None) -> str:
+    """Compat helper: explicit duck_id wins; otherwise fall back to the
+    DB's default (oldest row). Raises 404 if the DB is empty.
+
+    Used by the un-scoped compat routes. Once chip firmware + ElevenLabs
+    agent both send duck_id everywhere, this helper goes away (search
+    `# COMPAT` to find all the call sites)."""
+    if duck_id:
+        return duck_id
+    default = db.get().default_duck_id()
+    if not default:
+        raise HTTPException(503, "no ducks registered yet")
+    return default
+
+
+def _state_for(duck_id: str) -> BambuState:
+    s = states.get(duck_id)
+    if s is None:
+        raise HTTPException(404, f"unknown duck_id: {duck_id}")
+    return s
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "connected": state is not None and bool(state.snapshot())}
+    return {
+        "ok": True,
+        "duck_count": len(states),
+        "ducks": list(states.keys()),
+    }
 
 
-@app.get("/tools/printer_state")
-def printer_state(x_relay_secret: str | None = Header(default=None)):
+# ---- Path-scoped tools (the canonical multi-tenant routes) ---------------
+
+
+@app.get("/tools/printer_state/{duck_id}")
+def printer_state_scoped(duck_id: str,
+                         x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return state.snapshot()
+    return _state_for(duck_id).snapshot()
 
 
-@app.get("/tools/temperatures")
-def temperatures(x_relay_secret: str | None = Header(default=None)):
+@app.get("/tools/temperatures/{duck_id}")
+def temperatures_scoped(duck_id: str,
+                        x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return state.temperatures()
+    return _state_for(duck_id).temperatures()
 
 
-@app.get("/tools/print_history")
-def print_history(n: int = 5, x_relay_secret: str | None = Header(default=None)):
+@app.get("/tools/print_history/{duck_id}")
+def print_history_scoped(duck_id: str, n: int = 5,
+                         x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return {"history": state.history(max(1, min(n, 20)))}
+    return {"history": _state_for(duck_id).history(max(1, min(n, 20)))}
 
 
-@app.get("/admin/raw_state")
-def raw_state():
-    """Dump the FULL Bambu push_status payload so we can see what fields
-    are available. No auth — local diagnostic only."""
-    return state._state if state else {}
+# ---- COMPAT: un-scoped tools (resolve to default duck) -------------------
+# Kept so a pre-update ElevenLabs agent config keeps working during the
+# cutover. Drop these and `_resolve_duck_id` once all tenants have moved
+# their tool URLs to the path-scoped variants above.
+
+
+@app.get("/tools/printer_state")  # COMPAT
+def printer_state_compat(x_relay_secret: str | None = Header(default=None)):
+    _auth(x_relay_secret)
+    return _state_for(_resolve_duck_id(None)).snapshot()
+
+
+@app.get("/tools/temperatures")  # COMPAT
+def temperatures_compat(x_relay_secret: str | None = Header(default=None)):
+    _auth(x_relay_secret)
+    return _state_for(_resolve_duck_id(None)).temperatures()
+
+
+@app.get("/tools/print_history")  # COMPAT
+def print_history_compat(n: int = 5,
+                         x_relay_secret: str | None = Header(default=None)):
+    _auth(x_relay_secret)
+    return {"history": _state_for(_resolve_duck_id(None)).history(max(1, min(n, 20)))}
+
+
+# ---- Admin --------------------------------------------------------------
+
+
+@app.get("/admin/raw_state/{duck_id}")
+def raw_state_scoped(duck_id: str):
+    """Dump the FULL Bambu push_status payload for a specific duck.
+    No auth — local diagnostic only."""
+    return _state_for(duck_id)._state
+
+
+@app.get("/admin/raw_state")  # COMPAT
+def raw_state_compat():
+    duck_id = db.get().default_duck_id()
+    if duck_id is None or duck_id not in states:
+        return {}
+    return states[duck_id]._state
+
+
+@app.get("/admin/list_ducks")
+def list_ducks(x_relay_secret: str | None = Header(default=None)):
+    """Show what ducks the relay is hosting. Auth-gated because the row
+    includes account_email (low-stakes leak but still PII)."""
+    _auth(x_relay_secret)
+    rows = db.get().list_ducks()
+    out = []
+    for r in rows:
+        s = states.get(r["duck_id"])
+        out.append({
+            "duck_id": r["duck_id"],
+            "account_email": r.get("account_email"),
+            "printer_name": r.get("printer_name"),
+            "serial": r.get("serial"),
+            "cloud_host": r.get("cloud_host"),
+            "created_at": r.get("created_at"),
+            "last_seen_at": r.get("last_seen_at"),
+            "live": s is not None,
+            "auth_failed": getattr(s, "auth_failed", None) if s else None,
+        })
+    return {"ducks": out}
 
 
 async def _do_bambu_login(payload: dict) -> dict:
     """Core login logic — used by both the HTTP endpoint and the chip-
     initiated WS message handler. Raises HTTPException on failure so
-    both callers get consistent error shapes."""
+    both callers get consistent error shapes.
+
+    `payload` carries an optional `duck_id`. When present, the resulting
+    tokens are stored on that duck's DB row and that duck's BambuState
+    is reconfigured. When absent (legacy chip firmware), we fall back to
+    the default duck. Operators with multiple ducks should always send
+    duck_id — see compat note above.
+    """
     global _login_lock
     if _login_lock is None:
         _login_lock = asyncio.Lock()
@@ -182,6 +305,7 @@ async def _do_bambu_login(payload: dict) -> dict:
     password = payload.get("password")
     code = payload.get("code") or None
     user_id_override = payload.get("user_id") or os.environ.get("BAMBU_USER_ID")
+    duck_id = payload.get("duck_id") or _resolve_duck_id(None)  # COMPAT
     if not email or not password:
         raise HTTPException(400, "email and password required")
 
@@ -210,25 +334,39 @@ async def _do_bambu_login(payload: dict) -> dict:
     serial = chosen["dev_id"]
     printer_name = chosen.get("name", "")
 
-    _save_tokens({
-        "access_token": result["access_token"],
-        "refresh_token": result["refresh_token"],
-        "user_id": result["user_id"],
-        "serial": serial,
-        "printer_name": printer_name,
-        "account_email": email,
-    })
-
-    state.reconfigure(
-        host=DEFAULT_CLOUD_HOST,
-        username=f"u_{result['user_id']}",
-        password=result["access_token"],
+    # Persist on the duck's row. upsert_duck preserves any other fields
+    # already set (cloud_host, elevenlabs_*) since we pass only what's new.
+    db.get().upsert_duck(
+        duck_id,
+        access_token=result["access_token"],
+        refresh_token=result["refresh_token"],
+        bambu_user_id=result["user_id"],
         serial=serial,
-        verify_tls=True,
         printer_name=printer_name,
+        account_email=email,
     )
 
+    # Reconfigure (or first-create) the BambuState for this duck.
+    s = states.get(duck_id)
+    if s is None:
+        # Brand-new duck — build a state and start it.
+        row = db.get().get_duck(duck_id) or {}
+        s = _state_from_row(row)
+        states[duck_id] = s
+        s.start()
+        register_bambu_listener(duck_id, s)
+    else:
+        s.reconfigure(
+            host=DEFAULT_CLOUD_HOST,
+            username=f"u_{result['user_id']}",
+            password=result["access_token"],
+            serial=serial,
+            verify_tls=True,
+            printer_name=printer_name,
+        )
+
     return {
+        "duck_id": duck_id,
         "user_id": result["user_id"],
         "serial": serial,
         "printer_name": printer_name or "(unknown)",
@@ -238,9 +376,9 @@ async def _do_bambu_login(payload: dict) -> dict:
 
 @app.post("/admin/bambu_login")
 async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Header(default=None)):
-    """HTTP entry point for cloud login. Body: {email, password, code,
-    user_id}. Same logic as the chip's WS-initiated path — this exists
-    for curl-based development + future debugging."""
+    """HTTP entry point for cloud login. Body: {duck_id?, email, password,
+    code?, user_id?}. Same logic as the chip's WS-initiated path — this
+    exists for curl-based development + future debugging."""
     _auth(x_relay_secret)
     result = await _do_bambu_login(payload)
     return {"ok": True, **result}
@@ -251,28 +389,33 @@ async def bambu_login_endpoint(payload: dict, x_relay_secret: str | None = Heade
 register_bambu_login_handler(_do_bambu_login)
 
 
-@app.get("/admin/bambu_status")
-def bambu_status(x_relay_secret: str | None = Header(default=None)):
-    """Quick status summary — what mode the relay is in, which printer is
-    bound, whether MQTT is actually connected (vs configured-but-failing).
-
-    Auth-gated because the response includes account_email and user_id —
-    not catastrophic but no reason to leak on an open LAN."""
+@app.get("/admin/bambu_status/{duck_id}")
+def bambu_status_scoped(duck_id: str,
+                        x_relay_secret: str | None = Header(default=None)):
+    """Per-duck status: mode, printer binding, live MQTT connection
+    state. Auth-gated because the response includes account_email."""
     _auth(x_relay_secret)
-    tokens = _load_tokens()
+    row = db.get().get_duck(duck_id)
+    s = states.get(duck_id)
     info = {
-        "mode": "cloud" if tokens else "lan",
-        "host": state.host if state else None,
-        "serial": state.serial if state else None,
-        "user_id": tokens.get("user_id") if tokens else None,
-        "account_email": tokens.get("account_email") if tokens else None,
+        "duck_id": duck_id,
+        "mode": "cloud" if (row and row.get("access_token")) else "lan",
+        "host": s.host if s else None,
+        "serial": s.serial if s else None,
+        "user_id": row.get("bambu_user_id") if row else None,
+        "account_email": row.get("account_email") if row else None,
+        "printer_name": row.get("printer_name") if row else None,
     }
-    if state is not None:
-        # Live MQTT connection state (vs just "tokens.json exists").
+    if s is not None:
         try:
-            info["connected"] = bool(state._client.is_connected())
+            info["connected"] = bool(s._client.is_connected())
         except Exception:
             info["connected"] = False
-        info["auth_failed"] = getattr(state, "auth_failed", False)
-        info["last_message_age_ms"] = state.last_message_age_ms()
+        info["auth_failed"] = getattr(s, "auth_failed", False)
+        info["last_message_age_ms"] = s.last_message_age_ms()
     return info
+
+
+@app.get("/admin/bambu_status")  # COMPAT
+def bambu_status_compat(x_relay_secret: str | None = Header(default=None)):
+    return bambu_status_scoped(_resolve_duck_id(None), x_relay_secret)

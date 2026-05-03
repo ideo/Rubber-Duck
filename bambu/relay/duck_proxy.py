@@ -28,6 +28,8 @@ import httpx
 import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+import db
+
 logger = logging.getLogger("duck_proxy")
 logger.setLevel(logging.INFO)
 # Ensure messages reach uvicorn's stdout — without this, default root level
@@ -40,15 +42,19 @@ if not logger.handlers:
 
 router = APIRouter()
 
-# Persistent notification clients — every duck holds a /ws/notify connection
-# and we push events here when the printer state transitions.
-_notify_clients: set[WebSocket] = set()
-# Live upstream ElevenAgents sessions — when a printer event fires and one of
-# these is open, we inject the notice as a user_message into the running
-# conversation instead of opening a new session. The agent naturally pivots
-# (a fresh user_message ends the current agent turn), which is exactly the
-# "interrupt" UX. /ws/notify only triggers a new session when nothing is live.
-_active_upstreams: set = set()
+# Per-duck notification clients. Each duck holds one /ws/notify connection;
+# events fired by that duck's BambuState fan out only to that duck's WS.
+# A duck may briefly have no entry (between WS reconnects); we use a dict
+# of sets so reconnect races don't drop events. Most of the time the set
+# has 0 or 1 entries.
+_notify_clients: dict[str, set[WebSocket]] = {}
+
+# Per-duck active ElevenAgents sessions. When a printer event fires for
+# duck X and that duck has a live upstream, inject the notice as a
+# user_message into the running conversation (smooth pivot, no audio
+# glitch) instead of broadcasting on /ws/notify (cold start path).
+_active_upstreams: dict[str, set] = {}
+
 _main_loop: Optional[asyncio.AbstractEventLoop] = None  # captured at startup
 
 
@@ -69,15 +75,19 @@ def _friendly_subtask(name: Optional[str]) -> str:
     return name
 
 
-async def _broadcast_notify(payload: str) -> None:
+async def _broadcast_notify(duck_id: str, payload: str) -> None:
+    """Send to ducks(s) for a given duck_id. Almost always 0 or 1 ws."""
+    clients = _notify_clients.get(duck_id)
+    if not clients:
+        return
     dead = []
-    for ws in list(_notify_clients):
+    for ws in list(clients):
         try:
             await ws.send_text(payload)
         except Exception:
             dead.append(ws)
     for ws in dead:
-        _notify_clients.discard(ws)
+        clients.discard(ws)
 
 
 # Per-upstream "has this session already announced a printer event?" flag.
@@ -89,91 +99,114 @@ async def _broadcast_notify(payload: str) -> None:
 _session_announced: set[int] = set()
 
 
-async def _inject_into_active_sessions(event_type: str, friendly: Optional[str],
+async def _inject_into_active_sessions(duck_id: str, event_type: str,
+                                        friendly: Optional[str],
                                         printer_name: Optional[str] = None) -> int:
-    """Push a printer event into any live upstream(s) immediately as a
-    user_message. Returns the number of sessions injected into.
+    """Push a printer event into the live upstream for `duck_id`, if any.
+    Returns the number of sessions injected into (0 or 1, basically —
+    higher only if a duck somehow has multiple concurrent upstreams).
 
     A user_message landing mid-utterance cleanly interrupts the agent's
-    current turn — same effect as a hard session interrupt, no audio glitch.
-    The agent's response then naturally flows into addressing the new event."""
-    if not _active_upstreams:
+    current turn — same effect as a hard session interrupt, no audio
+    glitch. The agent's response then naturally flows into addressing
+    the new event."""
+    upstreams = _active_upstreams.get(duck_id)
+    if not upstreams:
         return 0
     n = 0
-    for upstream in list(_active_upstreams):
+    for upstream in list(upstreams):
         key = id(upstream)
         header = "Printer update" if key in _session_announced else "Printer notice"
         text = _printer_text_for(event_type, friendly, header, printer_name)
         try:
             await _send_user_message(upstream, text)
             _session_announced.add(key)
-            logger.info("notify injected: %s", text)
+            logger.info("notify injected (duck=%s): %s", duck_id, text)
             n += 1
         except Exception as e:
             logger.warning("inject failed (upstream gone?): %s", e)
-            _active_upstreams.discard(upstream)
+            upstreams.discard(upstream)
             _session_announced.discard(key)
     return n
 
 
-async def _dispatch_event(event_type: str, friendly: Optional[str],
+async def _dispatch_event(duck_id: str, event_type: str,
+                            friendly: Optional[str],
                             printer_name: Optional[str] = None) -> None:
-    """Route a printer event to either the live session (inject) or the
-    notify channel (broadcast → chip opens new session).
+    """Route a printer event for `duck_id` to either its live session
+    (inject) or its notify channel (broadcast → chip opens new session).
 
     Two paths by design — they aren't redundant. Inject reuses an open
     upstream so the agent pivots mid-conversation with no audio glitch.
     Broadcast is the cold-start: the chip is idle, /ws/notify wakes it,
     chip dials /ws/duck?event=...&subtask=..., and ws_duck_endpoint
     sends the opening user_message right after init metadata."""
-    injected = await _inject_into_active_sessions(event_type, friendly, printer_name)
+    injected = await _inject_into_active_sessions(duck_id, event_type, friendly, printer_name)
     if injected:
         return
-    # Note: printer_name not propagated to chip via /ws/notify yet —
-    # chip's JSON parser only extracts event + subtask. The session-start
-    # path (ws_duck_endpoint) reads printer_name from state directly.
-    # Multi-printer (#41) will require chip to forward the printer_serial
-    # from the notify push so the relay knows WHICH printer to read from.
     payload = json.dumps(
         {"type": "notify", "event": event_type, "subtask": friendly},
         ensure_ascii=False,
     )
-    await _broadcast_notify(payload)
-    logger.info("notify broadcast (no active session): %s — %s%s",
-                event_type, friendly,
+    await _broadcast_notify(duck_id, payload)
+    logger.info("notify broadcast (duck=%s, no active session): %s — %s%s",
+                duck_id, event_type, friendly,
                 f" ({printer_name})" if printer_name else "")
 
 
-def fire_notification(event: dict) -> None:
-    """MQTT-thread entry point. Schedules _dispatch_event onto the asyncio
-    loop captured at startup. Wire format on /ws/notify when broadcasting:
-    {"type":"notify","event":"...","subtask":"..."} — chip extracts both."""
+# Per-duck reference for ws_duck_endpoint to read printer_name when handling
+# notify-triggered session opens (chip URL params don't carry it yet — see
+# #41 for the per-printer-serial routing follow-up).
+_bambu_states: dict[str, "BambuState"] = {}  # type: ignore
+
+
+def register_bambu_listener(duck_id: str, state) -> None:
+    """Wire `state`'s event listener to fan out via WS for `duck_id`.
+
+    Captures the running asyncio loop on the first call so the MQTT
+    thread's listener can dispatch onto it. Also stashes the state in
+    `_bambu_states` so /ws/duck can read printer_name for that duck.
+
+    The listener closure binds duck_id at registration time — that's how
+    a fired event knows which duck's clients to notify."""
+    global _main_loop
+    if _main_loop is None:
+        _main_loop = asyncio.get_running_loop()
+    _bambu_states[duck_id] = state
+
+    def _on_event(event: dict) -> None:
+        # MQTT-thread entry point. Schedules _dispatch_event onto the
+        # captured loop with duck_id bound from the registration scope.
+        if _main_loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            _dispatch_event(
+                duck_id,
+                event.get("type"),
+                _friendly_subtask(event.get("subtask")),
+                event.get("printer_name") or None,
+            ),
+            _main_loop,
+        )
+
+    state.add_listener(_on_event)
+
+
+def fire_notification_for(duck_id: str, event: dict) -> None:
+    """Direct-call entry point used by the test endpoint to synthesize an
+    event without going through MQTT. Same dispatch path as the listener
+    closure above."""
     if _main_loop is None:
         return
     asyncio.run_coroutine_threadsafe(
         _dispatch_event(
+            duck_id,
             event.get("type"),
             _friendly_subtask(event.get("subtask")),
             event.get("printer_name") or None,
         ),
         _main_loop,
     )
-
-
-_bambu_state = None  # captured for ws_duck_endpoint's notify-session path
-
-
-def register_bambu_listener(state) -> None:
-    """Wire the bambu_state event listener to fan out via WS. Capture the
-    running asyncio loop so the MQTT-thread listener can dispatch onto it.
-    Also stash the state object so the /ws/duck endpoint can read its
-    printer_name when handling notify-triggered session opens (the chip
-    URL params don't carry printer_name yet — see the comment in
-    _dispatch_event)."""
-    global _main_loop, _bambu_state
-    _main_loop = asyncio.get_running_loop()
-    _bambu_state = state
-    state.add_listener(fire_notification)
 
 ELEVENLABS_HOST = "api.elevenlabs.io"
 SIGNED_URL_PATH = "/v1/convai/conversation/get-signed-url"
@@ -349,11 +382,22 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
     # ?event=<type>&subtask=<name>. Button-press sessions arrive bare.
     event_type = duck.query_params.get("event") or None
     subtask = duck.query_params.get("subtask") or None
+    duck_id = _resolve_ws_duck_id(duck)
+    if not duck_id:
+        await duck.close(code=1011)
+        return
     await duck.accept()
-    api_key = os.environ.get("ELEVENLABS_API_KEY")
-    agent_id = os.environ.get("BAMBU_DUCK_AGENT_ID")
+    db.get().touch_duck(duck_id)
+
+    # ElevenLabs creds resolution: per-duck DB row first, env fallback.
+    # # COMPAT — env fallback can drop once every duck's row is populated
+    # (which the captive-portal additions in #31 will guarantee).
+    row = db.get().get_duck(duck_id) or {}
+    api_key = row.get("elevenlabs_key") or os.environ.get("ELEVENLABS_API_KEY")
+    agent_id = row.get("elevenlabs_agent") or os.environ.get("BAMBU_DUCK_AGENT_ID")
     if not api_key or not agent_id:
-        logger.error("ELEVENLABS_API_KEY or BAMBU_DUCK_AGENT_ID not set")
+        logger.error("no ElevenLabs creds for duck=%s (DB row + env both empty)",
+                     duck_id)
         await duck.close(code=1011)
         return
 
@@ -381,24 +425,25 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
         agent_wav.setnchannels(1); agent_wav.setsampwidth(2); agent_wav.setframerate(16000)
         logger.info("recording mic → %s and agent → %s", mic_path.name, agent_path.name)
 
-    logger.info("duck connected, opening upstream WS")
+    logger.info("duck connected (duck=%s), opening upstream WS", duck_id)
     upstream_ref = None
     try:
         async with websockets.connect(signed, max_size=None) as upstream:
             upstream_ref = upstream
-            _active_upstreams.add(upstream)
+            _active_upstreams.setdefault(duck_id, set()).add(upstream)
             # When opened from a notification, suppress the agent's default
             # greeting and immediately inject a "Printer notice: ..."
             # user_message so the LLM phrases the announcement in its own
             # voice. Otherwise (button press) let the agent open normally.
             await _send_init(upstream, suppress_first_message=bool(event_type))
             if event_type:
-                # Pull printer_name from state — chip's URL params don't
-                # carry it (see _dispatch_event comment about #41).
-                pname = _bambu_state.printer_name if _bambu_state else None
+                # Pull printer_name from this duck's state — chip's URL
+                # params don't carry it (see _dispatch_event comment / #41).
+                this_state = _bambu_states.get(duck_id)
+                pname = this_state.printer_name if this_state else None
                 notice = _printer_text_for(event_type, subtask, "Printer notice", pname)
-                logger.info("session opening from notify: event=%s subtask=%r printer=%r",
-                            event_type, subtask, pname)
+                logger.info("session opening from notify (duck=%s): event=%s subtask=%r printer=%r",
+                            duck_id, event_type, subtask, pname)
                 await _send_user_message(upstream, notice)
                 # Mark first announcement done — any further events that
                 # arrive during this session use "Printer update:" phrasing.
@@ -414,7 +459,11 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
         logger.exception("upstream session error: %s", e)
     finally:
         if upstream_ref is not None:
-            _active_upstreams.discard(upstream_ref)
+            ups = _active_upstreams.get(duck_id)
+            if ups:
+                ups.discard(upstream_ref)
+                if not ups:
+                    _active_upstreams.pop(duck_id, None)
             _session_announced.discard(id(upstream_ref))
         if mic_wav is not None:
             mic_wav.close()
@@ -442,11 +491,34 @@ def register_bambu_login_handler(fn):
     _bambu_login_handler = fn
 
 
+def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
+    """Pull duck_id from the WS handshake. Order of precedence:
+       1. `X-Duck-Id` header — the canonical multi-tenant signal
+       2. `?duck_id=...` query param — fallback for clients that can't
+          set headers (some libs don't expose them on WS)
+       3. # COMPAT: default duck (oldest row in DB) — drops once chip
+          firmware always sends X-Duck-Id
+
+    Returns None only if the DB is empty AND no id was in the request,
+    in which case the caller should reject the connection.
+    """
+    duck_id = duck.headers.get("x-duck-id") or duck.query_params.get("duck_id")
+    if duck_id:
+        return duck_id.lower().strip()
+    return db.get().default_duck_id()  # COMPAT
+
+
 @router.websocket("/ws/notify")
 async def ws_notify_endpoint(duck: WebSocket) -> None:
+    duck_id = _resolve_ws_duck_id(duck)
+    if not duck_id:
+        await duck.close(code=1011)
+        return
     await duck.accept()
-    _notify_clients.add(duck)
-    logger.info("notify client connected (%d total)", len(_notify_clients))
+    db.get().touch_duck(duck_id)
+    _notify_clients.setdefault(duck_id, set()).add(duck)
+    logger.info("notify client connected (duck=%s, total=%d)",
+                duck_id, sum(len(v) for v in _notify_clients.values()))
     try:
         while True:
             msg = await duck.receive()
@@ -466,12 +538,13 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 continue
             mtype = payload.get("type")
             if mtype == "bambu_login" and _bambu_login_handler is not None:
-                # Run the handler off the main loop — it's an async fn
-                # that calls Bambu's API + reconfigures MQTT. Reply via
-                # the same WebSocket with the result so the chip wizard
-                # can advance its state machine.
-                logger.info("notify rx bambu_login (email=%s)",
-                            payload.get("email", "?"))
+                # Stamp duck_id from the WS handshake into the payload so
+                # the handler stores tokens on the right row. Chip-sent
+                # duck_id (if any) wins, but the handshake is the
+                # fallback so older firmware still works.
+                payload.setdefault("duck_id", duck_id)
+                logger.info("notify rx bambu_login (duck=%s, email=%s)",
+                            payload["duck_id"], payload.get("email", "?"))
                 try:
                     result = await _bambu_login_handler(payload)
                     reply = {"type": "bambu_login_result", "ok": True, **result}
@@ -489,26 +562,42 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                         msg_text = detail.get("message", msg_text)
                     reply = {"type": "bambu_login_result", "ok": False,
                              "code": code, "message": msg_text}
-                    logger.warning("bambu_login failed: %s", reply)
+                    logger.warning("bambu_login failed (duck=%s): %s",
+                                   duck_id, reply)
                 await duck.send_text(json.dumps(reply, ensure_ascii=False))
                 continue
             # Unknown message types — silently ignore.
     except WebSocketDisconnect:
         pass
     finally:
-        _notify_clients.discard(duck)
-        logger.info("notify client disconnected (%d remaining)", len(_notify_clients))
+        clients = _notify_clients.get(duck_id)
+        if clients:
+            clients.discard(duck)
+            if not clients:
+                _notify_clients.pop(duck_id, None)
+        logger.info("notify client disconnected (duck=%s, remaining=%d)",
+                    duck_id, sum(len(v) for v in _notify_clients.values()))
 
 
 @router.post("/admin/test_notification")
-async def admin_test_notification(event: str = "finish", subtask: str = "TestPrint"):
-    """Manual trigger for testing the notification path without waiting for
-    a real print to finish. Stamps printer_name from the live state so the
-    synthetic event matches the shape of a real bambu_state._fire event."""
-    pname = _bambu_state.printer_name if _bambu_state else ""
-    fire_notification({"type": event, "subtask": subtask, "printer_name": pname})
+async def admin_test_notification(event: str = "finish", subtask: str = "TestPrint",
+                                    duck_id: str | None = None):
+    """Manual trigger for testing the notification path without waiting
+    for a real print to finish. Stamps printer_name from the live state
+    so the synthetic event matches the shape of a real bambu_state event.
+
+    Without a `duck_id` query param, fires for the default duck.
+    # COMPAT — same fallback as the un-scoped /tools routes."""
+    target = duck_id or db.get().default_duck_id()
+    if target is None:
+        return {"ok": False, "error": "no ducks registered"}
+    state = _bambu_states.get(target)
+    pname = state.printer_name if state else ""
+    fire_notification_for(target, {"type": event, "subtask": subtask,
+                                    "printer_name": pname})
     return {
         "ok": True, "event": event, "subtask": subtask,
+        "duck_id": target,
         "printer_name": pname,
-        "clients_notified": len(_notify_clients),
+        "clients_notified": len(_notify_clients.get(target, set())),
     }

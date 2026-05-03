@@ -1,0 +1,17 @@
+# Relay runtime artifacts — never commit user data or live state.
+.venv/
+__pycache__/
+
+# Legacy single-tenant credential store (now superseded by ducks.db,
+# kept on disk for safety until operator deletes — see db.py
+# migrate_from_tokens_json).
+tokens.json
+
+# Multi-tenant duck registry (SQLite WAL mode produces -shm and -wal
+# sidecar files; ignore them all).
+ducks.db
+ducks.db-shm
+ducks.db-wal
+
+# Recordings folder is opt-in (RECORD=1) — local debug artifact.
+recordings/
