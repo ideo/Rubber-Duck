@@ -535,6 +535,14 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
     if (!email || !password) {
         return BAMBU_LOGIN_WS_BAD_CREDS;
     }
+    // Defensive: notify_task_start() should always create this before
+    // s_notify_ws_connected goes true, but if a caller ever invokes us
+    // before the task ran (or after a teardown nulled it), don't crash
+    // on xSemaphoreTake. Return a benign timeout-equivalent.
+    if (s_login_done == NULL) {
+        ESP_LOGE(TAG, "bambu_login_via_ws: s_login_done not initialized");
+        return BAMBU_LOGIN_WS_TIMEOUT;
+    }
     // Build the JSON body. We hand-roll instead of pulling cJSON into
     // agent.c — the schema is fixed and the values are short. Caller is
     // responsible for sanitizing inputs (provision.c uses url_decode on

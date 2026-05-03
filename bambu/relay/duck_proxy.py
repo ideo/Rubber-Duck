@@ -475,6 +475,10 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 try:
                     result = await _bambu_login_handler(payload)
                     reply = {"type": "bambu_login_result", "ok": True, **result}
+                except asyncio.CancelledError:
+                    # Don't swallow shutdown/cancellation as a login failure —
+                    # propagate so FastAPI's lifespan teardown can finish.
+                    raise
                 except Exception as e:
                     code = "login_failed"
                     msg_text = str(e)

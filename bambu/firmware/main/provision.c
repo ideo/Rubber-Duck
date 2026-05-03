@@ -77,9 +77,17 @@ static volatile wiz_state_t s_state = WIZ_COLLECT_WIFI;
 // In-memory only — the password gets sent over WS to the relay and
 // then forgotten on the chip. The relay holds the access_token after
 // login, so the chip never needs to keep the password around.
+//
+// Protected by s_creds_mutex: writes happen on the httpd handler task
+// (/save), reads happen on the worker tasks. Without the mutex a
+// double-tap of /save during a worker's snprintf can tear the buffers.
+// Workers should snapshot under-lock into local stack buffers before
+// the long-running bambu_login_via_ws call, so the mutex is only ever
+// held briefly.
 static char s_bambu_email[65] = {0};
 static char s_bambu_password[97] = {0};
 static char s_bambu_user_id[40] = {0};
+static SemaphoreHandle_t s_creds_mutex = NULL;
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
 #define BIT_STA_GOT_IP   BIT0
@@ -383,6 +391,10 @@ static esp_err_t save_handler(httpd_req_t *req) {
         return ESP_OK;
     }
     form_get(body, "pw", wifi_pw, sizeof(wifi_pw));
+    // Cred buffers are read by the worker task — take the lock briefly
+    // so a refresh-tap of /save while a worker is running can't tear the
+    // strings under the worker's snprintf.
+    if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
     form_get(body, "bemail", s_bambu_email, sizeof(s_bambu_email));
     form_get(body, "bpw", s_bambu_password, sizeof(s_bambu_password));
     // user_id is auto-resolved via /preference on the relay side now —
@@ -390,6 +402,7 @@ static esp_err_t save_handler(httpd_req_t *req) {
     // /preference we fall back to relay-side env BAMBU_USER_ID, OR add
     // a recovery form. Not worth a captive-portal field today.
     s_bambu_user_id[0] = '\0';
+    if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
 
     // Persist WiFi to NVS (so reboot recovers). Bambu creds stay in
     // memory only — they get sent to the relay over WS during the
@@ -421,8 +434,8 @@ static esp_err_t save_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Forward declaration — defined below.
-static void retry_login_with_code(const char *code);
+// Forward declaration — worker spawned by /code (defined below).
+static void retry_login_worker_task(void *arg);
 
 static esp_err_t code_handler(httpd_req_t *req) {
     char body[64] = {0};
@@ -440,8 +453,22 @@ static esp_err_t code_handler(httpd_req_t *req) {
         httpd_resp_send(req, "Missing code", HTTPD_RESP_USE_STRLEN);
         return ESP_OK;
     }
+    // Spawn a worker so we can return 303 immediately and the browser
+    // sees the LOGGING_IN page during the 30s wait (mirroring /save).
+    // Stash the code in a heap buffer the worker takes ownership of.
+    char *code_arg = malloc(sizeof(code));
+    if (!code_arg) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    strlcpy(code_arg, code, sizeof(code));
     s_state = WIZ_LOGGING_IN;
-    retry_login_with_code(code);
+    if (xTaskCreate(retry_login_worker_task, "code_worker", 6144,
+                    code_arg, 4, NULL) != pdPASS) {
+        free(code_arg);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
 
     httpd_resp_set_status(req, "303 See Other");
     httpd_resp_set_hdr(req, "Location", "/");
@@ -463,9 +490,19 @@ static void provision_worker_task(void *arg) {
         return;
     }
 
-    // 2. Skip Bambu login entirely if user didn't fill the email field —
-    //    they can configure later via a future duck.local recovery surface.
-    if (s_bambu_email[0] == '\0') {
+    // 2. Snapshot creds into local stack buffers so we can release the
+    //    mutex before the long-running login call. This keeps the lock
+    //    hold time microseconds, not seconds.
+    char email[65], password[97], user_id[40];
+    if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+    strlcpy(email,    s_bambu_email,    sizeof(email));
+    strlcpy(password, s_bambu_password, sizeof(password));
+    strlcpy(user_id,  s_bambu_user_id,  sizeof(user_id));
+    if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+
+    // Skip Bambu login entirely if user didn't fill the email field —
+    // they can configure later via a future duck.local recovery surface.
+    if (email[0] == '\0') {
         ESP_LOGI(TAG, "worker: no Bambu email, skipping cloud login");
         s_state = WIZ_DONE;
         vTaskDelete(NULL);
@@ -493,12 +530,14 @@ static void provision_worker_task(void *arg) {
     // 5. Send the login. NEED_2FA is the typical first response.
     s_state = WIZ_LOGGING_IN;
     bambu_login_ws_result_t r = bambu_login_via_ws(
-        s_bambu_email, s_bambu_password, "", s_bambu_user_id, 30000);
+        email, password, "", user_id, 30000);
     ESP_LOGI(TAG, "worker: bambu_login_via_ws result=%d", r);
     switch (r) {
         case BAMBU_LOGIN_WS_OK:
             // Forget the password now — relay holds the access_token.
+            if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
             memset(s_bambu_password, 0, sizeof(s_bambu_password));
+            if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
             s_state = WIZ_DONE;
             break;
         case BAMBU_LOGIN_WS_NEED_2FA:
@@ -518,13 +557,25 @@ static void provision_worker_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-static void retry_login_with_code(const char *code) {
+static void retry_login_worker_task(void *arg) {
+    char *code = (char *)arg;
+
+    // Snapshot creds under-lock — same pattern as provision_worker_task.
+    char email[65], password[97], user_id[40];
+    if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+    strlcpy(email,    s_bambu_email,    sizeof(email));
+    strlcpy(password, s_bambu_password, sizeof(password));
+    strlcpy(user_id,  s_bambu_user_id,  sizeof(user_id));
+    if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+
     bambu_login_ws_result_t r = bambu_login_via_ws(
-        s_bambu_email, s_bambu_password, code, s_bambu_user_id, 30000);
-    ESP_LOGI(TAG, "retry_login_with_code result=%d", r);
+        email, password, code, user_id, 30000);
+    ESP_LOGI(TAG, "retry_login_worker result=%d", r);
     switch (r) {
         case BAMBU_LOGIN_WS_OK:
+            if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
             memset(s_bambu_password, 0, sizeof(s_bambu_password));
+            if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
             s_state = WIZ_DONE;
             break;
         case BAMBU_LOGIN_WS_NEED_2FA:
@@ -533,6 +584,8 @@ static void retry_login_with_code(const char *code) {
             s_state = WIZ_LOGIN_BAD_CREDS;
             break;
     }
+    free(code);
+    vTaskDelete(NULL);
 }
 
 // ---- Entry point ----
@@ -541,6 +594,7 @@ esp_err_t wifi_provision_run(void) {
     ESP_LOGI(TAG, "starting APSTA onboarding wizard");
     s_state = WIZ_COLLECT_WIFI;
     s_wifi_event_group = xEventGroupCreate();
+    if (!s_creds_mutex) s_creds_mutex = xSemaphoreCreateMutex();
 
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
