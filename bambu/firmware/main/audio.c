@@ -194,43 +194,33 @@ esp_err_t audio_init(void) {
     // High-shelf EQ: boost above 2kHz by +6dB to undo enclosure muffling.
     compute_high_shelf(2000.0f, 0.7f, 6.0f);
 
-    // ---- Mic calibration: DC offset + auto-gain ----
-    // Same approach as rubber_duck_s3_ducky/MicCapture.ino setupMic().
-    int16_t calBuf[AUDIO_FRAME_SAMPLES];
-    size_t calRead = 0;
-    long long calSum = 0;
-    int calCount = 0;
-    for (int f = 0; f < 4; f++) {
-        if (i2s_channel_read(s_rx, calBuf, sizeof(calBuf), &calRead,
-                             pdMS_TO_TICKS(100)) == ESP_OK) {
-            int n = calRead / sizeof(int16_t);
-            for (int i = 0; i < n; i++) calSum += calBuf[i];
-            calCount += n;
-        }
-    }
-    s_mic_dc = (calCount > 0) ? (float)(calSum / calCount) : 0.0f;
+    // ---- Mic gain: fixed conservative value ----
+    // Was: noise-RMS-driven auto-gain at boot. Boot conditions ≠
+    // talking conditions, so the locked-in value mismatched the room
+    // when the user actually pressed the button — symptom was
+    // "sometimes I just can't seem to talk to it." ElevenLabs Agents
+    // does its own VAD + level normalization on the cloud side; a
+    // fixed conservative gain feeds it a predictable signal at any
+    // reasonable volume. If we see field reports of whisper-level
+    // speech being missed, revisit with in-session AGC (#50).
+    s_mic_gain = 8.0f;
+    s_mic_dc = 0.0f;
 
-    if (calCount > 0 &&
-        i2s_channel_read(s_rx, calBuf, sizeof(calBuf), &calRead,
-                         pdMS_TO_TICKS(100)) == ESP_OK) {
-        int n = calRead / sizeof(int16_t);
-        float noiseSum = 0;
-        for (int i = 0; i < n; i++) {
-            float v = (float)calBuf[i] - s_mic_dc;
-            noiseSum += v * v;
-        }
-        float noiseRMS = sqrtf(noiseSum / n);
-        if (noiseRMS > 1.0f) {
-            float g = 8192.0f / (noiseRMS * 10.0f);
-            if (g < 1.0f) g = 1.0f;
-            if (g > 64.0f) g = 64.0f;
-            s_mic_gain = g;
-        } else {
-            s_mic_gain = 8.0f;
-        }
-        ESP_LOGI(TAG, "mic cal: DC=%.0f noiseRMS=%.1f gain=%.1f",
-                 s_mic_dc, noiseRMS, s_mic_gain);
+    // Seed the DC tracker with one frame so the first ~60ms of audio
+    // doesn't ride a stale DC offset through the gain stage. Cheap
+    // (~20ms blocking) and only at boot. The slow alpha tracker in
+    // audio_mic_read takes over from here.
+    int16_t seedBuf[AUDIO_FRAME_SAMPLES];
+    size_t seedRead = 0;
+    if (i2s_channel_read(s_rx, seedBuf, sizeof(seedBuf), &seedRead,
+                         pdMS_TO_TICKS(100)) == ESP_OK && seedRead > 0) {
+        int n = seedRead / sizeof(int16_t);
+        long long sum = 0;
+        for (int i = 0; i < n; i++) sum += seedBuf[i];
+        s_mic_dc = (float)(sum / n);
     }
+    ESP_LOGI(TAG, "mic init: DC seed=%.0f gain=%.1f (fixed)",
+             s_mic_dc, s_mic_gain);
 
 #if defined(AUDIO_I2S_SPLIT)
     ESP_LOGI(TAG, "I2S split initialized @ %d Hz (mic: BCLK=%d WS=%d SD=%d, "

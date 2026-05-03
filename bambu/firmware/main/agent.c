@@ -47,14 +47,17 @@ bool agent_speaking(void)        { return s_agent_speaking; }
 // ---- inbound handling ----
 
 static void on_text(const char *json, size_t len) {
-    // Cheap substring sniff — relay only sends two known control messages,
-    // no need for a full JSON parser on the hot path.
-    if (memmem(json, len, "interruption", 12) != NULL) {
+    // Substring match against the FULL type-tag literal so a future
+    // control message that happens to contain "interruption" or
+    // "ready" inside another field can't trip the wrong handler.
+    // No JSON parser on the hot path — the wire format is fixed by
+    // duck_proxy.py and well-formed; a literal-tag match is enough.
+    if (memmem(json, len, "\"type\":\"interruption\"", 21) != NULL) {
         // Drop any pending agent speaker output so the duck stops mid-word.
         // Mic stays on (it never went off).
         if (s_spk_stream) xStreamBufferReset(s_spk_stream);
         ESP_LOGI(TAG, "rx interruption");
-    } else if (memmem(json, len, "ready", 5) != NULL) {
+    } else if (memmem(json, len, "\"type\":\"ready\"", 14) != NULL) {
         ESP_LOGI(TAG, "session ready");
         audio_mic_enable(true);
     }
@@ -345,6 +348,12 @@ static volatile bool s_notify_ws_connected = false;
 static SemaphoreHandle_t s_login_done = NULL;
 static volatile bambu_login_ws_result_t s_login_last_result = BAMBU_LOGIN_WS_TIMEOUT;
 
+// Same shape for set_eleven_creds. Allocated lazily inside the sender;
+// declared here so notify_ws_event (which fires above the sender in
+// the file) can give the semaphore on ack arrival.
+static SemaphoreHandle_t s_eleven_done = NULL;
+static volatile bool s_eleven_last_ok = false;
+
 // Queue of pending notifications. Single-slot used to lose events when two
 // arrived back-to-back while a session was active (P0-2 in the agent review).
 // 4 deep is comfortable: with the relay's inject-into-active-session path the
@@ -399,20 +408,36 @@ static bool extract_json_string(const char *data, size_t data_len,
     return true;
 }
 
+// Tracks the last time we observed a CONNECTED event on the notify
+// channel. Watchdog uses this to spot "been disconnected for too long"
+// — a known failure mode where IDF's internal auto-reconnect doesn't
+// kick in after a server-initiated graceful close (e.g. Fly redeploy).
+// Set to "now" on every CONNECTED event so a flapping connection
+// keeps resetting the timer; only sustained disconnects trigger the
+// watchdog. See #51.
+static volatile int64_t s_notify_last_connected_ms = 0;
+
+static inline int64_t notify_now_ms(void) {
+    return esp_timer_get_time() / 1000;
+}
+
 static void notify_ws_event(void *handler_args, esp_event_base_t base,
                              int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *d = event_data;
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "notify channel connected to %s", RELAY_NOTIFY_URL);
         s_notify_ws_connected = true;
+        s_notify_last_connected_ms = notify_now_ms();
         return;
     } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED ||
                event_id == WEBSOCKET_EVENT_CLOSED) {
-        ESP_LOGI(TAG, "notify channel closed — auto-reconnecting");
+        ESP_LOGI(TAG, "notify channel closed — auto-reconnecting (watchdog "
+                      "will force-recreate if reconnect stalls)");
         s_notify_ws_connected = false;
         return;
     } else if (event_id == WEBSOCKET_EVENT_ERROR) {
-        ESP_LOGE(TAG, "notify channel error (auto-reconnect will retry)");
+        ESP_LOGE(TAG, "notify channel error (auto-reconnect will retry, "
+                      "watchdog will force-recreate if it stalls)");
         return;
     }
     if (event_id == WEBSOCKET_EVENT_DATA) {
@@ -464,6 +489,26 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                 return;
             }
 
+            if (strcmp(type_field, "set_eleven_creds_result") == 0) {
+                // {"type":"set_eleven_creds_result","ok":true|false,"error":"..."}
+                // Same "true" sniff as bambu_login_result above. We don't
+                // surface the specific error code today — anything other
+                // than ok=true means the captive portal should report a
+                // generic "couldn't save voice settings, try again."
+                const char *ok_pos = memmem(d->data_ptr, d->data_len, "\"ok\"", 4);
+                bool ok_true = false;
+                if (ok_pos) {
+                    const char *limit = (const char *)d->data_ptr + d->data_len;
+                    const char *cursor = ok_pos + 4;
+                    while (cursor < limit && (*cursor == ' ' || *cursor == ':' || *cursor == '\t')) cursor++;
+                    ok_true = (cursor + 4 <= limit) && memcmp(cursor, "true", 4) == 0;
+                }
+                s_eleven_last_ok = ok_true;
+                ESP_LOGI(TAG, "set_eleven_creds_result: ok=%d", ok_true);
+                if (s_eleven_done) xSemaphoreGive(s_eleven_done);
+                return;
+            }
+
             notify_item_t item = {0};
             if (!extract_json_string(d->data_ptr, d->data_len, "event",
                                       item.event, sizeof(item.event))) {
@@ -490,13 +535,13 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
     // CONNECTED / DISCONNECTED / ERROR handled at top of function.
 }
 
-static void notify_task(void *arg) {
-    // Same X-Duck-Id header as /ws/duck. Long-lived connection, so we
-    // can stash the formatted header string at file scope — doesn't
-    // matter for correctness but means a future reconnect doesn't have
-    // to recompute it. Using a stack-local mirrored from agent_run_session
-    // pattern for parallelism (and because the task lifetime makes the
-    // stack-local valid for the entire connection lifetime).
+// Build + start a fresh notify WS client. Used by both the initial
+// notify_task spawn and the watchdog's forced-recreate path. Caller
+// is responsible for ensuring s_notify_ws is NULL before calling.
+static esp_err_t notify_ws_create_and_start(void) {
+    // X-Duck-Id header — chip MAC, used by relay's multi-tenant
+    // routing. Long-lived connection so we keep the formatted string
+    // alive at file scope.
     static char ws_headers[64];
     snprintf(ws_headers, sizeof(ws_headers),
              "X-Duck-Id: %s\r\n", duck_id_get());
@@ -512,11 +557,65 @@ static void notify_task(void *arg) {
     s_notify_ws = esp_websocket_client_init(&cfg);
     if (!s_notify_ws) {
         ESP_LOGE(TAG, "notify ws init failed");
-        vTaskDelete(NULL);
-        return;
+        return ESP_FAIL;
     }
-    esp_websocket_register_events(s_notify_ws, WEBSOCKET_EVENT_ANY, notify_ws_event, NULL);
-    esp_websocket_client_start(s_notify_ws);
+    esp_websocket_register_events(s_notify_ws, WEBSOCKET_EVENT_ANY,
+                                   notify_ws_event, NULL);
+    return esp_websocket_client_start(s_notify_ws);
+}
+
+// Watchdog: every WATCHDOG_PERIOD_MS, check whether the notify channel
+// has been disconnected for longer than WATCHDOG_TIMEOUT_MS. If so,
+// destroy the existing WS client and create a fresh one — this is the
+// belt-and-suspenders fix for an IDF reconnect path that occasionally
+// stalls after a server-initiated graceful close (e.g. Fly redeploy).
+// See #51.
+//
+// Tuning notes:
+//   PERIOD = 15s — cheap enough; bounds the worst-case detection delay.
+//   TIMEOUT = 60s — gives IDF's own auto-reconnect (5s + backoff) ~10
+//     attempts before we intervene. Avoids double-recreate races.
+#define NOTIFY_WATCHDOG_PERIOD_MS  15000
+#define NOTIFY_WATCHDOG_TIMEOUT_MS 60000
+
+static void notify_watchdog_task(void *arg) {
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(NOTIFY_WATCHDOG_PERIOD_MS));
+        if (s_notify_ws_connected) continue;
+        int64_t now = notify_now_ms();
+        int64_t since = now - s_notify_last_connected_ms;
+        if (s_notify_last_connected_ms == 0) {
+            // No connection yet since boot — give the initial connect
+            // attempt grace, don't intervene if WiFi is just slow.
+            continue;
+        }
+        if (since < NOTIFY_WATCHDOG_TIMEOUT_MS) continue;
+
+        ESP_LOGW(TAG, "notify watchdog: %lld ms since last connect — "
+                      "force-recreating WS client",
+                 (long long)since);
+        if (s_notify_ws) {
+            esp_websocket_client_stop(s_notify_ws);
+            esp_websocket_client_destroy(s_notify_ws);
+            s_notify_ws = NULL;
+        }
+        if (notify_ws_create_and_start() != ESP_OK) {
+            ESP_LOGE(TAG, "notify watchdog: create_and_start failed; "
+                          "will retry on next tick");
+        } else {
+            // Reset the clock so a stuck-pending state doesn't
+            // immediately retrigger the watchdog before the new
+            // client gets a chance to connect.
+            s_notify_last_connected_ms = now;
+        }
+    }
+}
+
+static void notify_task(void *arg) {
+    if (notify_ws_create_and_start() != ESP_OK) {
+        // Watchdog will retry from here.
+        s_notify_ws = NULL;
+    }
 
     notify_item_t item;
     while (1) {
@@ -547,6 +646,9 @@ esp_err_t notify_task_start(void) {
         s_login_done = xSemaphoreCreateBinary();
     }
     xTaskCreate(notify_task, "notify", 6144, NULL, 4, NULL);
+    // Watchdog independent of notify_task — it keeps running even if
+    // notify_task ever exits (it shouldn't, but defensive).
+    xTaskCreate(notify_watchdog_task, "notify_wd", 3072, NULL, 3, NULL);
     s_notify_started = true;
     return ESP_OK;
 }
@@ -615,15 +717,27 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
     return s_login_last_result;
 }
 
-bool eleven_creds_send_via_ws(const char *key, const char *agent) {
-    // No-op if user left fields blank — they want the relay's default
-    // (which is what shared-relay tenants do; the relay's own env vars
-    // hold the project-default key + a shared agent).
-    if (!key || !*key || !agent || !*agent) return false;
+// Result-tracking for the set_eleven_creds round-trip. Same shape as
+// bambu_login: signal `s_eleven_done` when the matching ack lands;
+// caller blocks on it. The semaphore is created lazily here on first
+// call (no in-flight at boot to worry about) — declarations live up
+// at the file-scope statics block since notify_ws_event references
+// them too.
+bool eleven_creds_send_via_ws(const char *key, const char *agent,
+                               int timeout_ms) {
+    // User left fields blank → no-op success. They've opted into the
+    // relay's default config (shared deployments use the relay's env
+    // vars instead of per-duck creds).
+    if (!key || !*key || !agent || !*agent) return true;
     if (!s_notify_ws || !s_notify_ws_connected) {
         ESP_LOGW(TAG, "eleven_creds_send_via_ws: notify WS not connected");
         return false;
     }
+    if (s_eleven_done == NULL) {
+        s_eleven_done = xSemaphoreCreateBinary();
+        if (s_eleven_done == NULL) return false;
+    }
+
     char body[300];
     int n = snprintf(body, sizeof(body),
         "{\"type\":\"set_eleven_creds\","
@@ -635,12 +749,22 @@ bool eleven_creds_send_via_ws(const char *key, const char *agent) {
         ESP_LOGE(TAG, "eleven_creds body too large: %d", n);
         return false;
     }
+
+    // Drain any stale signal from a previous attempt.
+    xSemaphoreTake(s_eleven_done, 0);
+    s_eleven_last_ok = false;
+
     int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
                                               pdMS_TO_TICKS(5000));
     if (sent < n) {
         ESP_LOGE(TAG, "eleven_creds send failed (sent=%d of %d)", sent, n);
         return false;
     }
-    ESP_LOGI(TAG, "set_eleven_creds sent (%d bytes)", n);
-    return true;
+    ESP_LOGI(TAG, "set_eleven_creds sent (%d bytes), waiting for ack", n);
+
+    if (xSemaphoreTake(s_eleven_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "set_eleven_creds timeout (%d ms)", timeout_ms);
+        return false;
+    }
+    return s_eleven_last_ok;
 }

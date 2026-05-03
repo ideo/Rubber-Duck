@@ -647,11 +647,26 @@ static void provision_worker_task(void *arg) {
     strlcpy(eleven_agent_local, s_eleven_agent, sizeof(eleven_agent_local));
     if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
     if (eleven_key_local[0] && eleven_agent_local[0]) {
-        eleven_creds_send_via_ws(eleven_key_local, eleven_agent_local);
-        // Forget the key on chip — relay holds it now.
-        if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
-        memset(s_eleven_key, 0, sizeof(s_eleven_key));
-        if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+        // 10s timeout — relay's upsert is sub-millisecond; anything
+        // taking longer is a network/relay problem worth surfacing.
+        bool ok = eleven_creds_send_via_ws(eleven_key_local,
+                                            eleven_agent_local, 10000);
+        if (ok) {
+            // Forget the key on chip — relay holds it now.
+            if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
+            memset(s_eleven_key, 0, sizeof(s_eleven_key));
+            if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
+        } else {
+            // Keep the buffer so a future retry path can resend.
+            // For now we just log — captive portal will keep going
+            // with bambu_login; a missing eleven row on the relay
+            // means /ws/duck falls back to env-var creds (shared
+            // deployments) or fails cleanly with a 1011 close
+            // (self-hosted with no env fallback). Either way the
+            // user finds out at first conversation, not silently.
+            ESP_LOGW(TAG, "set_eleven_creds did not ack — relay won't "
+                          "have per-duck creds for this chip");
+        }
     }
 
     // 6. Send the login. NEED_2FA is the typical first response.

@@ -96,7 +96,14 @@ async def _broadcast_notify(duck_id: str, payload: str) -> None:
 # same session use "Printer update:" so the agent treats them as in-context
 # continuations and weaves them into the conversation naturally rather than
 # re-announcing from scratch.
-_session_announced: set[int] = set()
+#
+# Stored as an attribute on the upstream object directly (`upstream._duck_announced`)
+# rather than a set keyed by id(upstream). Python may reuse object ids
+# after GC; a fresh upstream landing in a previously-used id slot would
+# inherit the wrong "already announced" state and use the wrong header.
+# Attribute-on-object dies with the object — no aliasing risk, no
+# separate tracking set to keep in sync.
+_ANNOUNCED_ATTR = "_duck_announced"
 
 
 async def _inject_into_active_sessions(duck_id: str, event_type: str,
@@ -115,18 +122,17 @@ async def _inject_into_active_sessions(duck_id: str, event_type: str,
         return 0
     n = 0
     for upstream in list(upstreams):
-        key = id(upstream)
-        header = "Printer update" if key in _session_announced else "Printer notice"
+        already = getattr(upstream, _ANNOUNCED_ATTR, False)
+        header = "Printer update" if already else "Printer notice"
         text = _printer_text_for(event_type, friendly, header, printer_name)
         try:
             await _send_user_message(upstream, text)
-            _session_announced.add(key)
+            setattr(upstream, _ANNOUNCED_ATTR, True)
             logger.info("notify injected (duck=%s): %s", duck_id, text)
             n += 1
         except Exception as e:
             logger.warning("inject failed (upstream gone?): %s", e)
             upstreams.discard(upstream)
-            _session_announced.discard(key)
     return n
 
 
@@ -447,7 +453,7 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
                 await _send_user_message(upstream, notice)
                 # Mark first announcement done — any further events that
                 # arrive during this session use "Printer update:" phrasing.
-                _session_announced.add(id(upstream))
+                setattr(upstream, _ANNOUNCED_ATTR, True)
             last_sent = [time.time()]
             up = asyncio.create_task(_duck_to_eleven(duck, upstream, mic_wav, last_sent))
             down = asyncio.create_task(_eleven_to_duck(duck, upstream, agent_wav))
@@ -464,7 +470,8 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
                 ups.discard(upstream_ref)
                 if not ups:
                     _active_upstreams.pop(duck_id, None)
-            _session_announced.discard(id(upstream_ref))
+            # No separate cleanup for the announced flag — it lives on
+            # the upstream object and dies with it.
         if mic_wav is not None:
             mic_wav.close()
         if agent_wav is not None:
@@ -560,25 +567,33 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
             if mtype == "set_eleven_creds":
                 # Persist the user's ElevenLabs key + agent on this duck's
                 # row. Captive portal sends this once during onboarding;
-                # they get used the next time /ws/duck opens. Handler is
-                # synchronous + cheap (one DB upsert) so we don't bother
-                # with an explicit ack — chip is fire-and-forget.
+                # they get used the next time /ws/duck opens. We send a
+                # `set_eleven_creds_result` ack back so the chip can
+                # surface a clear failure to the user — without it a
+                # silent DB error meant friends would think onboarding
+                # succeeded but /ws/duck would close with code 1011 on
+                # their first conversation attempt (audit, 2026-05-03).
                 target = payload.get("duck_id") or duck_id
                 key = payload.get("elevenlabs_key")
                 agent = payload.get("elevenlabs_agent")
+                ack = {"type": "set_eleven_creds_result", "ok": False}
                 if not target or not key or not agent:
-                    logger.warning("set_eleven_creds missing fields, ignoring")
-                    continue
-                try:
-                    db.get().upsert_duck(
-                        target,
-                        elevenlabs_key=key,
-                        elevenlabs_agent=agent,
-                    )
-                    logger.info("set_eleven_creds stored for duck=%s "
-                                "(agent=%s)", target, agent)
-                except Exception as e:
-                    logger.warning("set_eleven_creds upsert failed: %s", e)
+                    ack["error"] = "missing_fields"
+                    logger.warning("set_eleven_creds missing fields")
+                else:
+                    try:
+                        db.get().upsert_duck(
+                            target,
+                            elevenlabs_key=key,
+                            elevenlabs_agent=agent,
+                        )
+                        logger.info("set_eleven_creds stored for duck=%s "
+                                    "(agent=%s)", target, agent)
+                        ack["ok"] = True
+                    except Exception as e:
+                        logger.warning("set_eleven_creds upsert failed: %s", e)
+                        ack["error"] = "db_error"
+                await duck.send_text(json.dumps(ack, ensure_ascii=False))
                 continue
             if mtype == "bambu_login" and _bambu_login_handler is not None:
                 # Stamp duck_id from the WS handshake into the payload so
