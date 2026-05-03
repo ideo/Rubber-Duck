@@ -17,7 +17,44 @@
 // amp, WS2812B status LED. Mic and speaker share a single I2S bus in
 // full-duplex mode (BCLK + WS shared, only data pins differ).
 
-// ---- Single I2S port for both mic + speaker (full-duplex) ----
+// ---- Hardware variant selector ----
+// DUCK_VARIANT_XIAO: defined via -DDUCK_VARIANT=XIAO at build time (CMake
+// reads $DUCK_VARIANT env). Default (undefined) = ducky PCB.
+//
+// Ducky PCB     — full-duplex I2S on a single port (shared BCLK/WS).
+// Standard XIAO — split I2S: mic on port 0, speaker on port 1, separate
+//                  clocks. Pin map mirrors firmware/rubber_duck_s3/Config.h
+//                  with Seeed silk D-labels resolved to S3 GPIOs.
+
+#if defined(DUCK_VARIANT_XIAO)
+// ---- Standard XIAO Seeed ESP32-S3 + cobbled ICS-43434 mic + MAX98357 ----
+#define AUDIO_I2S_SPLIT 1
+#define I2S_PORT_MIC           0   // mic on I2S_NUM_0
+#define I2S_PORT_SPK           1   // speaker on I2S_NUM_1
+
+// Speaker (MAX98357) — XIAO labels D1/D0/D2 → GPIO 2/1/3
+#define SPK_PIN_BCLK           2
+#define SPK_PIN_WS             1
+#define SPK_PIN_DIN            3
+
+// Mic (ICS-43434) — XIAO labels D8/D10/D9 → GPIO 7/9/8
+#define MIC_PIN_BCLK           7
+#define MIC_PIN_WS             9
+#define MIC_PIN_SD             8
+
+// User button — D5 → GPIO 6. Active-low to GND with internal pull-up.
+#define BUTTON_PIN             6
+
+// No status LED on the cobbled build. Existing main.c led_* helpers are
+// no-ops, so just point LED_PIN at an unused GPIO and let them compile.
+#define LED_PIN                21
+
+// Servo — D3 → GPIO 4
+#define SERVO_PIN              4
+
+#else
+// ---- Ducky PCB (default) — single I2S port full-duplex ----
+#define AUDIO_I2S_DUPLEX 1
 #define I2S_PORT               0
 
 // Shared clock + word-select pins
@@ -45,6 +82,7 @@
 // Constants match firmware/rubber_duck_s3_ducky/Config.h verbatim so the
 // "feel" of the head animation is identical to the existing ducks.
 #define SERVO_PIN              3
+#endif // DUCK_VARIANT_XIAO
 #define SERVO_CENTER           90
 #define SERVO_RANGE            80
 #define SERVO_MIN              (SERVO_CENTER - SERVO_RANGE)

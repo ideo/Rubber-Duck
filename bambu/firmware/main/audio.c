@@ -88,7 +88,56 @@ static inline float biquad_step(float x) {
 }
 
 esp_err_t audio_init(void) {
-    // Allocate both TX (speaker) and RX (mic) on the SAME port — full-duplex.
+#if defined(AUDIO_I2S_SPLIT)
+    // Standard XIAO build: mic and speaker on SEPARATE I2S ports, each
+    // with its own clocks and pins. (No single port = no full-duplex.)
+    i2s_chan_config_t spk_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT_SPK, I2S_ROLE_MASTER);
+    spk_chan_cfg.dma_desc_num = 8;
+    spk_chan_cfg.dma_frame_num = AUDIO_FRAME_SAMPLES;
+    spk_chan_cfg.auto_clear_after_cb = true;
+    ESP_ERROR_CHECK(i2s_new_channel(&spk_chan_cfg, &s_tx, NULL));
+
+    i2s_chan_config_t mic_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT_MIC, I2S_ROLE_MASTER);
+    mic_chan_cfg.dma_desc_num = 8;
+    mic_chan_cfg.dma_frame_num = AUDIO_FRAME_SAMPLES;
+    mic_chan_cfg.auto_clear_after_cb = true;
+    ESP_ERROR_CHECK(i2s_new_channel(&mic_chan_cfg, NULL, &s_rx));
+
+    // ---- TX (speaker) ----
+    i2s_std_config_t tx_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE_HZ),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = SPK_PIN_BCLK,
+            .ws = SPK_PIN_WS,
+            .dout = SPK_PIN_DIN,
+            .din = I2S_GPIO_UNUSED,
+            .invert_flags = {0},
+        },
+    };
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &tx_cfg));
+
+    // ---- RX (mic) ----
+    i2s_std_config_t rx_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE_HZ),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = MIC_PIN_BCLK,
+            .ws = MIC_PIN_WS,
+            .dout = I2S_GPIO_UNUSED,
+            .din = MIC_PIN_SD,
+            .invert_flags = {0},
+        },
+    };
+    rx_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_rx, &rx_cfg));
+
+    ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
+    ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
+#else
+    // Ducky PCB: full-duplex on one port, both channels share BCLK/WS.
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
     chan_cfg.dma_desc_num = 8;
     // Match the per-descriptor size to the read size so a single read
@@ -134,6 +183,7 @@ esp_err_t audio_init(void) {
 
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
+#endif
 
     s_mic_lock = xSemaphoreCreateMutex();
 
@@ -182,10 +232,18 @@ esp_err_t audio_init(void) {
                  s_mic_dc, noiseRMS, s_mic_gain);
     }
 
+#if defined(AUDIO_I2S_SPLIT)
+    ESP_LOGI(TAG, "I2S split initialized @ %d Hz (mic: BCLK=%d WS=%d SD=%d, "
+                  "spk: BCLK=%d WS=%d DIN=%d)",
+             AUDIO_SAMPLE_RATE_HZ,
+             MIC_PIN_BCLK, MIC_PIN_WS, MIC_PIN_SD,
+             SPK_PIN_BCLK, SPK_PIN_WS, SPK_PIN_DIN);
+#else
     ESP_LOGI(TAG, "I2S full-duplex initialized @ %d Hz (BCLK=%d WS=%d "
                   "spk_dout=%d mic_din=%d)",
              AUDIO_SAMPLE_RATE_HZ, I2S_PIN_BCLK, I2S_PIN_WS,
              SPK_PIN_DIN, MIC_PIN_SD);
+#endif
     return ESP_OK;
 }
 
