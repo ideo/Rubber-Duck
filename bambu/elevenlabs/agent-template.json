@@ -15,7 +15,7 @@
             "name": "get_printer_state",
             "description": "Get the current state of all bound 3D printers as a dict keyed by printer name. Each entry has stage (IDLE/PREPARE/RUNNING/PAUSE/FINISH/FAILED), current print name, percent complete, current layer, total layers, minutes remaining, nozzle and bed temperatures, chamber temp, and any active HMS error codes. Call this for any 'how's the print going' / 'what's it doing' question.",
             "api_schema": {
-              "url": "{{RELAY_URL}}/tools/printer_state/{{DUCK_ID}}",
+              "url": "{{RELAY_URL}}/tools/printer_state",
               "method": "GET",
               "request_headers": [
                 {
@@ -31,7 +31,7 @@
             "name": "get_temperatures",
             "description": "Get just the temperatures (nozzle current and target, bed current and target, chamber) for all bound printers. Smaller subset of get_printer_state, use when the user only asks about temps.",
             "api_schema": {
-              "url": "{{RELAY_URL}}/tools/temperatures/{{DUCK_ID}}",
+              "url": "{{RELAY_URL}}/tools/temperatures",
               "method": "GET",
               "request_headers": [
                 {
@@ -47,7 +47,7 @@
             "name": "get_print_history",
             "description": "Get the last N completed prints (FINISH or FAILED outcomes) merged across all bound printers, with timestamp, outcome, subtask name, and printer_name. Use for questions like 'how did the last few go' or 'when did I last print that benchy'.",
             "api_schema": {
-              "url": "{{RELAY_URL}}/tools/print_history/{{DUCK_ID}}",
+              "url": "{{RELAY_URL}}/tools/print_history",
               "method": "GET",
               "request_headers": [
                 {

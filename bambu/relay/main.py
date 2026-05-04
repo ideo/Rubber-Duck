@@ -1,20 +1,18 @@
-"""Convai webhook target. Per-duck tools the LLM can call mid-conversation.
+"""ElevenLabs webhook target. Per-duck tools the LLM can call mid-conversation.
 
 Multi-tenant since 2026-05-03 (#31): the relay holds N BambuState
-instances, one per duck_id, in the `states` registry. Routes that the
-ElevenLabs agent calls are now path-scoped (`/tools/printer_state/{duck_id}`).
-Old un-scoped routes are kept as compatibility shims that resolve to the
-"default" duck (oldest row in the DB) so existing chip firmware and a
-pre-update ElevenLabs agent config keep working through the cutover.
+instances, one per duck_id, in the `states` registry. Two parallel
+shapes for the same data:
 
-The cutover plan, per bambu/docs/MULTI-TENANT-REQ.md:
-1. Land this PR — relay becomes multi-tenant, existing duck still works
-   as-is via compat shims.
-2. Update chip firmware to send `X-Duck-Id` on /ws/notify and /ws/duck
-   handshakes (separate PR; tracked in #31).
-3. Update ElevenLabs agent's tool URLs to include the duck_id (manual,
-   per-tenant — done via the setup helper page; tracked in #48).
-4. Drop compat shims — search "# COMPAT" markers.
+- **Path-scoped routes** like `/tools/printer_state/{duck_id}` —
+  the explicit shape needed when one relay hosts multiple ducks
+  (each ElevenLabs agent points at its tenant's path).
+- **Un-scoped routes** like `/tools/printer_state` — resolves to the
+  default duck (oldest DB row). Canonical for self-hosters with one
+  duck, where the duck_id is unambiguous; the shipped agent template
+  uses these.
+
+Both are first-class. See bambu/docs/MULTI-TENANT-REQ.md.
 """
 from __future__ import annotations
 
@@ -240,12 +238,13 @@ def claim_legacy_if_applicable(announced_id: str) -> str:
 
 
 def _resolve_duck_id(duck_id: str | None) -> str:
-    """Compat helper: explicit duck_id wins; otherwise fall back to the
-    DB's default (oldest row). Raises 404 if the DB is empty.
+    """Resolve a possibly-omitted duck_id to a concrete one via the DB's
+    default (oldest row). Raises 503 if the DB is empty.
 
-    Used by the un-scoped compat routes. Once chip firmware + ElevenLabs
-    agent both send duck_id everywhere, this helper goes away (search
-    `# COMPAT` to find all the call sites)."""
+    Used by un-scoped routes (`/tools/printer_state` without a path
+    segment) — these are the canonical shape for self-hosters with one
+    duck and the explicit shape for multi-tenant relays where each
+    agent points at its tenant's path-scoped URL."""
     if duck_id:
         return duck_id
     default = db.get().default_duck_id()
@@ -294,25 +293,30 @@ def print_history_scoped(duck_id: str, n: int = 5,
     return {"history": _state_for(duck_id).history(max(1, min(n, 20)))}
 
 
-# ---- COMPAT: un-scoped tools (resolve to default duck) -------------------
-# Kept so a pre-update ElevenLabs agent config keeps working during the
-# cutover. Drop these and `_resolve_duck_id` once all tenants have moved
-# their tool URLs to the path-scoped variants above.
+# ---- Un-scoped tool routes — canonical for single-duck self-hosters ----
+# Originally tagged COMPAT for a multi-tenant cutover, but in practice:
+#   - Self-hosters (one duck per relay): un-scoped is the natural shape;
+#     the agent template uses these URLs directly. Resolves to "the
+#     duck" via default_duck_id() — unambiguous when there's only one.
+#   - Multi-tenant deployments (one relay, several ducks): each agent
+#     uses /tools/.../{duck_id} explicitly because un-scoped would
+#     route every agent to the same default duck.
+# So these routes stay. _resolve_duck_id is part of the canonical API.
 
 
-@app.get("/tools/printer_state")  # COMPAT
+@app.get("/tools/printer_state")
 def printer_state_compat(x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
     return _state_for(_resolve_duck_id(None)).snapshot()
 
 
-@app.get("/tools/temperatures")  # COMPAT
+@app.get("/tools/temperatures")
 def temperatures_compat(x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
     return _state_for(_resolve_duck_id(None)).temperatures()
 
 
-@app.get("/tools/print_history")  # COMPAT
+@app.get("/tools/print_history")
 def print_history_compat(n: int = 5,
                          x_relay_secret: str | None = Header(default=None)):
     _auth(x_relay_secret)
@@ -329,7 +333,7 @@ def raw_state_scoped(duck_id: str):
     return _state_for(duck_id)._state
 
 
-@app.get("/admin/raw_state")  # COMPAT
+@app.get("/admin/raw_state")
 def raw_state_compat():
     duck_id = db.get().default_duck_id()
     if duck_id is None or duck_id not in states:
@@ -392,7 +396,10 @@ async def _do_bambu_login(payload: dict) -> dict:
     password = payload.get("password")
     code = payload.get("code") or None
     user_id_override = payload.get("user_id") or os.environ.get("BAMBU_USER_ID")
-    duck_id = payload.get("duck_id") or _resolve_duck_id(None)  # COMPAT
+    # Fall back to the default duck if the chip didn't send duck_id
+    # in the payload. Pre-X-Duck-Id firmware did this implicitly; the
+    # current chip always sends it via the WS handshake header.
+    duck_id = payload.get("duck_id") or _resolve_duck_id(None)
     # Same legacy-adoption pass as the WS handshake — chip-supplied real
     # MAC takes over the "legacy" placeholder row.
     duck_id = claim_legacy_if_applicable(duck_id)
@@ -737,6 +744,6 @@ def bambu_status_scoped(duck_id: str,
     return info
 
 
-@app.get("/admin/bambu_status")  # COMPAT
+@app.get("/admin/bambu_status")
 def bambu_status_compat(x_relay_secret: str | None = Header(default=None)):
     return bambu_status_scoped(_resolve_duck_id(None), x_relay_secret)
