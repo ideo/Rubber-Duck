@@ -100,6 +100,11 @@ typedef struct {
     char name[32];
     char serial[20];
     bool online;
+    // True if this serial is currently in the duck's binding on the
+    // relay (i.e. an active subscription). Drives the picker's
+    // checkbox state on revisit so a previously-unchecked printer
+    // doesn't re-appear as checked just because it's online.
+    bool subscribed;
 } bambu_printer_info_t;
 
 // How many printers came back in the most recent bambu_login_result

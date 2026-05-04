@@ -136,7 +136,20 @@ void app_main(void) {
         } else {
             ESP_LOGI(TAG, "no wifi — press or tap to enter setup mode");
         }
-        wake_trigger_t trigger = wake_wait_for_trigger();
+        wake_trigger_t trigger;
+        if (force_provision) {
+            // Long-press → soft re-onboard already announced user
+            // intent. Skip wake_wait_for_trigger so the user doesn't
+            // have to tap a SECOND time to actually enter the wizard
+            // after the long-press chirp + reboot. Synthesize a
+            // button trigger so the routing matrix below routes us
+            // into the wizard path. One-shot.
+            ESP_LOGI(TAG, "force_provision: skipping wake_wait, going straight to wizard");
+            force_provision = false;
+            trigger = WAKE_BUTTON;
+        } else {
+            trigger = wake_wait_for_trigger();
+        }
         led_on();
         wake_quiet_for_ms(1500);  // suppress tap detector through chirps + setup
 

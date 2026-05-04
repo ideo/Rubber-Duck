@@ -493,6 +493,10 @@ async def _do_bambu_login(payload: dict) -> dict:
         out[f"printer_{i}_name"] = safe_name
         out[f"printer_{i}_serial"] = d["dev_id"]
         out[f"printer_{i}_online"] = "1" if d.get("online", False) else "0"
+        # First-onboarding default: every printer in `chosen` is about
+        # to be subscribed (Phase A behavior — bambu_login subscribes
+        # to all). Picker will pre-check accordingly.
+        out[f"printer_{i}_subscribed"] = "1"
     return out
 
 

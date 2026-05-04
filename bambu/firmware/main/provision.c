@@ -251,8 +251,13 @@ static const char html_head[] =
     // stretched native checkboxes into invisible "text-box"-shaped
     // controls on iOS captive portal browsers (#41 Phase B picker).
     // Force native rendering, fixed size, no stretch.
-    "input[type=checkbox]{width:auto;padding:0;border:0;border-radius:0;"
-    "transform:scale(1.4);margin:.4em .8em .4em .2em;vertical-align:middle}"
+    // Native size via width/height (transform:scale was breaking the
+    // tap hit-testing on iOS captive-portal browser — checkbox was
+    // visually scaled but the actual touch region stayed at the
+    // unscaled position, leaving users tapping the wrong area).
+    "input[type=checkbox]{width:24px;height:24px;padding:0;border:0;"
+    "border-radius:0;margin:0 .8em 0 .2em;vertical-align:middle;"
+    "accent-color:#f5b942}"
     "button{margin-top:1.5em;width:100%;padding:.9em;font-size:1.05em;"
     "background:#f5b942;border:0;border-radius:6px;font-weight:600}"
     ".sub{color:#666;font-size:.9em}"
@@ -421,23 +426,27 @@ static void render_pick_printers(httpd_req_t *req) {
         }
         safe_name[o] = '\0';
         const char *fallback = (info.name[0] == '\0') ? info.serial : safe_name;
-        // Plain inline layout — no flexbox, no nested spans. iOS's
-        // captive-portal browser was clipping the previous flex
-        // version such that the printer name landed off-screen right.
-        // display:block label + inline checkbox + name + status keeps
-        // everything in the body's 420px column. Buffer sized for
-        // ~200 chars of format string + ~64 chars of name +
-        // small substitutions, with margin.
+        // Explicit id/for binding (instead of wrapping label) — iOS
+        // captive-portal browser was unreliable about toggling the
+        // checkbox when the label wrapped it. The for=id pattern is
+        // bulletproof. Buffer sized for ~250 chars of format string
+        // + ~64 chars of name + small substitutions, with margin.
         char chunk[512];
+        // Checkbox state reflects current binding (info.subscribed),
+        // not online status. The duck's row on the relay is the
+        // source of truth for "is this printer being listened to";
+        // online is a separate axis we just label visually.
         int cn = snprintf(chunk, sizeof(chunk),
-            "<label style='display:block;padding:.7em 0;"
-            "border-bottom:1px solid #eee;font-weight:400'>"
-            "<input type=checkbox name=p%d value=1 %s>"
+            "<div style='padding:.7em 0;border-bottom:1px solid #eee'>"
+            "<input type=checkbox id=p%d name=p%d value=1 %s>"
+            "<label for=p%d style='display:inline;font-weight:400;cursor:pointer'>"
             "<strong>%s</strong> "
             "<span style='color:%s;font-size:.9em'>(%s)</span>"
-            "</label>",
+            "</label>"
+            "</div>",
+            i, i,
+            info.subscribed ? "checked" : "",
             i,
-            info.online ? "checked" : "",
             fallback,
             info.online ? "#1b5e20" : "#999",
             info.online ? "online" : "offline");

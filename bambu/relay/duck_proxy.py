@@ -631,6 +631,16 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 else:
                     try:
                         printers = await _list_printers_fn(target)
+                        # Also pull the duck's CURRENT subscribed serial
+                        # set so we can stamp `subscribed` per printer.
+                        # Picker uses this to render the right check
+                        # state on revisit (vs defaulting to online).
+                        row = db.get().get_duck(target) or {}
+                        try:
+                            bound_serials = set(json.loads(
+                                row.get("serials") or "[]"))
+                        except (ValueError, TypeError):
+                            bound_serials = set()
                         ack["ok"] = True
                         ack["printer_count"] = str(len(printers))
                         for i, p in enumerate(printers[:8]):
@@ -643,6 +653,8 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                             ack[f"printer_{i}_serial"] = p["serial"]
                             ack[f"printer_{i}_online"] = (
                                 "1" if p.get("online") else "0")
+                            ack[f"printer_{i}_subscribed"] = (
+                                "1" if p["serial"] in bound_serials else "0")
                     except Exception as e:
                         logger.warning("list_printers failed: %s", e)
                         ack["error"] = str(e)[:80]
@@ -666,8 +678,12 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 else:
                     try:
                         # Look up printer names from the existing row
-                        # so we don't lose the friendly labels — chip
-                        # only sends serials, names live in the row.
+                        # AND from a fresh list_devices call. The row
+                        # only has names for currently-bound printers,
+                        # so re-checking a previously-unchecked printer
+                        # would lose its name (only its serial would
+                        # be on the row to look up). Prefer the live
+                        # list_devices result, fall back to the row.
                         row = db.get().get_duck(target) or {}
                         try:
                             existing_serials = json.loads(
@@ -678,6 +694,23 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                             existing_serials, existing_names = [], []
                         name_by_serial = dict(
                             zip(existing_serials, existing_names))
+                        # Ask Bambu cloud for the live full list (uses
+                        # the stored access_token, no re-auth). This
+                        # ensures freshly-rechecked serials get their
+                        # current friendly name.
+                        if _list_printers_fn is not None and \
+                           row.get("access_token"):
+                            try:
+                                live = await _list_printers_fn(target)
+                                for p in live:
+                                    if p.get("name"):
+                                        name_by_serial[p["serial"]] = \
+                                            p["name"]
+                            except Exception as e:
+                                logger.warning(
+                                    "set_printers: live list_devices "
+                                    "failed (%s) — falling back to row "
+                                    "names only", e)
                         chosen_names = [name_by_serial.get(s, "")
                                         for s in serials]
                         db.get().upsert_duck(

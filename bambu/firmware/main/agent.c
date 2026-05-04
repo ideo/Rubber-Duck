@@ -538,6 +538,18 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                         extract_json_string(d->data_ptr, d->data_len, key,
                                              online_str, sizeof(online_str));
                         s_printers[i].online = (online_str[0] == '1');
+                        char sub_str[4] = {0};
+                        snprintf(key, sizeof(key), "printer_%d_subscribed", i);
+                        // Default to subscribed=true if relay didn't
+                        // include the field (older relay, first-time
+                        // onboarding) — matches Phase A "subscribe to
+                        // all by default" behavior.
+                        if (extract_json_string(d->data_ptr, d->data_len,
+                                                 key, sub_str, sizeof(sub_str))) {
+                            s_printers[i].subscribed = (sub_str[0] == '1');
+                        } else {
+                            s_printers[i].subscribed = true;
+                        }
                         if (got_name && got_serial) s_printers_count++;
                     }
                     ESP_LOGI(TAG, "bambu_login_result: parsed %d printers",
@@ -617,6 +629,16 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                         extract_json_string(d->data_ptr, d->data_len, key,
                                              online_str, sizeof(online_str));
                         s_printers[i].online = (online_str[0] == '1');
+                        char sub_str[4] = {0};
+                        snprintf(key, sizeof(key), "printer_%d_subscribed", i);
+                        // For settings revisit, the relay tells us
+                        // exactly which serials are currently bound.
+                        // No default-to-online fallback here; if the
+                        // field's missing assume not subscribed (safer
+                        // — user can tick to add).
+                        extract_json_string(d->data_ptr, d->data_len, key,
+                                             sub_str, sizeof(sub_str));
+                        s_printers[i].subscribed = (sub_str[0] == '1');
                         if (got_name && got_serial) s_printers_count++;
                     }
                     ESP_LOGI(TAG, "list_printers_result: parsed %d printers",
