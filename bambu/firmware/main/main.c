@@ -1,6 +1,7 @@
 #include "agent.h"
 #include "audio.h"
 #include "config.h"
+#include "phrases.h"
 #include "provision.h"
 #include "servo.h"
 #include "wake.h"
@@ -119,10 +120,13 @@ void app_main(void) {
     } else {
         ESP_LOGI(TAG, "no wifi creds — press button or tap to set up");
         // "I need help" chirp: low-low-mid, distinct from the happy
-        // chirp_up that means "connected and ready."
+        // chirp_up that means "connected and ready." Then the spoken
+        // hint that tells the user what to physically do (#34).
+        // Phrase no-ops if phrases haven't been generated yet.
         audio_chirp(450, 100);
         audio_chirp(450, 100);
         audio_chirp(700, 150);
+        phrase_play(PHRASE_TAP_TO_START);
     }
 
     // Wake monitor armed regardless of WiFi state — needed for both:

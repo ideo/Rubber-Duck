@@ -245,9 +245,9 @@ esp_err_t wifi_connect_blocking(int timeout_ms) {
     ESP_ERROR_CHECK(esp_wifi_start());
     // CRITICAL for real-time audio over WSS: disable modem sleep. Default
     // (WIFI_PS_MIN_MODEM) buffers TX in DTIM bursts every ~100ms, which
-    // produces the "abrupt loudness jumps" and "audio duration mismatch"
-    // ElevenLabs reports. Costs ~80mA but mandatory for streaming. URAM
-    // does this for the same reason.
+    // produces "abrupt loudness jumps" and "audio duration mismatch"
+    // symptoms in ElevenLabs' agent timing. Costs ~80mA but mandatory
+    // for any streaming-audio path on this chip.
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     EventBits_t bits = xEventGroupWaitBits(s_event_group, WIFI_CONNECTED_BIT,

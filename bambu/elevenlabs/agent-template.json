@@ -70,11 +70,11 @@
       }
     },
     "tts": {
-      "model_id": "eleven_flash_v2_5",
-      "voice_id": "TX3LPaxmHKxFdv7VOQHJ",
-      "stability": 0.45,
-      "similarity_boost": 0.7,
-      "_comment_voice": "TX3LPaxmHKxFdv7VOQHJ is 'Liam' — slightly dry, casual, mid-range. Adjust to taste in the ElevenLabs dashboard after import; voice.md has the selection criteria."
+      "model_id": "eleven_v3_conversational",
+      "voice_id": "ygoBNrnmTEdu5NtDTmAY",
+      "stability": 0.5,
+      "similarity_boost": 0.8,
+      "_comment_voice": "ygoBNrnmTEdu5NtDTmAY — the canonical Bambu Duck voice, used both by the live conversational agent and by the offline TTS that pre-records the onboarding phrases (bambu/firmware/scripts/gen_phrases.py). Keeps the duck sounding like the same character throughout. Adjust to taste in the ElevenLabs dashboard after import."
     },
     "asr": {
       "quality": "high",

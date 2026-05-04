@@ -1,3 +1,29 @@
+# Spoken-onboarding phrases (#34) only compile if all the .opus blobs
+# have been generated — bambu/firmware/scripts/gen_phrases.py uses
+# ElevenLabs TTS to produce them. The build is otherwise the same;
+# unset HAS_PHRASES = no phrases.c, no opus_decoder.cpp, no embed.
+set(PHRASE_FILES
+    "phrases/tap_to_start.opus"
+    "phrases/wifi_up.opus"
+)
+set(HAS_PHRASES TRUE)
+foreach(p ${PHRASE_FILES})
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${p}")
+        set(HAS_PHRASES FALSE)
+    endif()
+endforeach()
+
+set(PHRASES_SRCS "")
+set(PHRASES_EMBED "")
+if(HAS_PHRASES)
+    set(PHRASES_SRCS "phrases.c" "opus_decoder.cpp")
+    set(PHRASES_EMBED ${PHRASE_FILES})
+    message(STATUS "Onboarding phrases enabled (opus blobs present)")
+else()
+    message(STATUS "Onboarding phrases disabled — run "
+                   "scripts/gen_phrases.py to generate .opus blobs")
+endif()
+
 idf_component_register(
     SRCS
         "main.c"
@@ -8,6 +34,8 @@ idf_component_register(
         "servo.c"
         "wake.c"
         "duck_id.c"
+        ${PHRASES_SRCS}
+    EMBED_FILES ${PHRASES_EMBED}
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
@@ -21,6 +49,9 @@ idf_component_register(
         driver
         esp_driver_i2s
 )
+if(HAS_PHRASES)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE PHRASES_ENABLED=1)
+endif()
 
 # Allow `idf.py -DBAMBU_DUCK_AGENT_ID=agent_xxx` to inject the agent ID at
 # compile time without editing config.h.

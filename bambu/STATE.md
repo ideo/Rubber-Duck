@@ -35,7 +35,7 @@ subscription to the printer.
 
 **The setup story is now zero-touch from a stranger's phone.** Plug in a fresh duck, press the button, join `DuckDuckDuck-XXXX`, fill one form, type the email-2FA code, you're done. No reboot mid-flow, no `duck.local` hop, no chip-side TLS, no command line. Phone never disconnects from the duck's AP during the whole wizard. ~76 seconds button-press to logged in (validated end-to-end).
 
-This is the architecture the user had been pointing at since iteration B was scoped (issue #42). It took a long detour through a chip-side HTTPS path that we couldn't get working against ngrok's edge — `mbedtls_ssl_handshake returned -0x7280` (`MBEDTLS_ERR_SSL_INVALID_RECORD`) reliably, against every config combination tried (URAM-matched config, IN_CONTENT_LEN bumped to 16384, DYNAMIC_BUFFER toggled, HARDWARE_AES toggled, TLS 1.2 forced). Two research agents and a lot of tokens later, the right answer turned out to be: **don't do TLS on the chip.** The chip has a working plain-WebSocket channel to the relay (via ngrok TCP tunnel); the relay has a working Python httpx client (TLS just works in CPython). Forward credentials chip→relay over the WebSocket, relay does the cloud TLS, return result over the same WebSocket.
+This is the architecture the user had been pointing at since iteration B was scoped (issue #42). It took a long detour through a chip-side HTTPS path that we couldn't get working against ngrok's edge — `mbedtls_ssl_handshake returned -0x7280` (`MBEDTLS_ERR_SSL_INVALID_RECORD`) reliably, against every config combination tried (IN_CONTENT_LEN bumped to 16384, DYNAMIC_BUFFER toggled, HARDWARE_AES toggled, TLS 1.2 forced). Two research agents and a lot of tokens later, the right answer turned out to be: **don't do TLS on the chip.** The chip has a working plain-WebSocket channel to the relay (via ngrok TCP tunnel); the relay has a working Python httpx client (TLS just works in CPython). Forward credentials chip→relay over the WebSocket, relay does the cloud TLS, return result over the same WebSocket.
 
 ### Architecture
 
@@ -43,7 +43,7 @@ This is the architecture the user had been pointing at since iteration B was sco
 - **`agent.c`**: gained `bambu_login_via_ws(email, password, code, user_id, timeout_ms)`. Sends `{"type":"bambu_login",...}` over the existing notify WS, blocks on a binary semaphore until the relay's `{"type":"bambu_login_result",...}` message arrives. Idempotent `notify_task_start`. Plus `notify_ws_is_connected()` so callers can wait for the WS before sending.
 - **`duck_proxy.py`**: `/ws/notify` endpoint dispatches chip-originated `bambu_login` text frames to a registered handler. `main.py` registers `_do_bambu_login` (extracted from the HTTP `/admin/bambu_login` endpoint) at module load. Reply travels back over the same WS as `bambu_login_result`.
 - **`bambu_state.py`**: HMS code filtering — `_hms_severity()` decodes the severity nibble from each `attr` uint32 (Bambu uses bits 31-16 lower-nibble). Snapshot + notifications now only include severity ≥ 1 (FATAL / SERIOUS / WARNING). Level-0 informational codes that Bambu's cloud reports but the printer UI hides no longer reach the agent. Fixes "the agent keeps saying the printer is flagging errors when nothing is wrong."
-- **Deleted**: `bambu_login.c/.h` (chip-HTTPS), `recovery.c/.h` (duck.local fallback — captive portal handles the full flow now). URAM-pattern mbedtls memory tuning reverted from `sdkconfig.defaults` (no chip TLS = no need).
+- **Deleted**: `bambu_login.c/.h` (chip-HTTPS), `recovery.c/.h` (duck.local fallback — captive portal handles the full flow now). The mbedtls memory tuning we'd added during the chip-TLS attempts (boosted IN_CONTENT_LEN, DYNAMIC_BUFFER toggles, etc.) was reverted from `sdkconfig.defaults` (no chip TLS = no need).
 - **`user_id` field** removed from captive portal form. `/preference` auto-resolves it reliably; manual override stays as relay-side env var (`BAMBU_USER_ID`) in case Bambu ever changes that endpoint.
 
 ### Validated end-to-end on real hardware
@@ -370,8 +370,9 @@ been chasing.
 
 Same architecture as C-light but with **Opus encoding/decoding on the chip**.
 Duck encodes mic audio as 12 kbps Opus before sending; relay decodes Opus →
-PCM before forwarding to ElevenAgents. Reverse for downstream. URAM already
-has Opus dependency working on this chip class.
+PCM before forwarding to ElevenAgents. Reverse for downstream. The
+esphome/micro-opus component is already integrated for the spoken-onboarding
+phrases (#34) — that's the foundation for full path C work.
 
 When to bother:
 - LAN bandwidth becomes a real constraint (multiple ducks, mesh, etc.)

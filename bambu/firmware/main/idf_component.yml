@@ -6,5 +6,11 @@ dependencies:
     # ESP-IDF core into the component registry around v5.x; pulled in here
     # via the component manager.
     version: "^1.2.0"
+  esphome/micro-opus:
+    # Header-only Ogg-Opus streaming decoder for spoken-onboarding
+    # phrases (#34). Runs on the ESP32-S3, produces 16 kHz mono int16
+    # PCM into our existing I2S TX path. ~140 KB PSRAM per decoder
+    # instance — we hold one (single playback at a time).
+    version: "^0.3.6"
   idf:
     version: ">=5.3.0"

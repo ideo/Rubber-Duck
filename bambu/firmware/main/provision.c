@@ -36,6 +36,7 @@
 #include "provision.h"
 #include "agent.h"
 #include "config.h"   // BUTTON_PIN
+#include "phrases.h"
 #include "wifi.h"
 
 #include <stdio.h>
@@ -1023,6 +1024,14 @@ esp_err_t wifi_provision_run(void) {
 
     ESP_LOGI(TAG, "APSTA up: AP=%s, STA idle (will connect on /save submit)", ap_ssid);
 
+    // Spoken hint (#34): tells the user the AP is broadcasting and
+    // what name to look for. Plays once when the wizard's AP first
+    // comes online — before they've had a chance to look for it.
+    // No-ops if phrases haven't been generated. Delegated to a brief
+    // task so we don't block the rest of wizard setup on audio
+    // playback (~3s for the "WiFi's up..." clip).
+    phrase_play(PHRASE_WIFI_UP);
+
     // HTTP server + DNS hijack (captive-portal pop-up).
     httpd_handle_t server = NULL;
     httpd_config_t hcfg = HTTPD_DEFAULT_CONFIG();
@@ -1110,11 +1119,13 @@ esp_err_t wifi_provision_run(void) {
         }
     }
     if (!timed_out && !cancelled) {
-        ESP_LOGI(TAG, "wizard reached DONE — leaving AP up briefly for success page");
-        // Give the user's browser ~30s to load the success page and read it.
-        // Then tear down the AP. STA stays connected; httpd stays running
-        // (harmless — not externally accessible without the AP).
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        ESP_LOGI(TAG, "wizard reached DONE — brief AP-up window for success page");
+        // Just enough for the browser to load the "You're set" page
+        // and the user to read it (~3s). The user has already done
+        // the meaningful work (Save); no point holding the AP open
+        // longer than the success-page read time. STA stays
+        // connected throughout; only the AP goes away.
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
     ESP_LOGI(TAG, "tearing down AP (timed_out=%d cancelled=%d)",
              timed_out, cancelled);
