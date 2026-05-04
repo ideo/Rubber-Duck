@@ -36,6 +36,7 @@ from duck_proxy import (
     register_bambu_listener,
     register_bambu_login_handler,
     register_legacy_claim_handler,
+    register_set_printers_handler,
 )
 
 load_dotenv()
@@ -460,23 +461,38 @@ async def _do_bambu_login(payload: dict) -> dict:
             verify_tls=True,
         )
 
-    return {
+    # Enumerate printers as numbered string fields so the chip's
+    # captive portal (Phase B of #41) can render a checkbox picker
+    # without needing a JSON array parser. We sanitize names to
+    # remove characters that would confuse the chip's substring
+    # JSON extractor (quotes, backslashes, control chars). The
+    # original name stays in the DB row's printer_names array; this
+    # is just the wire-safe form for chip rendering.
+    out: dict = {
         "duck_id": duck_id,
         "user_id": result["user_id"],
-        "printers": [
-            {"serial": d["dev_id"],
-             "name": d.get("name", ""),
-             "online": d.get("online", False)}
-            for d in chosen
-        ],
-        # Legacy single-value fields kept for the existing chip
-        # firmware (which only knows about one printer per duck).
-        # First selected printer wins. Drops in Phase B once the
-        # captive portal can render the full list.
+        # Legacy single-value fields kept for back-compat readers.
         "serial": serials[0] if serials else "",
         "printer_name": printer_names[0] if printer_names else "(unknown)",
         "online": any(d.get("online", False) for d in chosen),
+        # Phase B: numbered string fields.
+        "printer_count": str(len(chosen)),
     }
+    MAX_WIRE_PRINTERS = 8
+    for i, d in enumerate(chosen[:MAX_WIRE_PRINTERS]):
+        # Strip JSON-troublesome chars from names. The chip's
+        # extract_json_string finds string values via memchr('"');
+        # an embedded quote ends the value early. Limit to 31 chars
+        # so the chip's display buffer doesn't overflow.
+        safe_name = (d.get("name", "") or "").replace('"', "'") \
+                                              .replace("\\", "/") \
+                                              .replace("\n", " ")
+        if len(safe_name) > 31:
+            safe_name = safe_name[:31]
+        out[f"printer_{i}_name"] = safe_name
+        out[f"printer_{i}_serial"] = d["dev_id"]
+        out[f"printer_{i}_online"] = "1" if d.get("online", False) else "0"
+    return out
 
 
 @app.post("/admin/bambu_login")
@@ -496,6 +512,34 @@ register_bambu_login_handler(_do_bambu_login)
 # Wire the legacy-MAC adoption flow so the first real-MAC chip handshake
 # claims the migrated "legacy" row (rather than orphaning it).
 register_legacy_claim_handler(claim_legacy_if_applicable)
+
+
+def _reconfigure_for_set_printers(duck_id: str, serials: list[str],
+                                   printer_names: list[str]) -> None:
+    """Chip-driven printer-subset selection (#41 Phase B). The DB has
+    already been updated with the narrowed list; we just need to point
+    the live BambuState's MQTT subscriptions at the new serial set.
+
+    Called from duck_proxy.py via the registered handler so we don't
+    have to import main.py from there (cycle)."""
+    s = states.get(duck_id)
+    if s is None:
+        # No live state yet — onboarding flow that hasn't fully
+        # completed; the next bambu_login (or the first /admin/import_duck)
+        # will create one with the right binding from the row we just wrote.
+        return
+    row = db.get().get_duck(duck_id) or {}
+    s.reconfigure(
+        host=row.get("cloud_host") or DEFAULT_CLOUD_HOST,
+        username=f"u_{row['bambu_user_id']}",
+        password=row["access_token"],
+        serials=serials,
+        printer_names=printer_names,
+        verify_tls=True,
+    )
+
+
+register_set_printers_handler(_reconfigure_for_set_printers)
 
 
 @app.post("/admin/import_duck")

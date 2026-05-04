@@ -538,6 +538,18 @@ def register_legacy_claim_handler(fn) -> None:
     _legacy_claim_fn = fn
 
 
+# Same shim pattern for the set_printers reconfigure path — chip sends
+# us the new serial subset, we narrow the binding in the DB, but the
+# live BambuState's MQTT subscriptions also need updating. main.py owns
+# the registry so we go through this callback.
+_set_printers_reconfigure = None
+
+
+def register_set_printers_handler(fn) -> None:
+    global _set_printers_reconfigure
+    _set_printers_reconfigure = fn
+
+
 def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
     """Pull duck_id from the WS handshake. Order of precedence:
        1. `X-Duck-Id` header — the canonical multi-tenant signal
@@ -593,6 +605,60 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 logger.warning("notify rx non-JSON: %s", text[:100])
                 continue
             mtype = payload.get("type")
+            if mtype == "set_printers":
+                # Phase B of #41 — captive-portal printer picker. Chip
+                # sends the chosen serials pipe-delimited; relay narrows
+                # the duck's binding to that subset and reconfigures the
+                # BambuState. Original full list stays accessible — a
+                # future re-pick (or /admin/rebind_printers) can widen
+                # the binding back without re-doing bambu_login.
+                target = payload.get("duck_id") or duck_id
+                serials_str = payload.get("serials") or ""
+                serials = [s for s in serials_str.split("|") if s]
+                ack = {"type": "set_printers_result", "ok": False}
+                if not target:
+                    ack["error"] = "missing_duck_id"
+                elif not serials:
+                    ack["error"] = "no_serials"
+                else:
+                    try:
+                        # Look up printer names from the existing row
+                        # so we don't lose the friendly labels — chip
+                        # only sends serials, names live in the row.
+                        row = db.get().get_duck(target) or {}
+                        try:
+                            existing_serials = json.loads(
+                                row.get("serials") or "[]")
+                            existing_names = json.loads(
+                                row.get("printer_names") or "[]")
+                        except (ValueError, TypeError):
+                            existing_serials, existing_names = [], []
+                        name_by_serial = dict(
+                            zip(existing_serials, existing_names))
+                        chosen_names = [name_by_serial.get(s, "")
+                                        for s in serials]
+                        db.get().upsert_duck(
+                            target,
+                            serials=serials,
+                            printer_names=chosen_names,
+                        )
+                        # Reconfigure the live BambuState so its MQTT
+                        # subscriptions match the new selection. Need
+                        # access to the in-memory states dict from main;
+                        # we go through register_bambu_listener since
+                        # main.py wires its setter at startup.
+                        if _set_printers_reconfigure is not None:
+                            _set_printers_reconfigure(target, serials,
+                                                       chosen_names)
+                        logger.info("set_printers stored for duck=%s "
+                                    "(%d printers)", target, len(serials))
+                        ack["ok"] = True
+                        ack["count"] = len(serials)
+                    except Exception as e:
+                        logger.warning("set_printers failed: %s", e)
+                        ack["error"] = "db_or_reconfigure_error"
+                await duck.send_text(json.dumps(ack, ensure_ascii=False))
+                continue
             if mtype == "set_eleven_creds":
                 # Persist the user's ElevenLabs key + agent on this duck's
                 # row. Captive portal sends this once during onboarding;

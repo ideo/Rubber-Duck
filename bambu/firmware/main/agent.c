@@ -354,6 +354,28 @@ static volatile bambu_login_ws_result_t s_login_last_result = BAMBU_LOGIN_WS_TIM
 static SemaphoreHandle_t s_eleven_done = NULL;
 static volatile bool s_eleven_last_ok = false;
 
+// And for set_printers (Phase B of #41).
+static SemaphoreHandle_t s_set_printers_done = NULL;
+static volatile bool s_set_printers_last_ok = false;
+
+// Multi-printer info captured from bambu_login_result. Used by the
+// captive portal to render the checkbox picker. Populated on the
+// notify-ws thread, read on the wizard worker thread — strings are
+// only mutated when no reader is active (ensured by the wizard's
+// state machine: parse happens during LOGGING_IN → PICK_PRINTERS
+// transition, reads happen after) so no mutex needed for the simple
+// hand-off.
+static bambu_printer_info_t s_printers[BAMBU_MAX_PRINTERS];
+static int s_printers_count = 0;
+
+int bambu_printers_count(void) { return s_printers_count; }
+
+bool bambu_printer_info(int idx, bambu_printer_info_t *out) {
+    if (idx < 0 || idx >= s_printers_count || !out) return false;
+    *out = s_printers[idx];
+    return true;
+}
+
 // Queue of pending notifications. Single-slot used to lose events when two
 // arrived back-to-back while a session was active (P0-2 in the agent review).
 // 4 deep is comfortable: with the relay's inject-into-active-session path the
@@ -472,6 +494,38 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                 }
                 if (ok_true) {
                     s_login_last_result = BAMBU_LOGIN_WS_OK;
+                    // Phase B of #41 — capture the printer list the
+                    // relay sent alongside ok=true so the captive portal
+                    // can render the picker. Numbered string fields,
+                    // chip already has extract_json_string for those.
+                    char count_str[8] = {0};
+                    extract_json_string(d->data_ptr, d->data_len,
+                                         "printer_count", count_str,
+                                         sizeof(count_str));
+                    int n = atoi(count_str);
+                    if (n > BAMBU_MAX_PRINTERS) n = BAMBU_MAX_PRINTERS;
+                    if (n < 0) n = 0;
+                    s_printers_count = 0;
+                    for (int i = 0; i < n; i++) {
+                        char key[24];
+                        snprintf(key, sizeof(key), "printer_%d_name", i);
+                        bool got_name = extract_json_string(
+                            d->data_ptr, d->data_len, key,
+                            s_printers[i].name, sizeof(s_printers[i].name));
+                        snprintf(key, sizeof(key), "printer_%d_serial", i);
+                        bool got_serial = extract_json_string(
+                            d->data_ptr, d->data_len, key,
+                            s_printers[i].serial,
+                            sizeof(s_printers[i].serial));
+                        char online_str[4] = {0};
+                        snprintf(key, sizeof(key), "printer_%d_online", i);
+                        extract_json_string(d->data_ptr, d->data_len, key,
+                                             online_str, sizeof(online_str));
+                        s_printers[i].online = (online_str[0] == '1');
+                        if (got_name && got_serial) s_printers_count++;
+                    }
+                    ESP_LOGI(TAG, "bambu_login_result: parsed %d printers",
+                             s_printers_count);
                 } else {
                     char code_field[32] = {0};
                     extract_json_string(d->data_ptr, d->data_len, "code",
@@ -506,6 +560,23 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                 s_eleven_last_ok = ok_true;
                 ESP_LOGI(TAG, "set_eleven_creds_result: ok=%d", ok_true);
                 if (s_eleven_done) xSemaphoreGive(s_eleven_done);
+                return;
+            }
+
+            if (strcmp(type_field, "set_printers_result") == 0) {
+                // Phase B of #41 — relay confirms the narrowed binding
+                // is in effect. Same true-sniff as the others above.
+                const char *ok_pos = memmem(d->data_ptr, d->data_len, "\"ok\"", 4);
+                bool ok_true = false;
+                if (ok_pos) {
+                    const char *limit = (const char *)d->data_ptr + d->data_len;
+                    const char *cursor = ok_pos + 4;
+                    while (cursor < limit && (*cursor == ' ' || *cursor == ':' || *cursor == '\t')) cursor++;
+                    ok_true = (cursor + 4 <= limit) && memcmp(cursor, "true", 4) == 0;
+                }
+                s_set_printers_last_ok = ok_true;
+                ESP_LOGI(TAG, "set_printers_result: ok=%d", ok_true);
+                if (s_set_printers_done) xSemaphoreGive(s_set_printers_done);
                 return;
             }
 
@@ -767,4 +838,44 @@ bool eleven_creds_send_via_ws(const char *key, const char *agent,
         return false;
     }
     return s_eleven_last_ok;
+}
+
+bool set_printers_send_via_ws(const char *serials_pipe, int timeout_ms) {
+    if (!serials_pipe || !*serials_pipe) return false;
+    if (!s_notify_ws || !s_notify_ws_connected) {
+        ESP_LOGW(TAG, "set_printers_send_via_ws: notify WS not connected");
+        return false;
+    }
+    if (s_set_printers_done == NULL) {
+        s_set_printers_done = xSemaphoreCreateBinary();
+        if (s_set_printers_done == NULL) return false;
+    }
+
+    // serials_pipe should already be bounded — the caller (provision.c)
+    // builds it from at most BAMBU_MAX_PRINTERS * (16 char serial + 1
+    // separator) = ~140 chars. Pad the body for duck_id + JSON envelope.
+    char body[256];
+    int n = snprintf(body, sizeof(body),
+        "{\"type\":\"set_printers\","
+         "\"duck_id\":\"%s\","
+         "\"serials\":\"%s\"}",
+        duck_id_get(), serials_pipe);
+    if (n <= 0 || n >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "set_printers body too large: %d", n);
+        return false;
+    }
+    xSemaphoreTake(s_set_printers_done, 0);
+    s_set_printers_last_ok = false;
+    int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
+                                              pdMS_TO_TICKS(5000));
+    if (sent < n) {
+        ESP_LOGE(TAG, "set_printers send failed (sent=%d of %d)", sent, n);
+        return false;
+    }
+    ESP_LOGI(TAG, "set_printers sent (%d bytes), waiting for ack", n);
+    if (xSemaphoreTake(s_set_printers_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "set_printers timeout (%d ms)", timeout_ms);
+        return false;
+    }
+    return s_set_printers_last_ok;
 }

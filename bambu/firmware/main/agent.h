@@ -69,3 +69,34 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
 // outcome from the user's perspective.
 bool eleven_creds_send_via_ws(const char *key, const char *agent,
                                int timeout_ms);
+
+// Send {"type":"set_printers","duck_id","serials":"S1|S2|..."} so the
+// relay narrows this duck's MQTT subscriptions to the chosen subset.
+// `serials_pipe` is a pipe-delimited list — caller is responsible for
+// concat (the chip's captive portal builds it from form checkboxes).
+// Blocks up to `timeout_ms` for the matching set_printers_result ack.
+// Returns true on relay-confirmed success.
+bool set_printers_send_via_ws(const char *serials_pipe, int timeout_ms);
+
+// ---- Multi-printer picker support (Phase B of #41) ----
+//
+// After bambu_login_via_ws returns OK, the chip captive portal needs
+// to know which printers are bound to render the checkbox picker.
+// The relay's bambu_login_result includes numbered fields
+// (printer_count, printer_N_name, printer_N_serial, printer_N_online)
+// which we parse into this structure for the wizard to read.
+
+#define BAMBU_MAX_PRINTERS 8
+
+typedef struct {
+    char name[32];
+    char serial[20];
+    bool online;
+} bambu_printer_info_t;
+
+// How many printers came back in the most recent bambu_login_result
+// (capped at BAMBU_MAX_PRINTERS). Zero if no login has succeeded yet.
+int bambu_printers_count(void);
+
+// Read printer info by index. Returns false if out of bounds.
+bool bambu_printer_info(int idx, bambu_printer_info_t *out);

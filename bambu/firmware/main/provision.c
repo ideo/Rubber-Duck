@@ -69,6 +69,10 @@ typedef enum {
     WIZ_LOGGING_IN,
     WIZ_NEED_2FA,
     WIZ_LOGIN_BAD_CREDS,
+    // Phase B of #41 — after a successful bambu_login that returned
+    // ≥2 printers, render a checkbox form so the user can opt out of
+    // any. Single-printer accounts skip this state entirely.
+    WIZ_PICK_PRINTERS,
     WIZ_DONE,
 } wiz_state_t;
 
@@ -370,6 +374,59 @@ static void render_2fa_form(httpd_req_t *req, bool retry) {
     httpd_resp_send_chunk(req, NULL, 0);
 }
 
+// Renders the printer-picker page (Phase B of #41). After a successful
+// bambu_login that returned multiple printers, the wizard transitions
+// here so the user can check off which to subscribe to. Defaults all
+// online printers to checked, offline ones unchecked. Form fields
+// "p0" through "p7" map to bambu_printer_info(0..7).
+static void render_pick_printers(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
+    httpd_resp_send_chunk(req,
+        "<h1>🦆 Pick your printers</h1>"
+        "<p class=sub>I found these in your Bambu account. Check the ones "
+        "you want me to listen to. The duck will speak about all of them; "
+        "uncheck any you'd rather it stay quiet about.</p>"
+        "<form method=POST action=/pick>", -1);
+    int n = bambu_printers_count();
+    for (int i = 0; i < n; i++) {
+        bambu_printer_info_t info;
+        if (!bambu_printer_info(i, &info)) continue;
+        // HTML-safe rendering: extract_json_string already stripped
+        // quotes/backslashes server-side, so we just need to escape
+        // < > & for safety. Build inline; names are ≤31 chars.
+        char safe_name[64];
+        int o = 0;
+        for (int k = 0; info.name[k] && o + 5 < (int)sizeof(safe_name); k++) {
+            char c = info.name[k];
+            if (c == '<')      { memcpy(safe_name + o, "&lt;",  4); o += 4; }
+            else if (c == '>') { memcpy(safe_name + o, "&gt;",  4); o += 4; }
+            else if (c == '&') { memcpy(safe_name + o, "&amp;", 5); o += 5; }
+            else                safe_name[o++] = c;
+        }
+        safe_name[o] = '\0';
+        const char *fallback = (info.name[0] == '\0') ? info.serial : safe_name;
+        char chunk[256];
+        int cn = snprintf(chunk, sizeof(chunk),
+            "<label style='display:flex;align-items:center;gap:.6em;"
+            "padding:.4em 0;font-weight:400'>"
+            "<input type=checkbox name=p%d value=1 %s>"
+            "<span><strong>%s</strong>"
+            "<span class=sub style='display:block;font-size:.85em'>%s</span>"
+            "</span></label>",
+            i,
+            info.online ? "checked" : "",
+            fallback,
+            info.online ? "online" : "offline");
+        if (cn > 0) httpd_resp_send_chunk(req, chunk, cn);
+    }
+    httpd_resp_send_chunk(req,
+        "<button type=submit>Save</button>"
+        "</form>", -1);
+    httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
+    httpd_resp_send_chunk(req, NULL, 0);
+}
+
 // Renders the "WiFi didn't connect" page with a POST-based "Try again"
 // button. POST (not GET <a href>) so browser pre-fetch / mistaken
 // reload doesn't trigger the state reset on its own — the user has
@@ -414,6 +471,9 @@ static esp_err_t root_handler(httpd_req_t *req) {
             return ESP_OK;
         case WIZ_LOGIN_BAD_CREDS:
             render_2fa_form(req, true);
+            return ESP_OK;
+        case WIZ_PICK_PRINTERS:
+            render_pick_printers(req);
             return ESP_OK;
         case WIZ_DONE:
             render_status(req, "🦆 You're set!",
@@ -495,6 +555,72 @@ static esp_err_t save_handler(httpd_req_t *req) {
     xTaskCreate(provision_worker_task, "prov_worker", 6144, NULL, 4, NULL);
 
     // 303 → GET / so the browser doesn't resubmit on refresh.
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+// /pick — Phase B of #41 picker submission. Reads checkbox state out
+// of the POST body for fields p0..p7, looks up the corresponding
+// serial via bambu_printer_info(), builds a pipe-delimited list, and
+// sends set_printers over /ws/notify. Relay narrows the duck's MQTT
+// subscriptions to that subset and acks. State advances to DONE on
+// success; on failure we leave the user on the picker page so they
+// can retry.
+static esp_err_t pick_handler(httpd_req_t *req) {
+    char body[256] = {0};
+    int len = req->content_len < (int)sizeof(body) - 1
+                ? req->content_len : (int)sizeof(body) - 1;
+    if (len > 0) {
+        int got = httpd_req_recv(req, body, len);
+        if (got > 0) body[got] = '\0';
+    }
+
+    // Build the pipe-delimited serials list from checked p0..p7 boxes.
+    // Unchecked boxes are absent from the form body entirely (HTML
+    // checkbox semantics), so form_get returning false = unchecked.
+    char serials_pipe[160] = {0};
+    int chosen_count = 0;
+    int n = bambu_printers_count();
+    if (n > BAMBU_MAX_PRINTERS) n = BAMBU_MAX_PRINTERS;
+    for (int i = 0; i < n; i++) {
+        // Form field is "p0".."p7" — fixed-shape build avoids snprintf
+        // truncation warnings under -Werror=format-truncation. n is
+        // capped at BAMBU_MAX_PRINTERS == 8, so i ∈ [0, 8) and a
+        // single digit always fits.
+        char key[3] = {'p', (char)('0' + i), '\0'};
+        char val[4] = {0};
+        if (!form_get(body, key, val, sizeof(val)) || val[0] != '1') continue;
+        bambu_printer_info_t info;
+        if (!bambu_printer_info(i, &info)) continue;
+        if (chosen_count > 0) strlcat(serials_pipe, "|", sizeof(serials_pipe));
+        strlcat(serials_pipe, info.serial, sizeof(serials_pipe));
+        chosen_count++;
+    }
+
+    if (chosen_count == 0) {
+        // User unchecked everything — relay would have nothing to
+        // subscribe to. Reject and let them try again.
+        ESP_LOGW(TAG, "/pick: no printers checked, refusing to set empty");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req, "Pick at least one printer.",
+                         HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    bool ok = set_printers_send_via_ws(serials_pipe, 10000);
+    if (!ok) {
+        ESP_LOGW(TAG, "/pick: set_printers_send_via_ws failed — staying on picker");
+        httpd_resp_set_status(req, "303 See Other");
+        httpd_resp_set_hdr(req, "Location", "/");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "/pick: %d printer(s) selected, set_printers ack OK",
+             chosen_count);
+    s_state = WIZ_DONE;
     httpd_resp_set_status(req, "303 See Other");
     httpd_resp_set_hdr(req, "Location", "/");
     httpd_resp_send(req, NULL, 0);
@@ -680,7 +806,14 @@ static void provision_worker_task(void *arg) {
             if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
             memset(s_bambu_password, 0, sizeof(s_bambu_password));
             if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
-            s_state = WIZ_DONE;
+            // Phase B of #41 — if the relay returned ≥2 printers, give
+            // the user a chance to opt some out. One-printer accounts
+            // skip the picker (no choice to make).
+            if (bambu_printers_count() >= 2) {
+                s_state = WIZ_PICK_PRINTERS;
+            } else {
+                s_state = WIZ_DONE;
+            }
             break;
         case BAMBU_LOGIN_WS_NEED_2FA:
             s_state = WIZ_NEED_2FA;
@@ -718,7 +851,12 @@ static void retry_login_worker_task(void *arg) {
             if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
             memset(s_bambu_password, 0, sizeof(s_bambu_password));
             if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
-            s_state = WIZ_DONE;
+            // Same picker-vs-done branch as the initial login worker.
+            if (bambu_printers_count() >= 2) {
+                s_state = WIZ_PICK_PRINTERS;
+            } else {
+                s_state = WIZ_DONE;
+            }
             break;
         case BAMBU_LOGIN_WS_NEED_2FA:
         case BAMBU_LOGIN_WS_BAD_CREDS:
@@ -796,10 +934,12 @@ esp_err_t wifi_provision_run(void) {
     httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = root_handler };
     httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = save_handler };
     httpd_uri_t code = { .uri = "/code", .method = HTTP_POST, .handler = code_handler };
+    httpd_uri_t pick = { .uri = "/pick", .method = HTTP_POST, .handler = pick_handler };
     httpd_uri_t rstr = { .uri = "/restart", .method = HTTP_POST, .handler = restart_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &save);
     httpd_register_uri_handler(server, &code);
+    httpd_register_uri_handler(server, &pick);
     httpd_register_uri_handler(server, &rstr);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect);
     xTaskCreate(dns_hijack_task, "dns_hijack", 4096, NULL, 5, NULL);
