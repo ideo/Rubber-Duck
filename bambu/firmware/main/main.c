@@ -107,6 +107,15 @@ void app_main(void) {
             // Fall through to no-wifi idle. Long-press will wipe creds + reboot
             // for a clean re-onboard; short press / tap will enter SoftAP.
         }
+    } else if (force_provision) {
+        // Long-press → soft re-onboard. NVS has WiFi + Bambu binding
+        // intact; we just chose not to connect because the wizard is
+        // about to run anyway. Distinct chirp ("settings mode")
+        // instead of the sad "I need help" chirp below — same notes
+        // as the wizard-entry chirp later in this file.
+        ESP_LOGI(TAG, "settings mode — entering wizard with current creds preserved");
+        audio_chirp(700, 80);
+        audio_chirp(900, 80);
     } else {
         ESP_LOGI(TAG, "no wifi creds — press button or tap to set up");
         // "I need help" chirp: low-low-mid, distinct from the happy
@@ -169,6 +178,18 @@ void app_main(void) {
             audio_chirp(900, 100);
             audio_chirp(1100, 150);
             esp_err_t err = wifi_provision_run();
+            if (err == ESP_ERR_TIMEOUT) {
+                // Wizard timed out (user opened the portal but never
+                // submitted, or held by accident and closed the panel).
+                // STA is still up via the fast-path's reconnect, so we
+                // can drop straight back to idle without rechirping
+                // "I'm broken." Just a quiet ack chirp.
+                ESP_LOGI(TAG, "wizard timed out without changes — back to idle");
+                wifi_connected = wifi_has_creds();
+                audio_chirp(600, 80);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                continue;
+            }
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "provisioning failed: %s", esp_err_to_name(err));
                 audio_chirp_down();

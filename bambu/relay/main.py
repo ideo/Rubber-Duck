@@ -36,6 +36,7 @@ from duck_proxy import (
     register_bambu_listener,
     register_bambu_login_handler,
     register_legacy_claim_handler,
+    register_list_printers_handler,
     register_set_printers_handler,
 )
 
@@ -540,6 +541,27 @@ def _reconfigure_for_set_printers(duck_id: str, serials: list[str],
 
 
 register_set_printers_handler(_reconfigure_for_set_printers)
+
+
+async def _list_printers_for(duck_id: str) -> list[dict]:
+    """Fast-path printer list for the chip's "long-press while already
+    onboarded" flow. Uses the duck's stored access_token (no re-auth
+    needed) to call list_devices on Bambu cloud, returns simple dicts
+    the duck_proxy handler can stamp into the response.
+    """
+    row = db.get().get_duck(duck_id)
+    if not row or not row.get("access_token"):
+        raise RuntimeError("duck not bound to a Bambu account yet")
+    devices = await bambu_cloud.list_devices(row["access_token"])
+    return [
+        {"serial": d["dev_id"],
+         "name": d.get("name", ""),
+         "online": d.get("online", False)}
+        for d in devices
+    ]
+
+
+register_list_printers_handler(_list_printers_for)
 
 
 @app.post("/admin/import_duck")

@@ -358,6 +358,11 @@ static volatile bool s_eleven_last_ok = false;
 static SemaphoreHandle_t s_set_printers_done = NULL;
 static volatile bool s_set_printers_last_ok = false;
 
+// And for list_printers (settings-only fast-path on long-press while
+// already onboarded — see provision.c WIZ_FAST_LOADING).
+static SemaphoreHandle_t s_list_printers_done = NULL;
+static volatile bool s_list_printers_last_ok = false;
+
 // Multi-printer info captured from bambu_login_result. Used by the
 // captive portal to render the checkbox picker. Populated on the
 // notify-ws thread, read on the wizard worker thread — strings are
@@ -463,7 +468,18 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
         return;
     }
     if (event_id == WEBSOCKET_EVENT_DATA) {
-        ESP_LOGI(TAG, "notify ws data: op_code=%d len=%d", d->op_code, d->data_len);
+        // Op_code 9/10 are WS ping/pong frames the relay (FastAPI/
+        // uvicorn) sends every ~20-30s as a keepalive. They're noise
+        // for normal operation — log at DEBUG so they're available
+        // when you're chasing a connection issue but invisible
+        // otherwise. Real payloads (text=1, continuation=0) keep
+        // their INFO-level log below.
+        if (d->op_code == 9 || d->op_code == 10) {
+            ESP_LOGD(TAG, "notify ws keepalive op=%d", d->op_code);
+        } else {
+            ESP_LOGI(TAG, "notify ws data: op_code=%d len=%d",
+                     d->op_code, d->data_len);
+        }
         if (d->op_code == 1 || d->op_code == 0) {
             // Log first 80 bytes of payload for debugging
             char preview[81];
@@ -560,6 +576,54 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                 s_eleven_last_ok = ok_true;
                 ESP_LOGI(TAG, "set_eleven_creds_result: ok=%d", ok_true);
                 if (s_eleven_done) xSemaphoreGive(s_eleven_done);
+                return;
+            }
+
+            if (strcmp(type_field, "list_printers_result") == 0) {
+                // Settings-only fast-path response — same shape as
+                // the printer list embedded in bambu_login_result.
+                // Parse into s_printers[] so the captive portal's
+                // picker page can render without forcing a re-login.
+                const char *ok_pos = memmem(d->data_ptr, d->data_len, "\"ok\"", 4);
+                bool ok_true = false;
+                if (ok_pos) {
+                    const char *limit = (const char *)d->data_ptr + d->data_len;
+                    const char *cursor = ok_pos + 4;
+                    while (cursor < limit && (*cursor == ' ' || *cursor == ':' || *cursor == '\t')) cursor++;
+                    ok_true = (cursor + 4 <= limit) && memcmp(cursor, "true", 4) == 0;
+                }
+                if (ok_true) {
+                    char count_str[8] = {0};
+                    extract_json_string(d->data_ptr, d->data_len,
+                                         "printer_count", count_str,
+                                         sizeof(count_str));
+                    int n = atoi(count_str);
+                    if (n > BAMBU_MAX_PRINTERS) n = BAMBU_MAX_PRINTERS;
+                    if (n < 0) n = 0;
+                    s_printers_count = 0;
+                    for (int i = 0; i < n; i++) {
+                        char key[24];
+                        snprintf(key, sizeof(key), "printer_%d_name", i);
+                        bool got_name = extract_json_string(
+                            d->data_ptr, d->data_len, key,
+                            s_printers[i].name, sizeof(s_printers[i].name));
+                        snprintf(key, sizeof(key), "printer_%d_serial", i);
+                        bool got_serial = extract_json_string(
+                            d->data_ptr, d->data_len, key,
+                            s_printers[i].serial,
+                            sizeof(s_printers[i].serial));
+                        char online_str[4] = {0};
+                        snprintf(key, sizeof(key), "printer_%d_online", i);
+                        extract_json_string(d->data_ptr, d->data_len, key,
+                                             online_str, sizeof(online_str));
+                        s_printers[i].online = (online_str[0] == '1');
+                        if (got_name && got_serial) s_printers_count++;
+                    }
+                    ESP_LOGI(TAG, "list_printers_result: parsed %d printers",
+                             s_printers_count);
+                }
+                s_list_printers_last_ok = ok_true;
+                if (s_list_printers_done) xSemaphoreGive(s_list_printers_done);
                 return;
             }
 
@@ -838,6 +902,34 @@ bool eleven_creds_send_via_ws(const char *key, const char *agent,
         return false;
     }
     return s_eleven_last_ok;
+}
+
+bool list_printers_via_ws(int timeout_ms) {
+    if (!s_notify_ws || !s_notify_ws_connected) {
+        ESP_LOGW(TAG, "list_printers_via_ws: notify WS not connected");
+        return false;
+    }
+    if (s_list_printers_done == NULL) {
+        s_list_printers_done = xSemaphoreCreateBinary();
+        if (s_list_printers_done == NULL) return false;
+    }
+
+    char body[100];
+    int n = snprintf(body, sizeof(body),
+        "{\"type\":\"list_printers\",\"duck_id\":\"%s\"}",
+        duck_id_get());
+    if (n <= 0 || n >= (int)sizeof(body)) return false;
+
+    xSemaphoreTake(s_list_printers_done, 0);
+    s_list_printers_last_ok = false;
+    int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
+                                              pdMS_TO_TICKS(5000));
+    if (sent < n) return false;
+    if (xSemaphoreTake(s_list_printers_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "list_printers timeout (%d ms)", timeout_ms);
+        return false;
+    }
+    return s_list_printers_last_ok && (s_printers_count > 0);
 }
 
 bool set_printers_send_via_ws(const char *serials_pipe, int timeout_ms) {

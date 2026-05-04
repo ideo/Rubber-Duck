@@ -145,12 +145,17 @@ static void tap_monitor_task(void *arg) {
             if (ambient_floor < 1.0f) ambient_floor = 1.0f;  // never zero
         }
 
-        // Track diagnostics for periodic log line.
+        // Track diagnostics for periodic log line. Demoted to DEBUG —
+        // every 10s of idle was producing a noisy "peak window:..." at
+        // INFO that the operator doesn't want to read. The actual TAP
+        // DETECTED line below stays at INFO since that's the event
+        // worth seeing. Bring back INFO with `idf.py menuconfig` log
+        // level if you're chasing tap-sensitivity tuning.
         if (peak2 > diag_max_peak) diag_max_peak = peak2;
         if (slope > diag_max_slope) diag_max_slope = slope;
         if (now >= diag_next_log_ms) {
             if (diag_max_peak >= DIAG_LOG_PEAK_FLOOR) {
-                ESP_LOGI(TAG, "peak window: max_peak=%d max_slope=%d floor=%.0f",
+                ESP_LOGD(TAG, "peak window: max_peak=%d max_slope=%d floor=%.0f",
                          diag_max_peak, diag_max_slope, ambient_floor);
             }
             diag_max_peak = 0;
@@ -208,20 +213,24 @@ wake_trigger_t wake_wait_for_trigger(void) {
     while (1) {
         // Button check: active-low, 0 means pressed.
         if (gpio_get_level(BUTTON_PIN) == 0) {
-            // Time the press. If held >= WAKE_LONG_PRESS_MS, we return
-            // WAKE_LONG_PRESS the moment the threshold is crossed (no
-            // need to wait for release for the decision; we DO still
-            // wait for release before returning so the caller's next
-            // gpio read isn't a stuck "still pressed").
+            // Time the press. WAKE_LONG_PRESS fires the moment we
+            // cross WAKE_LONG_PRESS_MS — caller's chirp gives the
+            // user immediate feedback that "yes, you held long
+            // enough, you can let go." For a short press we still
+            // wait for release so a quick tap doesn't get reported
+            // before the user's finger leaves the button.
             int64_t pressed_at = now_ms();
-            bool is_long = false;
             while (gpio_get_level(BUTTON_PIN) == 0) {
                 vTaskDelay(pdMS_TO_TICKS(20));
-                if (!is_long && (now_ms() - pressed_at) >= WAKE_LONG_PRESS_MS) {
-                    is_long = true;
+                if ((now_ms() - pressed_at) >= WAKE_LONG_PRESS_MS) {
+                    // Fire NOW. The button may still be held down
+                    // when we return, but main.c's wake_quiet_for_ms
+                    // suppression and the immediate reboot handle
+                    // any stale gpio read cleanly.
+                    return WAKE_LONG_PRESS;
                 }
             }
-            return is_long ? WAKE_LONG_PRESS : WAKE_BUTTON;
+            return WAKE_BUTTON;
         }
         // Tap check: short timeout doubles as the polling cadence.
         if (xSemaphoreTake(s_tap_signal, pdMS_TO_TICKS(50)) == pdTRUE) {

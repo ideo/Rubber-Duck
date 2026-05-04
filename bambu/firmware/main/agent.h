@@ -78,6 +78,14 @@ bool eleven_creds_send_via_ws(const char *key, const char *agent,
 // Returns true on relay-confirmed success.
 bool set_printers_send_via_ws(const char *serials_pipe, int timeout_ms);
 
+// Ask the relay for the current printer list using the stored
+// access_token (no Bambu re-auth required). Used by the captive
+// portal's fast-path when the user long-presses while already
+// onboarded — relay returns the same numbered-string format as
+// bambu_login_result, chip drops it into s_printers[]. Returns true
+// if the list is now populated (bambu_printers_count() > 0).
+bool list_printers_via_ws(int timeout_ms);
+
 // ---- Multi-printer picker support (Phase B of #41) ----
 //
 // After bambu_login_via_ws returns OK, the chip captive portal needs

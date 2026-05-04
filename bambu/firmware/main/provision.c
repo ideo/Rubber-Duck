@@ -35,17 +35,20 @@
 // then comes down (eventually; not aggressive about it).
 #include "provision.h"
 #include "agent.h"
+#include "config.h"   // BUTTON_PIN
 #include "wifi.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include <driver/gpio.h>
 #include <esp_event.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
@@ -73,6 +76,12 @@ typedef enum {
     // ≥2 printers, render a checkbox form so the user can opt out of
     // any. Single-printer accounts skip this state entirely.
     WIZ_PICK_PRINTERS,
+    // Settings-only fast-path entry (long-press while already
+    // onboarded). Renders "checking your printers..." with auto-
+    // refresh while the worker pulls the current list from the relay
+    // using the stored access_token. On success → WIZ_PICK_PRINTERS;
+    // on failure → fall back to WIZ_COLLECT_WIFI.
+    WIZ_FAST_LOADING,
     WIZ_DONE,
 } wiz_state_t;
 
@@ -238,6 +247,12 @@ static const char html_head[] =
     "label{display:block;margin:1em 0 .25em;font-weight:600}"
     "input,select{width:100%;padding:.7em;font-size:1em;box-sizing:border-box;"
     "border:1px solid #aaa;border-radius:6px}"
+    // Override for checkboxes — the input{width:100%;...} above
+    // stretched native checkboxes into invisible "text-box"-shaped
+    // controls on iOS captive portal browsers (#41 Phase B picker).
+    // Force native rendering, fixed size, no stretch.
+    "input[type=checkbox]{width:auto;padding:0;border:0;border-radius:0;"
+    "transform:scale(1.4);margin:.4em .8em .4em .2em;vertical-align:middle}"
     "button{margin-top:1.5em;width:100%;padding:.9em;font-size:1.05em;"
     "background:#f5b942;border:0;border-radius:6px;font-weight:600}"
     ".sub{color:#666;font-size:.9em}"
@@ -406,22 +421,39 @@ static void render_pick_printers(httpd_req_t *req) {
         }
         safe_name[o] = '\0';
         const char *fallback = (info.name[0] == '\0') ? info.serial : safe_name;
-        char chunk[256];
+        // Plain inline layout — no flexbox, no nested spans. iOS's
+        // captive-portal browser was clipping the previous flex
+        // version such that the printer name landed off-screen right.
+        // display:block label + inline checkbox + name + status keeps
+        // everything in the body's 420px column. Buffer sized for
+        // ~200 chars of format string + ~64 chars of name +
+        // small substitutions, with margin.
+        char chunk[512];
         int cn = snprintf(chunk, sizeof(chunk),
-            "<label style='display:flex;align-items:center;gap:.6em;"
-            "padding:.4em 0;font-weight:400'>"
+            "<label style='display:block;padding:.7em 0;"
+            "border-bottom:1px solid #eee;font-weight:400'>"
             "<input type=checkbox name=p%d value=1 %s>"
-            "<span><strong>%s</strong>"
-            "<span class=sub style='display:block;font-size:.85em'>%s</span>"
-            "</span></label>",
+            "<strong>%s</strong> "
+            "<span style='color:%s;font-size:.9em'>(%s)</span>"
+            "</label>",
             i,
             info.online ? "checked" : "",
             fallback,
+            info.online ? "#1b5e20" : "#999",
             info.online ? "online" : "offline");
         if (cn > 0) httpd_resp_send_chunk(req, chunk, cn);
     }
     httpd_resp_send_chunk(req,
         "<button type=submit>Save</button>"
+        "</form>"
+        // Escape hatch for the rare case where the user really wants
+        // to wipe and re-onboard with different creds (changing Bambu
+        // account, moving WiFi networks). Tucked at the bottom in
+        // sub-text styling so it's not the first thing they see.
+        "<form method=POST action=/restart style='margin-top:1.5em'>"
+        "<button type=submit style='background:#eee;font-weight:400;"
+        "color:#666;font-size:.9em'>"
+        "Sign out and start over</button>"
         "</form>", -1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
     httpd_resp_send_chunk(req, NULL, 0);
@@ -474,6 +506,11 @@ static esp_err_t root_handler(httpd_req_t *req) {
             return ESP_OK;
         case WIZ_PICK_PRINTERS:
             render_pick_printers(req);
+            return ESP_OK;
+        case WIZ_FAST_LOADING:
+            render_status(req, "Checking your printers…",
+                "Hold tight — pulling the current list from the relay.",
+                true);
             return ESP_OK;
         case WIZ_DONE:
             render_status(req, "🦆 You're set!",
@@ -868,6 +905,57 @@ static void retry_login_worker_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+// Settings-only fast-path. Long-press while already onboarded means
+// the user just wants to pick printers — they don't need (and don't
+// want) to re-enter WiFi/Bambu/ElevenLabs creds. This worker uses the
+// existing WiFi association to talk to the relay, pulls the current
+// printer list via list_printers (which uses the stored access_token —
+// no re-auth), and transitions the wizard straight to PICK_PRINTERS.
+//
+// On any failure (no WiFi, no relay row, expired token, network blip)
+// we fall back to the standard COLLECT_WIFI form so the user has an
+// escape hatch for "actually I do need to redo onboarding."
+static void fast_path_worker_task(void *arg) {
+    // Use the existing STA association — wifi_init already brought
+    // it up if NVS had creds, and APSTA mode preserves the
+    // association. Just wait briefly for the netif to be ready.
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+        BIT_STA_GOT_IP, pdFALSE, pdFALSE, pdMS_TO_TICKS(15000));
+    if (!(bits & BIT_STA_GOT_IP)) {
+        // STA didn't come up — could be a roam, AP outage, anything.
+        // Bail to the form so the user can re-enter creds if needed.
+        ESP_LOGW(TAG, "fast_path: STA not up, falling back to form");
+        s_state = WIZ_COLLECT_WIFI;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    notify_task_start();
+
+    int waited = 0;
+    while (!notify_ws_is_connected() && waited < 15000) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        waited += 200;
+    }
+    if (!notify_ws_is_connected()) {
+        ESP_LOGW(TAG, "fast_path: notify WS didn't come up, falling back");
+        s_state = WIZ_COLLECT_WIFI;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    bool ok = list_printers_via_ws(15000);
+    if (ok && bambu_printers_count() >= 1) {
+        ESP_LOGI(TAG, "fast_path: %d printers, jumping to picker",
+                 bambu_printers_count());
+        s_state = WIZ_PICK_PRINTERS;
+    } else {
+        ESP_LOGW(TAG, "fast_path: no printers from relay, falling back to form");
+        s_state = WIZ_COLLECT_WIFI;
+    }
+    vTaskDelete(NULL);
+}
+
 // ---- Entry point ----
 
 esp_err_t wifi_provision_run(void) {
@@ -944,20 +1032,87 @@ esp_err_t wifi_provision_run(void) {
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect);
     xTaskCreate(dns_hijack_task, "dns_hijack", 4096, NULL, 5, NULL);
 
-    // Block until the wizard reaches DONE (or stays stuck in a failure
-    // state — caller can long-press to wipe and retry). Polling is fine
-    // here; the wait is human-paced.
-    while (s_state != WIZ_DONE) {
-        vTaskDelay(pdMS_TO_TICKS(500));
+    // Settings-only fast-path: if WiFi NVS still has saved creds, the
+    // user pressed long-press to change something (almost always the
+    // printer selection) — not to re-do onboarding from scratch. Use
+    // the saved WiFi to reconnect STA in the background and pull the
+    // current printer list from the relay. Land the user on the picker
+    // page directly. Falls back to the standard form if anything goes
+    // sideways (no relay row, expired token, WiFi changed).
+    if (wifi_has_creds()) {
+        char ssid[33] = {0}, pw[65] = {0};
+        if (wifi_load_creds(ssid, sizeof(ssid),
+                             pw, sizeof(pw)) == ESP_OK) {
+            wifi_config_t sta_cfg = {0};
+            strncpy((char *)sta_cfg.sta.ssid, ssid, sizeof(sta_cfg.sta.ssid));
+            strncpy((char *)sta_cfg.sta.password, pw, sizeof(sta_cfg.sta.password));
+            sta_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
+            sta_cfg.sta.pmf_cfg.capable = true;
+            sta_cfg.sta.pmf_cfg.required = false;
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+            ESP_ERROR_CHECK(esp_wifi_connect());
+            s_state = WIZ_FAST_LOADING;
+            xTaskCreate(fast_path_worker_task, "fast_path",
+                         6144, NULL, 4, NULL);
+            ESP_LOGI(TAG, "fast-path enabled (WiFi creds in NVS) — "
+                          "wizard will skip form if relay binding still valid");
+        }
     }
-    ESP_LOGI(TAG, "wizard reached DONE — leaving AP up briefly for success page");
 
-    // Give the user's browser ~30s to load the success page and read it.
-    // Then tear down the AP. STA stays connected; httpd stays running
-    // (harmless — not externally accessible without the AP).
-    vTaskDelay(pdMS_TO_TICKS(30000));
-    ESP_LOGI(TAG, "tearing down AP");
+    // Block until the wizard reaches DONE OR a hard timeout fires OR
+    // the user presses the physical button (universal "I'm done"
+    // cancel). Without these, a user who long-presses by mistake or
+    // dismisses the captive portal without saving leaves the AP
+    // broadcasting forever — chatty radio + confusing entry point on
+    // someone's phone. 5 minutes is plenty for any legitimate
+    // onboarding including 2FA email lookup; if a user genuinely
+    // needs longer they can just long-press again.
+    //
+    // We poll BUTTON_PIN directly here rather than going through
+    // wake.c — provision_run is a blocking call from main, the wake
+    // task is suppressed during this window, and a direct read with
+    // a 50ms debounce is the simplest correct shape.
+    gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(BUTTON_PIN, GPIO_PULLUP_ONLY);
+    const int64_t WIZARD_TIMEOUT_MS = 5 * 60 * 1000;
+    int64_t start_ms = esp_timer_get_time() / 1000;
+    bool timed_out = false;
+    bool cancelled = false;
+    while (s_state != WIZ_DONE) {
+        vTaskDelay(pdMS_TO_TICKS(250));
+        int64_t elapsed = (esp_timer_get_time() / 1000) - start_ms;
+        if (elapsed > WIZARD_TIMEOUT_MS) {
+            ESP_LOGW(TAG, "wizard timed out after %lld ms in state=%d — "
+                          "tearing down AP, returning to idle",
+                     (long long)elapsed, (int)s_state);
+            timed_out = true;
+            break;
+        }
+        // Active-low button. Wait at least 1s before polling to avoid
+        // catching the same long-press event that just bounced us
+        // into the wizard.
+        if (elapsed > 1500 && gpio_get_level(BUTTON_PIN) == 0) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            if (gpio_get_level(BUTTON_PIN) == 0) {
+                ESP_LOGI(TAG, "button pressed during wizard — cancel");
+                cancelled = true;
+                break;
+            }
+        }
+    }
+    if (!timed_out && !cancelled) {
+        ESP_LOGI(TAG, "wizard reached DONE — leaving AP up briefly for success page");
+        // Give the user's browser ~30s to load the success page and read it.
+        // Then tear down the AP. STA stays connected; httpd stays running
+        // (harmless — not externally accessible without the AP).
+        vTaskDelay(pdMS_TO_TICKS(30000));
+    }
+    ESP_LOGI(TAG, "tearing down AP (timed_out=%d cancelled=%d)",
+             timed_out, cancelled);
     httpd_stop(server);
     esp_wifi_set_mode(WIFI_MODE_STA);  // drops AP, keeps STA connected
-    return ESP_OK;
+    // Both timed_out and cancelled are user-driven exits with no data
+    // changed — return ESP_ERR_TIMEOUT so main.c chirps quietly and
+    // drops back to idle. Reserved ESP_OK for the actual success path.
+    return (timed_out || cancelled) ? ESP_ERR_TIMEOUT : ESP_OK;
 }

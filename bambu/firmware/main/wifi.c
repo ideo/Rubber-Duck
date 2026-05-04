@@ -95,6 +95,12 @@ bool bambu_has_creds(void) {
     return ok;
 }
 
+esp_err_t wifi_load_creds(char *ssid_out, size_t ssid_cap,
+                          char *pw_out, size_t pw_cap) {
+    return load_creds(ssid_out, ssid_cap, pw_out, pw_cap);
+}
+
+
 esp_err_t bambu_load_creds(char *email_out, size_t email_cap,
                            char *pw_out, size_t pw_cap,
                            char *user_id_out, size_t user_id_cap) {

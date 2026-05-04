@@ -550,6 +550,17 @@ def register_set_printers_handler(fn) -> None:
     _set_printers_reconfigure = fn
 
 
+# And for list_printers — chip wants the printer list without re-auth.
+# main.py's handler reads the duck's row, calls list_devices with the
+# stored access_token, returns [{serial, name, online}, ...].
+_list_printers_fn = None
+
+
+def register_list_printers_handler(fn) -> None:
+    global _list_printers_fn
+    _list_printers_fn = fn
+
+
 def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
     """Pull duck_id from the WS handshake. Order of precedence:
        1. `X-Duck-Id` header — the canonical multi-tenant signal
@@ -605,6 +616,38 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                 logger.warning("notify rx non-JSON: %s", text[:100])
                 continue
             mtype = payload.get("type")
+            if mtype == "list_printers":
+                # Fast-path support for the "long-press while already
+                # onboarded" flow (#41 follow-up). Chip already has
+                # WiFi NVS + a row on the relay; it doesn't want to
+                # re-do bambu_login. We use the stored access_token
+                # to call list_devices and return the same numbered-
+                # string format as bambu_login_result. Chip drops it
+                # straight into its s_printers[] for the picker page.
+                target = payload.get("duck_id") or duck_id
+                ack = {"type": "list_printers_result", "ok": False}
+                if _list_printers_fn is None:
+                    ack["error"] = "no_handler"
+                else:
+                    try:
+                        printers = await _list_printers_fn(target)
+                        ack["ok"] = True
+                        ack["printer_count"] = str(len(printers))
+                        for i, p in enumerate(printers[:8]):
+                            safe = (p.get("name") or "").replace('"', "'") \
+                                                       .replace("\\", "/") \
+                                                       .replace("\n", " ")
+                            if len(safe) > 31:
+                                safe = safe[:31]
+                            ack[f"printer_{i}_name"] = safe
+                            ack[f"printer_{i}_serial"] = p["serial"]
+                            ack[f"printer_{i}_online"] = (
+                                "1" if p.get("online") else "0")
+                    except Exception as e:
+                        logger.warning("list_printers failed: %s", e)
+                        ack["error"] = str(e)[:80]
+                await duck.send_text(json.dumps(ack, ensure_ascii=False))
+                continue
             if mtype == "set_printers":
                 # Phase B of #41 — captive-portal printer picker. Chip
                 # sends the chosen serials pipe-delimited; relay narrows

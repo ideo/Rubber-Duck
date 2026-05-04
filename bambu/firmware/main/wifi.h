@@ -18,6 +18,13 @@ bool wifi_has_creds(void);
 // password up to 64 chars (WPA2/3 max). Returns ESP_OK on success.
 esp_err_t wifi_save_creds(const char *ssid, const char *password);
 
+// Load WiFi creds from NVS for callers other than wifi_connect_blocking
+// (e.g. the captive portal's settings-only fast-path that wants to
+// reuse the saved network without doing the whole connect-blocking
+// dance again). ESP_OK on success; ssid/pass are NUL-terminated.
+esp_err_t wifi_load_creds(char *ssid_out, size_t ssid_cap,
+                          char *pw_out, size_t pw_cap);
+
 // Erase WiFi creds from NVS. Used by the long-press "re-onboard" path: wipe
 // creds, reboot, boot logic sees no creds, falls into no-WiFi mode where
 // the next button press enters the SoftAP wizard.
