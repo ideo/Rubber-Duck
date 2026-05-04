@@ -20,6 +20,8 @@ from typing import Any, Callable, List
 
 import paho.mqtt.client as mqtt
 
+from hms_codes import lookup_phrase as _hms_lookup_phrase
+
 logger = logging.getLogger("bambu_state")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -309,15 +311,26 @@ class BambuState:
                 printer.last_stage = stage
 
             if "hms" in push:
-                new_hms = {h.get("attr") for h in (push.get("hms") or [])
-                           if h.get("attr")
-                           and _hms_severity(h.get("attr", 0)) >= 1}
+                # Build a {attr → (attr, code)} map so we can look up
+                # the full 16-char form for any newly-arrived attr. The
+                # `_last_hms` set still tracks just attr-IDs (since
+                # that's what determines "is this fault new or stale").
+                hms_pairs = {h.get("attr"): (h.get("attr"), h.get("code"))
+                             for h in (push.get("hms") or [])
+                             if h.get("attr")
+                             and _hms_severity(h.get("attr", 0)) >= 1}
+                new_hms = set(hms_pairs.keys())
                 if printer.last_hms is None:
                     printer.last_hms = new_hms
                 else:
                     added = new_hms - printer.last_hms
                     if added:
-                        self._fire({"type": "hms", "codes": list(added),
+                        added_list = list(added)
+                        phrases = [_hms_lookup_phrase(*hms_pairs[a])
+                                   for a in added_list]
+                        self._fire({"type": "hms",
+                                    "codes": added_list,
+                                    "phrases": phrases,
                                     "subtask": subtask,
                                     "printer_name": printer.printer_name})
                     printer.last_hms = new_hms
@@ -337,6 +350,9 @@ class BambuState:
 
     def _printer_snapshot(self, printer: _PrinterState) -> dict:
         s = printer.state
+        active_hms = [h for h in (s.get("hms") or [])
+                      if h.get("attr")
+                      and _hms_severity(h.get("attr", 0)) >= 1]
         return {
             "stage": s.get("gcode_state"),
             "subtask": s.get("subtask_name"),
@@ -349,9 +365,13 @@ class BambuState:
             "bed_target_c": s.get("bed_target_temper"),
             "bed_c": s.get("bed_temper"),
             "chamber_c": s.get("chamber_temper"),
-            "hms_codes": [h.get("attr") for h in (s.get("hms") or [])
-                          if h.get("attr")
-                          and _hms_severity(h.get("attr", 0)) >= 1],
+            "hms_codes": [h["attr"] for h in active_hms],
+            # Friendly TTS phrases parallel to hms_codes — same length,
+            # same order. Entries are None when we don't have a phrase
+            # for that code (caller falls back to a generic message).
+            # See hms_codes.py for the lookup table source.
+            "hms_phrases": [_hms_lookup_phrase(h.get("attr"), h.get("code"))
+                            for h in active_hms],
         }
 
     def snapshot(self) -> dict:

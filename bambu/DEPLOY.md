@@ -116,21 +116,28 @@ export XI_KEY="<user's key>"
 ```
 
 **Create the agent from our template.** The template lives at
-`bambu/elevenlabs/agent-template.json`. Substitute three values into
-the tool URLs and auth headers:
+`bambu/elevenlabs/agent-template.json`. Tool URLs in it use the
+un-scoped `/tools/printer_state` route which the relay resolves to
+the "default duck" (oldest row in the DB) — for self-hosters with
+one duck this is forever-correct and means we can create the agent
+BEFORE the chip onboards.
+
+Two values to substitute:
 - `{{RELAY_URL}}` → `https://$APP_NAME.fly.dev`
 - `{{RELAY_SHARED_SECRET}}` → the secret from Phase 1
-- `{{DUCK_ID}}` → leave as-is for now (the chip will fill it in)
 
 ```bash
-# Render the template, POST to ElevenLabs, capture agent_id.
-RENDERED=$(sed \
+# Strip the leading _comment field and substitute placeholders, then
+# POST to ElevenLabs. jq removes _comment cleanly; sed handles the
+# value substitutions. Pipe to curl with --data-binary @- so big
+# system_prompt strings don't get mangled.
+RENDERED=$(jq 'del(._comment) | del(.conversation_config.tts._comment_voice)' \
+  bambu/elevenlabs/agent-template.json | sed \
   -e "s|{{RELAY_URL}}|$RELAY_URL|g" \
-  -e "s|{{RELAY_SHARED_SECRET}}|$SECRET|g" \
-  bambu/elevenlabs/agent-template.json)
+  -e "s|{{RELAY_SHARED_SECRET}}|$SECRET|g")
 
 AGENT_ID=$(echo "$RENDERED" | curl -s -X POST \
-  "https://api.elevenlabs.io/v1/convai/agents" \
+  "https://api.elevenlabs.io/v1/convai/agents/create" \
   -H "xi-api-key: $XI_KEY" \
   -H "Content-Type: application/json" \
   --data-binary @- | python3 -c "import sys, json; print(json.load(sys.stdin)['agent_id'])")
@@ -140,12 +147,21 @@ echo "AGENT_ID=$AGENT_ID" >> ~/.duck-deploy/$APP_NAME.env
 
 If the POST fails: surface the error and stop. Common causes:
 - 401 — wrong API key.
-- 422 — template malformed (probably a substitution issue).
+- 422 — template malformed (probably a substitution issue, or a field
+  the user's ElevenLabs plan doesn't support — e.g. some `tts.model_id`
+  values are paid-tier-only).
 
-NOTE: `bambu/elevenlabs/agent-template.json` doesn't exist yet —
-tracked in #48 separately. Until it lands, the user creates the agent
-manually in the ElevenLabs UI and provides the agent_id directly. ASK
-USER for the agent_id if the template file is missing.
+The template defaults to `eleven_flash_v2_5` for low-latency
+conversational TTS. The voice ID (`TX3LPaxmHKxFdv7VOQHJ` = "Liam") is
+a starting point — the user can audition alternatives in the
+ElevenLabs dashboard after import. See `bambu/agent/voice.md` for
+selection criteria.
+
+**Multi-duck note:** if the user runs more than one chip on this
+relay, each chip needs its own agent because the un-scoped tool URLs
+all resolve to the default duck. The template's `_comment` field
+documents the path-scoped variant (`/tools/printer_state/<duck_id>`)
+to swap in for that case.
 
 ---
 

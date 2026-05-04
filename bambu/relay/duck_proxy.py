@@ -108,7 +108,8 @@ _ANNOUNCED_ATTR = "_duck_announced"
 
 async def _inject_into_active_sessions(duck_id: str, event_type: str,
                                         friendly: Optional[str],
-                                        printer_name: Optional[str] = None) -> int:
+                                        printer_name: Optional[str] = None,
+                                        hms_phrases: Optional[list] = None) -> int:
     """Push a printer event into the live upstream for `duck_id`, if any.
     Returns the number of sessions injected into (0 or 1, basically —
     higher only if a duck somehow has multiple concurrent upstreams).
@@ -124,7 +125,8 @@ async def _inject_into_active_sessions(duck_id: str, event_type: str,
     for upstream in list(upstreams):
         already = getattr(upstream, _ANNOUNCED_ATTR, False)
         header = "Printer update" if already else "Printer notice"
-        text = _printer_text_for(event_type, friendly, header, printer_name)
+        text = _printer_text_for(event_type, friendly, header,
+                                  printer_name, hms_phrases)
         try:
             await _send_user_message(upstream, text)
             setattr(upstream, _ANNOUNCED_ATTR, True)
@@ -138,7 +140,8 @@ async def _inject_into_active_sessions(duck_id: str, event_type: str,
 
 async def _dispatch_event(duck_id: str, event_type: str,
                             friendly: Optional[str],
-                            printer_name: Optional[str] = None) -> None:
+                            printer_name: Optional[str] = None,
+                            hms_phrases: Optional[list] = None) -> None:
     """Route a printer event for `duck_id` to either its live session
     (inject) or its notify channel (broadcast → chip opens new session).
 
@@ -146,14 +149,27 @@ async def _dispatch_event(duck_id: str, event_type: str,
     upstream so the agent pivots mid-conversation with no audio glitch.
     Broadcast is the cold-start: the chip is idle, /ws/notify wakes it,
     chip dials /ws/duck?event=...&subtask=..., and ws_duck_endpoint
-    sends the opening user_message right after init metadata."""
-    injected = await _inject_into_active_sessions(duck_id, event_type, friendly, printer_name)
+    sends the opening user_message right after init metadata.
+
+    `hms_phrases` is only meaningful when event_type=='hms'; passed
+    through to the user_message builder so the agent can speak the
+    actual fault ("filament tangled in AMS slot 1") rather than a
+    generic "the printer's flagging an error."""
+    injected = await _inject_into_active_sessions(duck_id, event_type,
+                                                    friendly, printer_name,
+                                                    hms_phrases)
     if injected:
         return
-    payload = json.dumps(
-        {"type": "notify", "event": event_type, "subtask": friendly},
-        ensure_ascii=False,
-    )
+    notify = {"type": "notify", "event": event_type, "subtask": friendly}
+    # Pass phrases on the broadcast too — the chip's session-start
+    # path will request them via the agent's HMS-aware path. Today the
+    # chip's notify_item_t only carries event + subtask, so the phrases
+    # are discarded once they hit the chip — but the relay's session-
+    # opening user_message (in ws_duck_endpoint) reads them direct from
+    # the live BambuState's snapshot, so the agent still gets them.
+    if hms_phrases:
+        notify["hms_phrases"] = [s for s in hms_phrases if s]
+    payload = json.dumps(notify, ensure_ascii=False)
     await _broadcast_notify(duck_id, payload)
     logger.info("notify broadcast (duck=%s, no active session): %s — %s%s",
                 duck_id, event_type, friendly,
@@ -191,6 +207,7 @@ def register_bambu_listener(duck_id: str, state) -> None:
                 event.get("type"),
                 _friendly_subtask(event.get("subtask")),
                 event.get("printer_name") or None,
+                event.get("phrases") or None,
             ),
             _main_loop,
         )
@@ -210,6 +227,7 @@ def fire_notification_for(duck_id: str, event: dict) -> None:
             event.get("type"),
             _friendly_subtask(event.get("subtask")),
             event.get("printer_name") or None,
+            event.get("phrases") or None,
         ),
         _main_loop,
     )
@@ -249,7 +267,8 @@ async def _send_init(upstream: websockets.WebSocketClientProtocol,
 
 
 def _printer_text_for(event_type: str, subtask: Optional[str], header: str,
-                       printer_name: Optional[str] = None) -> str:
+                       printer_name: Optional[str] = None,
+                       hms_phrases: Optional[list] = None) -> str:
     """Build the user_message body for a printer event. Caller passes header:
       'Printer notice' — first-in-session, agent announces fresh.
       'Printer update' — subsequent events in same session, agent treats
@@ -259,7 +278,13 @@ def _printer_text_for(event_type: str, subtask: Optional[str], header: str,
     device list so the agent can disambiguate which printer fired the
     event ("Work Bambu just started" vs "your printer just started").
     Empty string / None falls back to a generic phrasing — same shape as
-    before this change, so LAN-mode installs are unchanged."""
+    before this change, so LAN-mode installs are unchanged.
+
+    `hms_phrases` (only used when event_type=='hms') is the parallel-
+    indexed list of friendly TTS strings from hms_codes.lookup. Falls
+    back to the generic "flagging an error" when none of the codes
+    have phrases. Multiple known phrases get joined with semicolons
+    so the agent can read them as a list."""
     name = subtask or "your print"
     pname = (printer_name or "").strip()
     p = pname if pname else "the printer"
@@ -274,6 +299,10 @@ def _printer_text_for(event_type: str, subtask: Optional[str], header: str,
     if event_type == "resume":
         return f"{header}: print of {name} resumed on {p}."
     if event_type == "hms":
+        known = [s for s in (hms_phrases or []) if s]
+        if known:
+            joined = "; ".join(known)
+            return f"{header}: {p} is reporting — {joined}."
         return f"{header}: {p} is flagging an error."
     return f"{header}: event {event_type} on {p}, file {name}."
 
