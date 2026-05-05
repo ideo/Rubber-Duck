@@ -8,9 +8,11 @@
 #include "config.h"
 
 #include <math.h>
+#include <stdlib.h>      // rand() for the uh-oh chirp's per-call variation
 #include <string.h>
 
 #include <driver/i2s_std.h>
+#include <nvs.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -40,6 +42,24 @@ static SemaphoreHandle_t s_mic_lock = NULL;
 #define AMP_DECAY_MS 800
 static volatile int64_t s_spk_active_until_ms = 0;
 static inline int64_t audio_now_ms(void) { return esp_timer_get_time() / 1000; }
+
+// Speaker volume — software multiplier applied per-sample in spk_write.
+// 5-step preset model mirrors the original Teensy duck: Loud, Normal,
+// Quiet, Whisper, Mute. Default Normal = 0.50. Cycled by short button
+// press in main.c; persisted in NVS so it survives reboot.
+//
+// The mute step doesn't actually drive samples to silence in spk_write —
+// it just multiplies by 0. Why bother running the synth at all then?
+// Because main.c plays an "announce" chirp at the new step on every
+// button press; if the new step is mute, audio.c's announce_volume()
+// helper temporarily uses the Quiet (0.25) level so the user hears
+// "you've reached mute" instead of silence-on-press. Same trick the
+// OG firmware uses (rubber_duck_s3_ducky.ino:266).
+static const float VOLUME_PRESETS[]   = { 0.75f, 0.50f, 0.25f, 0.05f, 0.00f };
+#define VOLUME_PRESET_COUNT  ((int)(sizeof(VOLUME_PRESETS) / sizeof(VOLUME_PRESETS[0])))
+#define VOLUME_DEFAULT_STEP  1   // Normal
+#define VOLUME_MUTE_STEP     (VOLUME_PRESET_COUNT - 1)
+static volatile uint8_t s_volume_step = VOLUME_DEFAULT_STEP;
 
 // DC removal + gain (ported from rubber_duck_s3_ducky/MicCapture.ino).
 // ICS-43432 in 16-bit mode is quiet; default gain 8× brings speech up to
@@ -222,6 +242,23 @@ esp_err_t audio_init(void) {
     ESP_LOGI(TAG, "mic init: DC seed=%.0f gain=%.1f (fixed)",
              s_mic_dc, s_mic_gain);
 
+    // Restore last-saved volume step from NVS. Default (Normal/0.50)
+    // applies on first boot or any error reading the value. nvs_flash
+    // is initialized by app_main before audio_init runs, so the
+    // namespace open here will succeed unless the partition itself
+    // is unavailable (in which case we just keep the default).
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READONLY, &nvs) == ESP_OK) {
+        uint8_t saved = VOLUME_DEFAULT_STEP;
+        if (nvs_get_u8(nvs, "vol_step", &saved) == ESP_OK &&
+            saved < VOLUME_PRESET_COUNT) {
+            s_volume_step = saved;
+        }
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "volume: step=%u (%.2f)",
+             s_volume_step, VOLUME_PRESETS[s_volume_step]);
+
 #if defined(AUDIO_I2S_SPLIT)
     ESP_LOGI(TAG, "I2S split initialized @ %d Hz (mic: BCLK=%d WS=%d SD=%d, "
                   "spk: BCLK=%d WS=%d DIN=%d)",
@@ -304,6 +341,13 @@ esp_err_t audio_spk_write(const int16_t *pcm, size_t num_samples) {
     int chunk_duration_ms = (int)((num_samples * 1000) / AUDIO_SAMPLE_RATE_HZ);
     s_spk_active_until_ms = audio_now_ms() + chunk_duration_ms + AMP_DECAY_MS;
 
+    // Volume scale — single multiplier applied to each sample on the way
+    // to the I2S TX. Read once per chunk; if the user cycles volume mid-
+    // playback the next chunk picks it up. Mute step (0.0) emits zeros
+    // but still pumps DMA so the speaker_active gate / amp behavior is
+    // unchanged.
+    float vol = VOLUME_PRESETS[s_volume_step];
+
     // Mono → stereo expansion: write each sample twice (L=R) for the Philips
     // stereo slot config. Use a small chunked buffer so we don't allocate
     // huge stacks. 256 mono samples = 512 stereo samples = 1024 bytes.
@@ -312,8 +356,11 @@ esp_err_t audio_spk_write(const int16_t *pcm, size_t num_samples) {
     while (pos < num_samples) {
         size_t take = (num_samples - pos < 256) ? (num_samples - pos) : 256;
         for (size_t i = 0; i < take; i++) {
-            stereo[i * 2]     = pcm[pos + i];
-            stereo[i * 2 + 1] = pcm[pos + i];
+            int32_t s = (int32_t)((float)pcm[pos + i] * vol);
+            if (s >  32767) s =  32767;
+            if (s < -32768) s = -32768;
+            stereo[i * 2]     = (int16_t)s;
+            stereo[i * 2 + 1] = (int16_t)s;
         }
         size_t written = 0;
         esp_err_t err = i2s_channel_write(s_tx, stereo, take * 2 * sizeof(int16_t),
@@ -455,14 +502,15 @@ static void chirp_squelch_note(int start_freq_hz, int end_freq_hz,
             else if (total - idx < attack_release_samples)
                 env = (float)(total - idx) / (float)attack_release_samples;
 
-            // Amplitude tuned by ear to sit just under the agent voice
-            // level coming from ElevenLabs (which peaks ~16k–20k). The
-            // sawtooth + resonant bandpass is perceptually punchier
-            // than a sine at the same RMS, so we run it at 13500 even
-            // though int16 headroom would allow more — chirps that are
-            // louder than the agent's voice read as "the duck is
-            // overreacting" instead of as quiet UI feedback.
-            float v = env * 13500.0f * s;
+            // Amplitude tuned by ear to sit comfortably under the agent
+            // voice level coming from ElevenLabs (which peaks ~16k–20k).
+            // Sawtooth + resonant bandpass is perceptually punchier than
+            // a sine at the same RMS, so we run quieter than int16
+            // headroom would allow. 10000 puts chirps in "quiet UI
+            // feedback" territory so the agent's voice is clearly the
+            // primary content; bump if you can't hear the chirps in a
+            // noisier room.
+            float v = env * 10000.0f * s;
             if (v > 32000.0f)  v = 32000.0f;
             if (v < -32000.0f) v = -32000.0f;
             buf[i] = (int16_t)v;
@@ -534,4 +582,90 @@ void audio_chirp_down(void) {
     // (the longer-fall "I need help" bend in main.c handles
     // genuinely sad).
     audio_chirp_bend(640, 380, 220);
+}
+
+void audio_chirp_uh_uh(void) {
+    // Terse, deterministic two-note "uh-uh" — printer-fault counterpart
+    // to the chip-fault uh-oh above. No randomization (consistent
+    // mechanical rejection feel), tighter rhythm, lower register, and
+    // a sharper filter close than uh-oh. The two voices share their
+    // "two descending notes" gesture so they read as the same family,
+    // but the timing distinguishes them: uh-oh = "ohhh shit", uh-uh =
+    // "nope, wrong."
+    //
+    // Adapted from the original Teensy duck's playChirp negative-
+    // sentiment branch (sentiment < 0.4 → doubleChirp + closing
+    // filter) — bambu duck has no eval scoring, but printer faults
+    // map cleanly to that same "this is bad news" voice.
+    chirp_squelch_note(460, 440, 100, 1100.0f, 350.0f, 10.0f);
+    chirp_silence(30);
+    chirp_squelch_note(360, 300, 180,  900.0f, 280.0f, 10.0f);
+    chirp_silence(50);
+}
+
+void audio_chirp_uh_oh(void) {
+    // Two-note descending error cue. Each note is a short bend that
+    // falls slightly within itself, with the SVF closing across the
+    // call (filter sweeps brighter → muffled = "the air's coming out
+    // of this"). Frequencies + durations are randomized in a narrow
+    // band so two errors back-to-back don't sound mechanical, but
+    // the gesture stays recognizable.
+    //
+    // Octave above the original Teensy duck's permission chirp (220Hz
+    // root) so it sits inside the bambu duck's vocal-register family
+    // (boot/connect/wake/hangup all live around 280–680 Hz). Below
+    // that range it'd start to sound like a different speaker.
+    int root_jitter   = rand() % 80;        // 0–79
+    int gap_jitter    = rand() % 60;        // 0–59
+    int n2_dur_jitter = rand() % 60;        // 0–59
+    int root      = 460 + root_jitter;      // 460–539
+    int low_root  = (int)(root * 0.75f);    // 345–404
+    int gap_ms    = 50  + gap_jitter;       // 50–109
+    int note1_ms  = 130;
+    int note2_ms  = 200 + n2_dur_jitter;    // 200–259
+
+    // Note 1: high-ish, slight downward bend, filter opens then begins
+    // to close on the tail (rise rate moderate so the descent is
+    // audible within the short note).
+    chirp_squelch_note(root, root - 20, note1_ms,
+                       1200.0f, 400.0f, 8.0f);
+    chirp_silence(gap_ms);
+    // Note 2: lower, longer, more pronounced fall. Filter closes
+    // harder to give the "uh-OH" tail its muffled character.
+    chirp_squelch_note(low_root, low_root - 50, note2_ms,
+                       900.0f, 280.0f, 6.0f);
+    chirp_silence(50);
+}
+
+void audio_cycle_volume(void) {
+    s_volume_step = (s_volume_step + 1) % VOLUME_PRESET_COUNT;
+
+    // Persist immediately. nvs_set_u8 + commit is the simplest
+    // ESP-IDF pattern; total cost is microseconds plus the flash
+    // write. Cycling rapidly through all 5 steps in succession is
+    // fine — NVS coalesces same-key writes within the wear-leveling
+    // layer.
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, "vol_step", s_volume_step);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+
+    ESP_LOGI(TAG, "volume → step %u (%.2f)",
+             s_volume_step, VOLUME_PRESETS[s_volume_step]);
+
+    // Audible confirmation chirp. On the Mute step the live volume
+    // would silence the chirp itself, so we briefly swap to the
+    // Quiet step (0.25) for the announce — same trick the OG firmware
+    // uses (rubber_duck_s3_ducky.ino "deferredVolume" path). User
+    // hears "you've cycled to mute" instead of nothing.
+    if (s_volume_step == VOLUME_MUTE_STEP) {
+        uint8_t real = s_volume_step;
+        s_volume_step = 2;          // Quiet
+        audio_chirp_up();
+        s_volume_step = real;
+    } else {
+        audio_chirp_up();
+    }
 }

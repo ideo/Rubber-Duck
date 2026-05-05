@@ -218,7 +218,14 @@ esp_err_t servo_init(void) {
     ESP_ERROR_CHECK(ledc_channel_config(&ch_cfg));
 
     servo_write_angle(SERVO_CENTER);
-    nextIdleHopMs = now_ms() + 1000;  // first hop after 1s
+    // Hold dead-center through the entire boot arc — boot bend, wifi
+    // connect (up to 20s), wizard handshake, the "I'm connected" /
+    // "All set" spoken confirmations. Original Teensy duck did the
+    // same ("dead level" period). Without this the head was fidgeting
+    // mid-boot, which read as agitation rather than the intended
+    // "powering up" gravitas. 20s covers the worst-case wifi-connect
+    // timeout; idle hops resume after.
+    nextIdleHopMs = now_ms() + 20000;
 
     xTaskCreate(servo_task, "servo", 4096, NULL, 3, NULL);
     ESP_LOGI(TAG, "servo init on GPIO%d (LEDC ch%d)", SERVO_PIN, SERVO_LEDC_CHANNEL);

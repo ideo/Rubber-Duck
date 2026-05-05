@@ -72,3 +72,15 @@ if(DEFINED DUCK_VARIANT AND "${DUCK_VARIANT}" STREQUAL "XIAO")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DUCK_VARIANT_XIAO=1)
     message(STATUS "Building for DUCK_VARIANT=XIAO (standard Seeed XIAO S3)")
 endif()
+
+# Turnkey build — `idf.py -DBAMBU_DUCK_TURNKEY=1 build`. For ducks
+# being handed out to people on a relay you operate where the
+# ElevenLabs creds are already configured as Fly secrets. Strips the
+# captive portal's ElevenLabs key + agent ID fields so end users only
+# need to enter WiFi + Bambu credentials. Default (unset) is the
+# self-hosted distributable build that exposes those fields so each
+# self-hoster brings their own ElevenLabs account.
+if(DEFINED BAMBU_DUCK_TURNKEY AND "${BAMBU_DUCK_TURNKEY}" STREQUAL "1")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE BAMBU_DUCK_TURNKEY=1)
+    message(STATUS "Building TURNKEY duck (no ElevenLabs creds in captive portal)")
+endif()

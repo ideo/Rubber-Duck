@@ -160,7 +160,11 @@ static void mic_task(void *arg) {
         }
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_log_ms > 2000) {
-            ESP_LOGI(TAG, "mic: %d reads, %d frames pushed (%d silenced) in %lldms",
+            // Demoted to DEBUG — was producing a line every 2s on every
+            // session, drowning the real events (session_ready, ws closed,
+            // tap detection). Bring back to INFO via menuconfig if you're
+            // chasing mic reachability or VAD behavior.
+            ESP_LOGD(TAG, "mic: %d reads, %d frames pushed (%d silenced) in %lldms",
                      reads_total, frames_pushed, frames_silenced, now - last_log_ms);
             reads_total = 0; frames_pushed = 0; frames_silenced = 0;
             last_log_ms = now;
@@ -185,7 +189,10 @@ static void ws_send_task(void *arg) {
         // Binary WS frame — raw bytes, server side reassembles.
         esp_websocket_client_send_bin(s_ws, (const char *)pcm, n, portMAX_DELAY);
         if ((++chunk_count % 12) == 0) {
-            ESP_LOGI(TAG, "tx chunk #%d: %u bytes (80ms)", chunk_count, (unsigned)n);
+            // Demoted to DEBUG — every ~1s during a session was pure
+            // noise. Bring back via menuconfig when chasing TX-stream
+            // pacing or upstream throughput.
+            ESP_LOGD(TAG, "tx chunk #%d: %u bytes (80ms)", chunk_count, (unsigned)n);
         }
     }
     vTaskDelete(NULL);
@@ -814,6 +821,22 @@ static void notify_task(void *arg) {
         if (xQueueReceive(s_notify_queue, &item, portMAX_DELAY) == pdTRUE) {
             ESP_LOGI(TAG, "starting session from notification: event=%s subtask=%s",
                      item.event, item.subtask);
+            // Pre-cue printer-fault events with the dismissive "uh-uh"
+            // chirp before the agent's voice carries the detail. Gives
+            // a listener a half-second heads-up that the upcoming
+            // utterance is bad news from the printer (vs. a routine
+            // "started"/"finished" which arrives unprompted as agent
+            // voice with no chirp prefix). 250ms post-chirp delay lets
+            // the chirp + amp ring settle so the voice doesn't step on
+            // its tail; agent voice typically takes ~1s to start
+            // streaming after agent_run_session opens the WS, so this
+            // delay is well within the natural pre-voice window.
+            bool is_printer_error = (strcmp(item.event, "failed") == 0 ||
+                                     strcmp(item.event, "hms") == 0);
+            if (is_printer_error) {
+                audio_chirp_uh_uh();
+                vTaskDelay(pdMS_TO_TICKS(250));
+            }
             agent_run_session(item.event, item.subtask[0] ? item.subtask : NULL);
         }
     }

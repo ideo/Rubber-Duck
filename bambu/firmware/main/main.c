@@ -120,7 +120,9 @@ void app_main(void) {
             notify_task_start();
         } else {
             ESP_LOGE(TAG, "wifi creds present but connect failed");
-            audio_chirp_down();
+            // Chip-internal failure → uh-oh (concerned, randomized) so
+            // it's distinguishable from the neutral chirp_down hangup.
+            audio_chirp_uh_oh();
             // Fall through to no-wifi idle. Long-press will wipe creds + reboot
             // for a clean re-onboard; short press / tap will enter SoftAP.
         }
@@ -226,7 +228,8 @@ void app_main(void) {
             }
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "provisioning failed: %s", esp_err_to_name(err));
-                audio_chirp_down();
+                // Chip-internal failure → uh-oh (vs neutral chirp_down).
+                audio_chirp_uh_oh();
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 continue;
             }
@@ -244,14 +247,27 @@ void app_main(void) {
             continue;
         }
 
-        // Conversation flow.
-        if (trigger == WAKE_TAP) {
-            ESP_LOGI(TAG, "tap detected — shaking it off");
-            servo_shake_off();
+        // Routing for non-provision wakes:
+        //   WAKE_BUTTON (short press) → volume cycle. Audible chirp at
+        //     the new level, persisted to NVS. Skip session entirely.
+        //   WAKE_TAP (double-tap)     → conversation. Shake-off animation
+        //     first, then session.
+        // Long-press is handled in the need_provision branch above
+        // (re-onboard / settings mode).
+        if (trigger == WAKE_BUTTON) {
+            ESP_LOGI(TAG, "button: cycling volume");
+            audio_cycle_volume();
+            led_off();
+            // Brief tap-quiet so the announce chirp's amp ring + I2S
+            // tail don't trigger the tap detector when the user lets
+            // go of the button.
+            wake_quiet_for_ms(800);
+            continue;
         }
-        // No "heard the button" chirp on button press — the wake bend
-        // below covers it. Stacking two cues before the session opens
-        // muddied the moment.
+
+        // Conversation flow (double-tap path).
+        ESP_LOGI(TAG, "tap detected — shaking it off");
+        servo_shake_off();
 
         ESP_LOGI(TAG, "starting relay session");
         // Wake bend — same chirp_up the rest of the firmware uses

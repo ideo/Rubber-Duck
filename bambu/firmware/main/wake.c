@@ -1,14 +1,26 @@
 // Tap-to-wake: detect a sharp amplitude transient on the mic and treat it
 // like a button press. Pairs with a comedic servo "shake-off" animation
-// kicked from main.c on tap. See issue #37.
+// kicked from main.c on tap. See issues #37 (single-tap origin) + #40
+// (double-tap promotion).
 //
-// Detection algorithm (per issue):
+// Detection algorithm:
 //   1. Read mic frames continuously when no session is running.
 //   2. For each frame, split into two halves (10ms @ 16kHz = 160 samples).
 //   3. Compute peak abs amplitude per half.
-//   4. Tap = (peak2 > TAP_PEAK_MIN) AND (peak2 - peak1 > TAP_SLOPE_MIN).
+//   4. Raw tap = (peak2 > TAP_PEAK_MIN) AND (peak2 - peak1 > TAP_SLOPE_MIN).
 //   5. Skip while agent is speaking (its own consonants would self-trigger).
-//   6. Cooldown ~1s after each detection so a single tap doesn't fire twice.
+//   6. Short cooldown (~200ms) after each raw detection so one physical
+//      tap's decay doesn't re-register as a second tap.
+//   7. **Wake gesture = TWO raw taps within DOUBLE_TAP_WINDOW_MS.** Single
+//      taps are dropped silently. Music, drum hits, dropped objects can
+//      cleanly produce one transient — they don't reliably produce two
+//      with the right timing — so this is the false-positive moat.
+//
+// Why double-tap and not single: real-world ambient sources (music with
+// percussion, kitchen sounds, slammed doors) routinely cleared the
+// single-tap thresholds. Demanding two distinct taps within ~500ms is a
+// gesture humans can do trivially but ambient sound rarely produces. The
+// physical button remains the reliable single-event path.
 //
 // Why a separate file: keeps tap detection out of agent.c (session lifecycle)
 // and audio.c (I2S abstraction). Single concern: idle-time mic monitoring.
@@ -48,22 +60,45 @@ static const char *TAG = "wake";
 // in ~half a second of quiet → next drum hit looks like a tap against
 // the now-low floor → false trigger). Asymmetric keeps the floor up when
 // the room is intermittently loud.
-#define TAP_PEAK_MIN         10000   // absolute amplitude backstop
-                                     // History: 3000 → 5000 → 2500 → 10000.
-                                     // Real taps observed at peak2 = 18000+
-                                     // (mic-cal gain=2.4 era); ambient + speech
-                                     // floor caps under 2k. 10k is safely above
-                                     // every non-tap source without losing real
-                                     // taps. Slope check + adaptive floor still
-                                     // do the music rejection on top of this.
-#define TAP_SLOPE_MIN         1500   // peak2 - peak1 minimum (unchanged —
-                                     // can't reliably distinguish drum onset
-                                     // slope from tap slope on slope alone).
+#define TAP_PEAK_MIN          5000   // absolute amplitude backstop.
+                                     // History: 3000 → 5000 → 2500 → 10000
+                                     // → 5000. The 10000 setting required
+                                     // tapping HARD enough to risk damaging
+                                     // the duck's enclosure / mic mount;
+                                     // since #40 promoted the gesture to
+                                     // double-tap (false-positive moat
+                                     // moved to the rhythm requirement),
+                                     // we can drop the per-tap loudness
+                                     // bar back down so the 2nd tap of a
+                                     // pair doesn't have to be the same
+                                     // hammer-strike as the 1st. Slope +
+                                     // adaptive-floor checks still gate
+                                     // out music / hum / speech on top.
+#define TAP_SLOPE_MIN         1000   // peak2 - peak1 minimum. Lowered
+                                     // alongside TAP_PEAK_MIN so a softer
+                                     // 2nd tap with a slightly less sharp
+                                     // onset still clears.
 #define TAP_FLOOR_MULT        5      // peak2 must exceed N × adaptive floor
 #define TAP_FLOOR_ALPHA_RISE  0.1f   // floor rises fast: room got louder
 #define TAP_FLOOR_ALPHA_FALL  0.005f // floor falls slow: brief quiet doesn't
                                      // reset the room's "loud" reading
-#define TAP_COOLDOWN_MS       1000
+
+// Cooldown debounces a single physical tap's decay tail (impact rings
+// through enclosure for ~100ms). Must be SHORTER than the double-tap
+// window so a legitimate 2nd tap doesn't get swallowed. Originally
+// 1000ms back when a single tap was the wake gesture — that was fine
+// for "don't double-fire one tap" but blocks the double-tap path.
+// 80ms admits fast knock-knock rhythms; PEAK_MIN + slope gating
+// prevents a single tap's decay from re-firing inside that window.
+#define TAP_COOLDOWN_MS       80
+
+// Inter-tap window for the double-tap gesture. A second raw tap must
+// land within this window of the first (after the cooldown) or the
+// sequence resets. 750ms is forgiving for casual users while keeping
+// the false-positive moat (ambient noise can't reliably produce two
+// distinct slope-clearing impacts in under 750ms with the 5x adaptive
+// floor in front).
+#define DOUBLE_TAP_WINDOW_MS  750
 
 // Diagnostic log cadence. Only fires when something noisy actually
 // happened (peak > FLOOR), so a quiet duck doesn't spam its own log.
@@ -95,6 +130,11 @@ static void tap_monitor_task(void *arg) {
     int diag_max_peak = 0;
     int diag_max_slope = 0;
     int64_t diag_next_log_ms = 0;
+    // Double-tap accumulator: timestamp of the first raw tap in the
+    // current candidate sequence. 0 means "no sequence in progress."
+    // The second raw tap fires the public signal; otherwise the
+    // sequence resets when the window expires.
+    int64_t first_tap_ms = 0;
 
     while (1) {
         // ALWAYS yield each iteration — even on early-continue paths.
@@ -163,17 +203,49 @@ static void tap_monitor_task(void *arg) {
             diag_next_log_ms = now + DIAG_LOG_INTERVAL_MS;
         }
 
-        // Tap = (peak2 above absolute backstop) AND (peak2 N× above adaptive
-        // floor) AND (slope clears its threshold) AND (out of cooldown).
+        // Raw tap = (peak2 above absolute backstop) AND (peak2 N× above
+        // adaptive floor) AND (slope clears its threshold) AND (out of
+        // cooldown). Each raw tap is a candidate, not yet a wake event —
+        // the double-tap accumulator below decides whether to signal.
         int dynamic_threshold = (int)(ambient_floor * TAP_FLOOR_MULT);
-        if (peak2 >= TAP_PEAK_MIN &&
-            peak2 >= dynamic_threshold &&
-            slope >= TAP_SLOPE_MIN &&
-            !in_cooldown) {
-            ESP_LOGI(TAG, "TAP DETECTED: peak1=%d peak2=%d slope=%d floor=%.0f",
-                     peak1, peak2, slope, ambient_floor);
+        bool raw_tap = peak2 >= TAP_PEAK_MIN &&
+                       peak2 >= dynamic_threshold &&
+                       slope >= TAP_SLOPE_MIN &&
+                       !in_cooldown;
+        if (raw_tap) {
             cooldown_until = now + TAP_COOLDOWN_MS;
-            xSemaphoreGive(s_tap_signal);
+            // Stale-check: if a prior 1st tap is sitting on the books
+            // past the window, treat THIS tap as the new 1st of a fresh
+            // sequence rather than the 2nd of an expired one.
+            if (first_tap_ms != 0 &&
+                (now - first_tap_ms) > DOUBLE_TAP_WINDOW_MS) {
+                ESP_LOGD(TAG, "tap window expired (Δ=%lldms) — resetting",
+                         now - first_tap_ms);
+                first_tap_ms = 0;
+            }
+            if (first_tap_ms == 0) {
+                // First tap of a candidate sequence. Hold; don't emit.
+                // Demoted to DEBUG once the gesture's tuned — bring back
+                // to INFO via menuconfig if you're chasing tap behavior.
+                first_tap_ms = now;
+                ESP_LOGD(TAG, "tap 1/2: peak2=%d slope=%d (waiting for 2nd)",
+                         peak2, slope);
+            } else {
+                // Second tap inside the window — wake gesture confirmed.
+                int64_t gap = now - first_tap_ms;
+                ESP_LOGI(TAG,
+                    "DOUBLE-TAP: gap=%lldms peak2=%d slope=%d floor=%.0f",
+                    gap, peak2, slope, ambient_floor);
+                first_tap_ms = 0;
+                xSemaphoreGive(s_tap_signal);
+            }
+        } else if (first_tap_ms != 0 &&
+                   (now - first_tap_ms) > DOUBLE_TAP_WINDOW_MS) {
+            // No second tap arrived in time — silently reset so a noisy
+            // moment ago doesn't pair with a deliberate tap minutes from
+            // now into an accidental wake.
+            ESP_LOGD(TAG, "tap window expired without 2nd tap");
+            first_tap_ms = 0;
         }
     }
 }

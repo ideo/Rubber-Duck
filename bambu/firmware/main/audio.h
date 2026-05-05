@@ -57,5 +57,34 @@ void audio_chirp_bend(int start_hz, int end_hz, int duration_ms);
 // Two-tone "chirp up" — quick happy ascending pair. Use for "ready / connected".
 void audio_chirp_up(void);
 
-// Two-tone "chirp down" — sad descending pair. Use for "error / disconnect".
+// Two-tone "chirp down" — neutral descending pair. Use for normal
+// session end / "letting go". NOT for errors — those have their own
+// distinct voice below so the user can tell "you hung up" from "the
+// duck or the printer just hit a problem."
 void audio_chirp_down(void);
+
+// "Uh-oh" — randomized two-note descending pair with a closing filter.
+// Reserved for **chip-internal** error states (wifi connect failed,
+// wizard failed, etc.) — anything where the duck itself hit a snag.
+// The slight per-call variation makes repeated errors not feel
+// mechanical.
+void audio_chirp_uh_oh(void);
+
+// "Uh-uh" — deterministic, terser two-note descending. Reserved for
+// **printer-side** fault notifications (failed prints, HMS errors)
+// pushed from the relay. Sounds dismissive / "nope" — distinct from
+// uh-oh's concerned "something's gone wrong on my end" timbre, so a
+// listener can tell at a glance whether the duck or the printer is
+// the source of the problem.
+void audio_chirp_uh_uh(void);
+
+// Cycle the speaker volume forward through the preset list (Loud →
+// Normal → Quiet → Whisper → Mute → wraps back to Loud). Persists
+// the new step to NVS so it survives reboot. Plays an audible
+// announce chirp at the new level — including on the Mute step,
+// where the chirp briefly uses the Quiet level so the user hears
+// "you reached mute" confirmation rather than silence-on-press.
+//
+// Bound to the back button's short press in main.c. Long press is
+// re-onboard, double-tap is wake-for-conversation.
+void audio_cycle_volume(void);

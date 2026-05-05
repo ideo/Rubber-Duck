@@ -312,6 +312,12 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=bpw>Password</label>"
         "<input type=password id=bpw name=bpw required autocomplete=off"
         " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+#ifndef BAMBU_DUCK_TURNKEY
+        // Turnkey builds (idf.py -DBAMBU_DUCK_TURNKEY=1) skip the
+        // ElevenLabs section — the relay being used already has shared
+        // creds, and the user only needs WiFi + Bambu. Default (open-
+        // source self-hosted) builds keep the section so each
+        // self-hoster brings their own ElevenLabs account.
         "<h2>ElevenLabs</h2>"
         "<p class=sub>Your ElevenLabs API key + agent ID. The relay uses these "
         "to give the duck a voice. (Skip if you're using a relay we host — "
@@ -322,6 +328,7 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=eagent>Agent ID</label>"
         "<input type=text id=eagent name=eagent autocomplete=off "
         " autocorrect=off autocapitalize=off spellcheck=false>"
+#endif
         "<details><summary class=sub>Advanced — relay URL</summary>"
         "<p class=sub>If you're running your own relay, paste its WebSocket "
         "URL here (e.g. wss://duck.fly.dev). Leave blank to use the default.</p>"
@@ -814,6 +821,9 @@ static void provision_worker_task(void *arg) {
     // 5. If the user filled in ElevenLabs creds, send them now (before
     //    bambu_login since this side-channel is fast and order-independent
     //    on the relay — both write to the same DB row, last writer wins).
+    //    Turnkey builds skip this entirely — the relay already has the
+    //    shared creds as Fly secrets and per-duck creds aren't collected.
+#ifndef BAMBU_DUCK_TURNKEY
     char eleven_key_local[80] = {0}, eleven_agent_local[40] = {0};
     if (s_creds_mutex) xSemaphoreTake(s_creds_mutex, portMAX_DELAY);
     strlcpy(eleven_key_local,   s_eleven_key,   sizeof(eleven_key_local));
@@ -841,6 +851,7 @@ static void provision_worker_task(void *arg) {
                           "have per-duck creds for this chip");
         }
     }
+#endif
 
     // 6. Send the login. NEED_2FA is the typical first response.
     s_state = WIZ_LOGGING_IN;
