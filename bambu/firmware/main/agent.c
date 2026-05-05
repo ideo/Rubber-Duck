@@ -47,18 +47,44 @@ bool agent_speaking(void)        { return s_agent_speaking; }
 
 // ---- inbound handling ----
 
+// Tolerant match: returns true if the JSON contains a "type" field
+// whose value is exactly `expect`. Skips arbitrary whitespace between
+// the key, colon, and value — Python's json.dumps default emits
+// `"type": "ready"` with a space after the colon, but our literal
+// substring match used to assume no space. Caused months of "the duck
+// won't hear me" because audio_mic_enable(true) never fired (the
+// session-WS on_text relies on this for the "ready" handshake).
+//
+// Still cheaper than pulling in a JSON parser on the hot path; we
+// just need to handle the one whitespace case the wire format uses.
+static bool type_field_equals(const char *json, size_t len,
+                               const char *expect) {
+    const void *t = memmem(json, len, "\"type\"", 6);
+    if (!t) return false;
+    const char *cursor = (const char *)t + 6;
+    const char *limit = json + len;
+    // Skip whitespace + colon + whitespace before the value.
+    while (cursor < limit && (*cursor == ' ' || *cursor == '\t')) cursor++;
+    if (cursor >= limit || *cursor != ':') return false;
+    cursor++;
+    while (cursor < limit && (*cursor == ' ' || *cursor == '\t')) cursor++;
+    // Value should be a string: opening quote then exact match then close quote.
+    if (cursor >= limit || *cursor != '"') return false;
+    cursor++;
+    size_t expect_len = strlen(expect);
+    if (cursor + expect_len + 1 > limit) return false;
+    if (memcmp(cursor, expect, expect_len) != 0) return false;
+    if (cursor[expect_len] != '"') return false;
+    return true;
+}
+
 static void on_text(const char *json, size_t len) {
-    // Substring match against the FULL type-tag literal so a future
-    // control message that happens to contain "interruption" or
-    // "ready" inside another field can't trip the wrong handler.
-    // No JSON parser on the hot path — the wire format is fixed by
-    // duck_proxy.py and well-formed; a literal-tag match is enough.
-    if (memmem(json, len, "\"type\":\"interruption\"", 21) != NULL) {
+    if (type_field_equals(json, len, "interruption")) {
         // Drop any pending agent speaker output so the duck stops mid-word.
         // Mic stays on (it never went off).
         if (s_spk_stream) xStreamBufferReset(s_spk_stream);
         ESP_LOGI(TAG, "rx interruption");
-    } else if (memmem(json, len, "\"type\":\"ready\"", 14) != NULL) {
+    } else if (type_field_equals(json, len, "ready")) {
         ESP_LOGI(TAG, "session ready");
         audio_mic_enable(true);
     }
