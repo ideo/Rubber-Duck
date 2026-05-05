@@ -105,7 +105,14 @@ def _state_from_row(row: dict) -> BambuState:
             verify_tls=True,
         )
     # LAN-ish fallback. Mostly for development; once the duck has done
-    # cloud login this branch is unused.
+    # cloud login this branch is unused. verify_tls=False here is
+    # deliberate: Bambu printers ship self-signed certs that aren't in
+    # any public CA chain (and rotate per firmware), so there's
+    # nothing to verify against on a direct LAN connection. Threat
+    # model accepted: LAN-only attacker on the same broadcast domain.
+    # Production cloud paths above (and after bambu_login) all pass
+    # verify_tls=True, which is now the default for new BambuState
+    # construction so this verify-off path stays an explicit minority.
     return BambuState(
         host=os.environ.get("BAMBU_HOST", "mock"),
         username="bblp",

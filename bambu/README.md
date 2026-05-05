@@ -2,22 +2,25 @@
 
 A standalone, conversational rubber duck that lives next to a Bambu 3D printer.
 No Mac required. The duck talks to an **ElevenAgents** (ElevenLabs's
-conversational AI product, formerly "Convai") agent over WebSocket, and the
-agent can query the printer's live state mid-conversation.
+conversational AI product, formerly "Convai") agent over WebSocket through
+a small relay, and the agent can query the printer's live state
+mid-conversation. The relay also pushes notifications to the duck when
+the printer hits notable events (start, finish, fault), so the duck
+speaks up unprompted.
 
 ```
-[duck ESP32-S3]  ──wss──→  [ElevenAgents]  ──webhook──→  [relay]  ──MQTT──→  [Bambu printer]
-       ↑                        ↓ audio
-       └────── speaker ─────────┘
+[duck ESP32-S3]  ──wss──→  [relay (Fly.io)]  ──wss──→  [ElevenAgents]
+       ↑                          │
+       └────── speaker ────────── │ ──MQTT──→ [Bambu cloud broker]──→ [printer]
 ```
 
 ## Pieces
 
 | Dir | What | Status |
 |---|---|---|
-| [`firmware/`](firmware/) | ESP-IDF project for XIAO Seeed ESP32-S3: I2S mic, WebSocket client, I2S DAC out | scaffold — needs bench tuning |
-| [`relay/`](relay/) | Python FastAPI service. Holds Bambu MQTT subscription, exposes HTTP tool endpoints for ElevenAgents Server Tool calls | v0 — verified against mock, not yet against real printer |
-| [`agent/`](agent/) | ElevenAgents config (system prompt, tool schemas, voice) — source of truth since the dashboard rots | working in playground |
+| [`firmware/`](firmware/) | ESP-IDF project for ESP32-S3 (XIAO Seeed + custom ducky PCB variants): I2S mic + DAC out, WebSocket client, captive-portal onboarding, embedded Opus phrase playback | working — daily-driven on hardware |
+| [`relay/`](relay/) | Python FastAPI service on Fly.io. Multi-tenant: per-duck Bambu MQTT subscription, ElevenAgents session bridging, post-onboarding notifications | working — deployed to `duck-duck-print.fly.dev`, runnable self-hosted |
+| [`agent/`](agent/) | ElevenAgents config (system prompt, tool schemas, voice) — source of truth since the dashboard rots | working — agent template POSTs cleanly via [`DEPLOY.md`](DEPLOY.md) |
 
 ## How the agent gets printer-aware
 
@@ -39,5 +42,13 @@ Claude Code activity over USB serial." This one doesn't need a Mac at all — it
 a self-contained appliance that talks to a printer. Hence its own top-level dir
 instead of another `firmware/rubber_duck_s3_*` sibling.
 
-See [docs/BAMBU-DUCK-API-SURVEY.md](../docs/BAMBU-DUCK-API-SURVEY.md) for the
-full architectural background and risks.
+## Self-hosting
+
+The runbook is [`DEPLOY.md`](DEPLOY.md). It's written for **Claude
+Code as the executor** — clone the repo, `cd bambu`, run Claude
+inside it, ask "deploy a bambu duck for me." The runbook walks Claude
+through Fly app setup, ElevenLabs agent creation, and hand-off to
+the user for chip onboarding. ~5 minutes end-to-end.
+
+For background on the architecture and the risks accepted to ship
+v1, see [`docs/BAMBU-DUCK-API-SURVEY.md`](../docs/BAMBU-DUCK-API-SURVEY.md).

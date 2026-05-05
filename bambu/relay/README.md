@@ -63,31 +63,40 @@ curl -H "X-Relay-Secret: test123" http://127.0.0.1:8088/tools/printer_state
 
 ## ElevenAgents agent setup
 
-In the ElevenAgents dashboard, add three Server Tools (Webhook type)
-pointing at the relay. URLs are path-scoped by `duck_id` (12 hex
-chars = the chip's SoftAP MAC; the `/setup/{duck_id}` helper page
-gives you the right URL to paste). All require an `X-Relay-Secret`
-header matching `RELAY_SHARED_SECRET`.
+Don't hand-build the agent — use [`bambu/elevenlabs/agent-template.json`](../elevenlabs/agent-template.json).
+The [`DEPLOY.md`](../DEPLOY.md) runbook substitutes `{{RELAY_URL}}`
+and `{{RELAY_SHARED_SECRET}}` and POSTs the rendered JSON to
+ElevenLabs in one shot — system prompt, tool schemas, voice, and
+the `X-Relay-Secret` auth header are all wired up consistently.
+
+The three Server Tools (Webhook) the template registers:
 
 | Tool name | Method | URL |
 |---|---|---|
-| `get_printer_state` | GET | `https://<your-relay>/tools/printer_state/{duck_id}` |
-| `get_print_history` | GET | `https://<your-relay>/tools/print_history/{duck_id}?n={n}` |
-| `get_temperatures` | GET | `https://<your-relay>/tools/temperatures/{duck_id}` |
+| `get_printer_state` | GET | `https://<your-relay>/tools/printer_state` |
+| `get_print_history` | GET | `https://<your-relay>/tools/print_history?n={n}` |
+| `get_temperatures` | GET | `https://<your-relay>/tools/temperatures` |
 
-For backward compat (older agent configs), the un-scoped versions
-`/tools/printer_state` etc still work and resolve to the default
-duck (oldest row in the DB). New agent configs should use the
-path-scoped variants.
+The un-scoped paths above resolve to the "default duck" (oldest row
+in the DB) — fine for self-hosters running one duck per relay, which
+is the common case. For multi-duck setups, switch to the scoped
+variants `/tools/printer_state/<duck_id>` etc and create one agent
+per duck.
 
-System prompt suggestion: "You are a rubber duck companion sitting
-next to a 3D printer. You have tools to check the printer's live
-state. Be concise, a little snarky, helpful. Don't list raw JSON —
-translate to natural language."
+## What's intentionally NOT here
 
-## What's NOT in v0
-
-- No `pause_print` / destructive tools — auth story not figured out
-- No persistence of print history yet (in-memory only; lost on restart)
-- No cloud-MQTT path — local broker only (printer needs LAN Only + Developer Mode)
-- No auth on the relay itself — add a shared-secret header before exposing publicly
+- **No destructive tools** (pause / stop / parameter changes). Agent
+  is read-only. Adding any actuating tool requires the authority
+  model in [`#25`](https://github.com/ideo/Rubber-Duck/issues/25)
+  to land first.
+- **No print history persistence across restarts** — in-memory only,
+  rebuilt on MQTT reconnect. Closed [`#23`](https://github.com/ideo/Rubber-Duck/issues/23)
+  as won't-do: the relay re-reads live state on reconnect; the duck
+  doesn't need to memory-manage.
+- **Cloud MQTT only in production** — relay uses Bambu's CA-signed
+  cloud broker (`us.mqtt.bambulab.com`), TLS verified by default.
+  A LAN-direct dev path exists in code (`verify_tls=False`,
+  WARN-loud at construction) but is unused in production.
+- **Relay auth is a shared-secret header**, not OAuth / per-user
+  tokens. `X-Relay-Secret` matches `RELAY_SHARED_SECRET`. Generate
+  fresh per deployment, keep it private.

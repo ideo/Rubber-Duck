@@ -74,20 +74,33 @@ class BambuState:
 
     Two broker modes (same code path, different auth):
       LAN mode    — host=<printer-ip>, username="bblp", password=<access_code>
-                    self-signed cert (verify disabled). Single-printer only.
+                    self-signed cert. Bambu's per-printer cert isn't in
+                    any public CA chain and rotates with firmware, so
+                    LAN callers must opt out of TLS verification by
+                    explicitly passing verify_tls=False. Threat model:
+                    LAN-only attacker on the same broadcast domain,
+                    accepted as the cost of a hobby device. Single-
+                    printer only.
       Cloud mode  — host="us.mqtt.bambulab.com", username=f"u_{user_id}",
                     password=<access_token from bambu_cloud.login>.
-                    Real publicly-trusted cert, multi-printer via N
+                    Publicly-trusted CA-signed cert, full TLS
+                    verification (default). Multi-printer via N
                     subscriptions on the same connection.
 
     Switching modes / printer set happens via reconfigure() — same instance,
     listeners survive, the registry in main.py doesn't need to know.
+
+    Default for `verify_tls` is True so callers fail-secure: anyone
+    adding a new BambuState() construction won't accidentally inherit
+    verify-off. The two LAN-mode call sites (dev fallback in main.py +
+    any future LAN-only deployments) set it explicitly to False with
+    a one-line comment justifying the LAN-only threat model.
     """
 
     def __init__(self, host: str, username: str, password: str,
                  serials: list[str] | None = None,
                  printer_names: list[str] | None = None,
-                 verify_tls: bool = False,
+                 verify_tls: bool = True,
                  # Legacy single-printer convenience for callers that
                  # haven't migrated to lists yet (LAN dev paths). Either
                  # this OR `serials` should be set.
@@ -160,8 +173,18 @@ class BambuState:
         c.username_pw_set(self.username, self.password)
         ctx = ssl.create_default_context()
         if not self.verify_tls:
-            # LAN-mode default: printer ships self-signed cert. Cloud mode
-            # passes verify_tls=True and uses the real CA chain.
+            # LAN-mode opt-out: printer ships a self-signed cert that's
+            # rotated with firmware, so there's no public CA path to
+            # validate against. Verification is disabled here only when
+            # the caller explicitly chose LAN mode (host is a private IP
+            # and the threat model is "anyone on this LAN can see MQTT
+            # already"). WARN-loud at construction so the choice is
+            # visible in logs / audits — silent verify-off would be the
+            # really bad version of this.
+            logger.warning(
+                "MQTT TLS verification DISABLED for host=%s — LAN mode "
+                "(self-signed cert, threat model: LAN-only attacker)",
+                self.host)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         c.tls_set_context(ctx)
@@ -188,7 +211,7 @@ class BambuState:
 
     def reconfigure(self, host: str, username: str, password: str,
                     serials: list[str], printer_names: list[str],
-                    verify_tls: bool = False) -> None:
+                    verify_tls: bool = True) -> None:
         """Swap broker / credentials / printer set at runtime. Used by
         /admin/bambu_login when the user signs in to Bambu cloud, and by
         the multi-printer picker (Phase B of #41) when the user changes

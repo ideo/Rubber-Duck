@@ -151,11 +151,13 @@ If the POST fails: surface the error and stop. Common causes:
   the user's ElevenLabs plan doesn't support — e.g. some `tts.model_id`
   values are paid-tier-only).
 
-The template defaults to `eleven_flash_v2_5` for low-latency
-conversational TTS. The voice ID (`TX3LPaxmHKxFdv7VOQHJ` = "Liam") is
-a starting point — the user can audition alternatives in the
-ElevenLabs dashboard after import. See `bambu/agent/voice.md` for
-selection criteria.
+The template defaults to `eleven_v3_conversational` for the live
+agent voice and a curated voice (`ygoBNrnmTEdu5NtDTmAY`) tuned for
+the duck's personality. Voice selection criteria + alternatives are
+in [`bambu/agent/voice.md`](agent/voice.md); auditioning happens in
+the ElevenLabs dashboard after import. If the user changes the
+voice, also update `gen_phrases.py`'s `VOICE_ID` so the embedded
+onboarding phrases (`tap_to_start`, `wifi_up`) match the live voice.
 
 **Multi-duck note:** if the user runs more than one chip on this
 relay, each chip needs its own agent because the un-scoped tool URLs
