@@ -249,16 +249,31 @@ async def _fetch_signed_url(api_key: str, agent_id: str) -> str:
 
 
 async def _send_init(upstream: websockets.WebSocketClientProtocol,
+                     duck_id: str,
                      suppress_first_message: bool = False) -> None:
     """ElevenAgents init. For notification-triggered sessions we suppress
     the agent's default greeting (so it doesn't say "Yeah?" then pivot)
     and inject a user_message right after init that tells the agent what
     the printer just did — agent improvises the announcement in voice.
 
+    `duck_id` is passed as a dynamic variable so the agent's tool URLs
+    template `/tools/printer_state/{{duck_id}}` resolve to the correct
+    per-tenant route at call time. Without this, every conversation
+    on a multi-duck relay called the un-scoped fallback path which
+    routed to the oldest row in the DB — every duck would talk about
+    the relay operator's printers regardless of who was actually
+    using the duck. Dynamic variables substitute on the agent server
+    side at tool-call time, so the relay never has to forge URLs
+    itself; the agent just calls the right URL for this conversation.
+
     Suppressing first_message requires the agent's Security tab to have
-    first_message override enabled.
+    first_message override enabled. Same goes for the dynamic variable
+    use — agent must allow per-session config overrides in Security.
     """
-    payload = {"type": "conversation_initiation_client_data"}
+    payload = {
+        "type": "conversation_initiation_client_data",
+        "dynamic_variables": {"duck_id": duck_id},
+    }
     if suppress_first_message:
         payload["conversation_config_override"] = {
             "agent": {"first_message": ""}
@@ -478,7 +493,8 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
             # greeting and immediately inject a "Printer notice: ..."
             # user_message so the LLM phrases the announcement in its own
             # voice. Otherwise (button press) let the agent open normally.
-            await _send_init(upstream, suppress_first_message=bool(event_type))
+            await _send_init(upstream, duck_id,
+                              suppress_first_message=bool(event_type))
             if event_type:
                 # Pull printer_name from this duck's state — chip's URL
                 # params don't carry it (see _dispatch_event comment / #41).

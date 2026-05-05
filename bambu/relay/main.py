@@ -300,34 +300,50 @@ def print_history_scoped(duck_id: str, n: int = 5,
     return {"history": _state_for(duck_id).history(max(1, min(n, 20)))}
 
 
-# ---- Un-scoped tool routes — canonical for single-duck self-hosters ----
-# Originally tagged COMPAT for a multi-tenant cutover, but in practice:
-#   - Self-hosters (one duck per relay): un-scoped is the natural shape;
-#     the agent template uses these URLs directly. Resolves to "the
-#     duck" via default_duck_id() — unambiguous when there's only one.
-#   - Multi-tenant deployments (one relay, several ducks): each agent
-#     uses /tools/.../{duck_id} explicitly because un-scoped would
-#     route every agent to the same default duck.
-# So these routes stay. _resolve_duck_id is part of the canonical API.
+# ---- Un-scoped tool routes — multi-tenant routing via X-Duck-Id header ---
+# Resolution priority on every un-scoped tool call:
+#   1. X-Duck-Id header (set by the agent via dynamic_variables) — THIS
+#      is the multi-tenant signal. Each conversation's tools land on
+#      the right tenant's row regardless of how many ducks share the
+#      relay or the agent.
+#   2. default_duck_id() fallback — kept for single-duck self-hosters
+#      (where the un-scoped path is the natural shape and there's only
+#      one duck to route to anyway). Also makes legacy bench setups
+#      keep working without re-PATCHing the agent.
+# Path-scoped variants (/tools/.../{duck_id}) above are still the
+# canonical shape for explicit URLs — the header path is just the
+# preferred mechanism when a single agent serves many tenants.
+
+
+def _resolve_with_header(x_duck_id: str | None) -> str:
+    """Like _resolve_duck_id but prefers the X-Duck-Id header from the
+    agent over the default-duck fallback. Lowercases + strips because
+    different layers (chip, dashboard) can canonicalize differently."""
+    if x_duck_id:
+        return x_duck_id.strip().lower()
+    return _resolve_duck_id(None)
 
 
 @app.get("/tools/printer_state")
-def printer_state_compat(x_relay_secret: str | None = Header(default=None)):
+def printer_state_compat(x_relay_secret: str | None = Header(default=None),
+                         x_duck_id: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return _state_for(_resolve_duck_id(None)).snapshot()
+    return _state_for(_resolve_with_header(x_duck_id)).snapshot()
 
 
 @app.get("/tools/temperatures")
-def temperatures_compat(x_relay_secret: str | None = Header(default=None)):
+def temperatures_compat(x_relay_secret: str | None = Header(default=None),
+                        x_duck_id: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return _state_for(_resolve_duck_id(None)).temperatures()
+    return _state_for(_resolve_with_header(x_duck_id)).temperatures()
 
 
 @app.get("/tools/print_history")
 def print_history_compat(n: int = 5,
-                         x_relay_secret: str | None = Header(default=None)):
+                         x_relay_secret: str | None = Header(default=None),
+                         x_duck_id: str | None = Header(default=None)):
     _auth(x_relay_secret)
-    return {"history": _state_for(_resolve_duck_id(None)).history(max(1, min(n, 20)))}
+    return {"history": _state_for(_resolve_with_header(x_duck_id)).history(max(1, min(n, 20)))}
 
 
 # ---- Admin --------------------------------------------------------------
