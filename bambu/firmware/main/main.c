@@ -257,6 +257,9 @@ void app_main(void) {
         if (trigger == WAKE_BUTTON) {
             ESP_LOGI(TAG, "button: cycling volume");
             audio_cycle_volume();
+            // User just touched the duck — reset the idle-hop taper so
+            // the head perks up to "alert" cadence again.
+            servo_note_interaction();
             led_off();
             // Brief tap-quiet so the announce chirp's amp ring + I2S
             // tail don't trigger the tap detector when the user lets
@@ -268,6 +271,10 @@ void app_main(void) {
         // Conversation flow (double-tap path).
         ESP_LOGI(TAG, "tap detected — shaking it off");
         servo_shake_off();
+        // Conversation = clearest interaction signal there is. Reset
+        // the taper so post-conversation the duck is alert-cadence
+        // again rather than picking up where its drowsy timer left off.
+        servo_note_interaction();
 
         ESP_LOGI(TAG, "starting relay session");
         // Wake bend — same chirp_up the rest of the firmware uses

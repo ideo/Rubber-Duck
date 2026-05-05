@@ -56,8 +56,42 @@ static int64_t nextClusterHopMs = 0;
 static int64_t nextIdleHopMs = 0;
 static int64_t lastTTSRetargetMs = 0;
 
+// Idle taper — see servo_note_interaction (servo.h). Reset to "now" on
+// every user-initiated wake; idle phases below ramp the next-hop window
+// based on how long since this last fired. Initialized in servo_init
+// to "boot is fresh interaction" so the duck wakes up alert.
+static int64_t lastInteractionMs = 0;
+
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static int rand_range(int lo, int hi) { return lo + (rand() % (hi - lo + 1)); }
+
+// Pick the next idle-hop window (min..max ms) based on how long the
+// duck has been idle since user interaction. Four phases — alert /
+// settling / drowsy / dormant. The first phase mirrors config.h's
+// IDLE_HOP_MIN/MAX; later phases are absolute timings tuned by ear
+// for "duck has been ignored a while, settle down already." User
+// interaction (servo_note_interaction) resets to the alert phase.
+static void next_hop_window(int64_t now, int *out_min_ms, int *out_max_ms) {
+    int64_t idle = now - lastInteractionMs;
+    if (idle < 2LL * 60 * 1000) {
+        // Alert (0–2 min): 4–15 s — the original cadence.
+        *out_min_ms = IDLE_HOP_MIN_MS;
+        *out_max_ms = IDLE_HOP_MAX_MS;
+    } else if (idle < 10LL * 60 * 1000) {
+        // Settling (2–10 min): 30–60 s.
+        *out_min_ms = 30 * 1000;
+        *out_max_ms = 60 * 1000;
+    } else if (idle < 60LL * 60 * 1000) {
+        // Drowsy (10 min – 1 hr): 25 – 60 min between hops.
+        *out_min_ms = 25 * 60 * 1000;
+        *out_max_ms = 60 * 60 * 1000;
+    } else {
+        // Dormant (1 hr+): one hop every ~12 hours. Effectively
+        // "asleep" — the duck waits to be touched.
+        *out_min_ms = 12 * 60 * 60 * 1000;
+        *out_max_ms = 12 * 60 * 60 * 1000;
+    }
+}
 static float clampf(float v, float lo, float hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -115,7 +149,12 @@ static void update_animation(void) {
         if (idleClusterRemaining > 0) {
             nextClusterHopMs = now + rand_range(IDLE_CLUSTER_GAP_MIN, IDLE_CLUSTER_GAP_MAX);
         }
-        nextIdleHopMs = now + rand_range(IDLE_HOP_MIN_MS, IDLE_HOP_MAX_MS);
+        // Tapered window: hop frequency falls off as user idle time
+        // grows. Resets the moment the user double-taps / button-presses
+        // (servo_note_interaction).
+        int hop_min, hop_max;
+        next_hop_window(now, &hop_min, &hop_max);
+        nextIdleHopMs = now + rand_range(hop_min, hop_max);
     }
 
     // While speaking: retarget the head every TTS_RETARGET_MS so it looks
@@ -196,6 +235,10 @@ void servo_shake_off(void) {
     nextIdleHopMs = now_ms() + IDLE_HOP_MIN_MS;
 }
 
+void servo_note_interaction(void) {
+    lastInteractionMs = now_ms();
+}
+
 esp_err_t servo_init(void) {
     ledc_timer_config_t timer_cfg = {
         .speed_mode = SERVO_LEDC_MODE,
@@ -226,6 +269,10 @@ esp_err_t servo_init(void) {
     // "powering up" gravitas. 20s covers the worst-case wifi-connect
     // timeout; idle hops resume after.
     nextIdleHopMs = now_ms() + 20000;
+    // Treat power-on as a fresh interaction so the duck starts in
+    // the "alert" hop phase. From there it tapers down by itself
+    // unless the user double-taps / button-presses to wake it back up.
+    lastInteractionMs = now_ms();
 
     xTaskCreate(servo_task, "servo", 4096, NULL, 3, NULL);
     ESP_LOGI(TAG, "servo init on GPIO%d (LEDC ch%d)", SERVO_PIN, SERVO_LEDC_CHANNEL);

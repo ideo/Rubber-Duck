@@ -24,3 +24,14 @@ void servo_feed_audio_envelope(const int16_t *pcm, size_t samples);
 // block. Suppresses idle-hop scheduling for the duration so background
 // jitter doesn't fight the choreography.
 void servo_shake_off(void);
+
+// Mark the duck as having just had user interaction (double-tap, short
+// press, long press). Used to drive the idle-hop taper: shortly after
+// interaction the duck is "alert" (frequent ambient hops); long after
+// it goes "drowsy" then "quiet" with progressively wider hop intervals.
+// Doesn't fire any motion itself — just resets the taper clock so the
+// next scheduled hop window is full-alertness again. Call from main.c
+// at user-wake points; printer-event notifications deliberately skip
+// this so the duck doesn't perk up just because something automatic
+// happened on the printer.
+void servo_note_interaction(void);
