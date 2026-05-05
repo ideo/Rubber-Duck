@@ -49,7 +49,16 @@ struct RubberDuckWidgetApp: App {
 
         // Wire services eagerly — can't wait for .onAppear because the window
         // starts hidden in dormant mode and SwiftUI may not fire view lifecycle.
+        //
+        // The brief sleep is load-bearing: wireServicesOnce can call
+        // NSAlert.runModal() if Apple Intelligence isn't enabled / model isn't
+        // ready / no API key. NSAlert.runModal() is reentrant and spins its own
+        // runloop, which re-enters SwiftUI's first scene render. AttributeGraph
+        // hits a precondition failure and SIGABRTs (seen on a fresh M5 Mac
+        // running 0.9.88 the first time). 250ms is generous; SwiftUI's first
+        // render completes in well under that on M-series hardware.
         Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
             RubberDuckWidgetApp.wireServicesOnce(
                 server: server, eval: eval, speech: speech,
                 serial: serial, coordinator: coord
