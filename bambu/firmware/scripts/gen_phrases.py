@@ -60,9 +60,11 @@ PHRASES: dict[str, str] = {
     ),
 
     # NOTE: there's no static "ready" phrase here. The post-onboarding
-    # confirmation is generated dynamically by the relay (it knows the
-    # bound printer names + has the ElevenLabs key), TTS'd, and pushed
-    # to the chip as Opus bytes over /ws/notify. See phrase_play_blob.
+    # confirmation ("All set. I'm listening for X and Y. Get printing!")
+    # rides the same notify pipeline as a printer event — the relay
+    # fires a setup_complete notify on set_printers ack, the chip wakes,
+    # the agent speaks the line in the project voice over a normal
+    # conversational session. No on-chip dynamic Opus path needed.
 }
 
 # Opus encoding parameters. 24 kbps voip mode is the sweet spot for

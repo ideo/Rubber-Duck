@@ -304,6 +304,14 @@ def _printer_text_for(event_type: str, subtask: Optional[str], header: str,
             joined = "; ".join(known)
             return f"{header}: {p} is reporting — {joined}."
         return f"{header}: {p} is flagging an error."
+    if event_type == "setup_complete":
+        # Post-onboarding handshake (#34). subtask carries the literal
+        # line we want the duck to deliver ("All set. I'm listening
+        # for X and Y. Get printing!"). Frame as a direct read so the
+        # agent doesn't reinterpret the printer list.
+        line = subtask or "All set. Get printing!"
+        return (f"{header}: onboarding just completed. "
+                f"Tell the user, in your own friendly voice: \"{line}\"")
     return f"{header}: event {event_type} on {p}, file {name}."
 
 
@@ -561,6 +569,25 @@ def register_list_printers_handler(fn) -> None:
     _list_printers_fn = fn
 
 
+def _join_printer_names(names: list[str]) -> str:
+    """Build a natural-sounding list for the post-onboarding spoken
+    confirmation:
+       []        -> ""               (caller should handle this case)
+       [a]       -> "a"
+       [a, b]    -> "a and b"
+       [a, b, c] -> "a, b, and c"     (Oxford comma — TTS pacing
+                                        sounds more measured)
+    """
+    names = [n for n in names if n]
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
 def _resolve_ws_duck_id(duck: WebSocket) -> Optional[str]:
     """Pull duck_id from the WS handshake. Order of precedence:
        1. `X-Duck-Id` header — the canonical multi-tenant signal
@@ -730,6 +757,26 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                                     "(%d printers)", target, len(serials))
                         ack["ok"] = True
                         ack["count"] = len(serials)
+                        # Onboarding handshake (#34): once the duck has
+                        # bound to its printer subset, fire the same
+                        # notify pipeline a print event uses. Chip
+                        # wakes, opens an agent session, agent speaks
+                        # "All set. I'm listening for X and Y" in the
+                        # project voice. No bespoke TTS path — same
+                        # rail as every other notification.
+                        joined = _join_printer_names(chosen_names)
+                        if joined:
+                            line = (f"All set. I'm listening for {joined}. "
+                                    f"Get printing! Tap me to talk.")
+                        else:
+                            # Edge case: chosen list had no friendly
+                            # names (rare — Bambu cloud usually has them).
+                            line = "All set. Tap me to talk."
+                        # Schedule on the running loop so the ack we're
+                        # about to send below isn't held up by the
+                        # dispatch's own awaits.
+                        asyncio.create_task(
+                            _dispatch_event(target, "setup_complete", line))
                     except Exception as e:
                         logger.warning("set_printers failed: %s", e)
                         ack["error"] = "db_or_reconfigure_error"

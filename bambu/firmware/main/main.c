@@ -215,6 +215,12 @@ void app_main(void) {
             }
             // Wizard succeeded. STA is connected, notify_task is running,
             // Bambu may be set up. Mark wifi_connected and chirp success.
+            //
+            // The "all set, I'm listening for X and Y" spoken confirmation
+            // (#34) rides the existing notify pipeline now: relay sees
+            // the set_printers ack land, fires a setup_complete notify
+            // event, chip wakes for an agent session like any other
+            // printer-event notification. No bespoke TTS path on chip.
             wifi_connected = true;
             audio_chirp_up();
             ESP_LOGI(TAG, "onboarding complete; back to normal idle");

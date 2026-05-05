@@ -28,14 +28,13 @@ typedef enum {
 // when the audio has been queued (not necessarily fully played out).
 // Returns true if a clip was found + decode succeeded; false if the
 // id is unknown or the decoder errored. Safe to call from any task.
+//
+// Static embedded phrases only. Dynamic / runtime-Opus playback was
+// briefly tried for the post-onboarding "I'm listening for X and Y"
+// confirmation; that announcement now rides the existing notify
+// pipeline and gets spoken by the agent itself, so no second runtime
+// decoder path is needed on chip.
 bool phrase_play(phrase_id_t id);
-
-// Block-and-play a runtime-supplied Opus blob — same decoder + I2S
-// pipeline as phrase_play, just with bytes the relay handed us
-// instead of an embedded blob. Used for the dynamic post-onboarding
-// "I'm listening for X and Y. Get printing!" confirmation that the
-// relay TTS-generates with the bound printer names.
-bool phrase_play_blob(const uint8_t *opus, int size);
 
 // True if a phrase is currently mid-decode/playback. Lets callers
 // (e.g. the wizard's polling loop) avoid stomping on a long phrase
@@ -46,9 +45,6 @@ bool phrase_active(void);
 
 #include <stdbool.h>
 static inline bool phrase_play(phrase_id_t id) { (void)id; return false; }
-static inline bool phrase_play_blob(const uint8_t *opus, int size) {
-    (void)opus; (void)size; return false;
-}
 static inline bool phrase_active(void) { return false; }
 
 #endif  // PHRASES_ENABLED

@@ -23,6 +23,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <string.h>
 #include <esp_timer.h>
 #include <esp_websocket_client.h>
 #include <freertos/FreeRTOS.h>
@@ -477,9 +478,12 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
         if (d->op_code == 9 || d->op_code == 10) {
             ESP_LOGD(TAG, "notify ws keepalive op=%d", d->op_code);
         } else {
-            ESP_LOGI(TAG, "notify ws data: op_code=%d len=%d",
-                     d->op_code, d->data_len);
+            ESP_LOGI(TAG, "notify ws data: op_code=%d len=%d "
+                          "payload_offset=%d payload_len=%d",
+                     d->op_code, d->data_len,
+                     d->payload_offset, d->payload_len);
         }
+
         if (d->op_code == 1 || d->op_code == 0) {
             // Log first 80 bytes of payload for debugging
             char preview[81];
