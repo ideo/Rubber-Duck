@@ -5,6 +5,7 @@
 set(PHRASE_FILES
     "phrases/tap_to_start.opus"
     "phrases/wifi_up.opus"
+    "phrases/wifi_connected.opus"
 )
 set(HAS_PHRASES TRUE)
 foreach(p ${PHRASE_FILES})

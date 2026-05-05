@@ -62,10 +62,13 @@ void app_main(void) {
     // producing the "grain sampler" reorder artifact. Future diagnostics
     // should stream over WebSocket to a Mac listener instead.)
 
-    // Boot chirp: low → mid. "I'm awake."
+    // Boot bend: low "wuh" — single note bending up a fifth. Reads
+    // more like a duck and less like a beeper. Boot/connect cues
+    // share this lower register so the whole "powering on" arc
+    // reads as one continuous moment — wizard / setup-mode chirps
+    // stay in the higher register to be clearly distinct.
     led_on();
-    audio_chirp(500, 80);
-    audio_chirp(800, 80);
+    audio_chirp_bend(280, 380, 180);
     led_off();
 
     // Soft-reonboard hand-off: a previous boot's long-press set the
@@ -87,9 +90,22 @@ void app_main(void) {
         ESP_LOGI(TAG, "connecting to wifi...");
         if (wifi_connect_blocking(20000) == ESP_OK) {
             wifi_connected = true;
-            audio_chirp_up();
+            // Connect bend: rises a touch higher than the boot bend,
+            // staying in the boot's low register so the two read as
+            // a sequence ("waking up" → "got there") rather than two
+            // unrelated cues. Not the bright high chirp_up that
+            // elsewhere means "wizard succeeded".
             led_on();
+            audio_chirp_bend(320, 520, 200);
+            // Half-second beat before the spoken line so the chirp
+            // tail and amp settle, and the speech reads as a
+            // separate thought rather than colliding with the chirp.
             vTaskDelay(pdMS_TO_TICKS(500));
+            // Spoken confirmation ("I'm connected!"). Static phrase
+            // because there's no agent yet at this point and no
+            // printer-name context to weave in. No-op if phrases
+            // haven't been generated.
+            phrase_play(PHRASE_WIFI_CONNECTED);
             led_off();
             // Long-lived notification channel — relay pushes printer events
             // here, the task triggers a session with event+subtask params.
@@ -111,21 +127,18 @@ void app_main(void) {
     } else if (force_provision) {
         // Long-press → soft re-onboard. NVS has WiFi + Bambu binding
         // intact; we just chose not to connect because the wizard is
-        // about to run anyway. Distinct chirp ("settings mode")
-        // instead of the sad "I need help" chirp below — same notes
-        // as the wizard-entry chirp later in this file.
+        // about to run anyway. "Settings mode" bend — rising fifth in
+        // the mid register, distinct from the boot/connect bends
+        // below and from the "I need help" descending bend.
         ESP_LOGI(TAG, "settings mode — entering wizard with current creds preserved");
-        audio_chirp(700, 80);
-        audio_chirp(900, 80);
+        audio_chirp_bend(380, 580, 220);
     } else {
         ESP_LOGI(TAG, "no wifi creds — press button or tap to set up");
-        // "I need help" chirp: low-low-mid, distinct from the happy
-        // chirp_up that means "connected and ready." Then the spoken
-        // hint that tells the user what to physically do (#34).
+        // "I need help" bend: descending — sad/inquisitive tone vs
+        // the happy ascending boot/connect bends. Followed by the
+        // spoken hint that tells the user what to physically do.
         // Phrase no-ops if phrases haven't been generated yet.
-        audio_chirp(450, 100);
-        audio_chirp(450, 100);
-        audio_chirp(700, 150);
+        audio_chirp_bend(450, 280, 280);
         phrase_play(PHRASE_TAP_TO_START);
     }
 
@@ -179,8 +192,10 @@ void app_main(void) {
                 // and the user has triggered the action so a brief drop-
                 // out is expected.
                 ESP_LOGI(TAG, "long-press: setting provision_pending and restarting");
-                audio_chirp(700, 100);
-                audio_chirp(900, 120);
+                // "Settings mode" bend — same shape as the
+                // force_provision branch up top, since this is the
+                // same user intent ("take me to settings").
+                audio_chirp_bend(380, 580, 220);
                 set_provision_pending(true);
                 vTaskDelay(pdMS_TO_TICKS(600));  // let chirp finish
                 esp_restart();
@@ -191,9 +206,10 @@ void app_main(void) {
             // notify_task running. We then drop into the normal idle
             // loop without needing to reboot.
             ESP_LOGI(TAG, "entering APSTA onboarding wizard");
-            audio_chirp(700, 100);
-            audio_chirp(900, 100);
-            audio_chirp(1100, 150);
+            // Wizard-entry bend: wide upward sweep. Covers more
+            // register than the settings-mode bend ("going somewhere
+            // bigger") to differentiate the two.
+            audio_chirp_bend(320, 680, 320);
             esp_err_t err = wifi_provision_run();
             if (err == ESP_ERR_TIMEOUT) {
                 // Wizard timed out (user opened the portal but never
@@ -203,7 +219,8 @@ void app_main(void) {
                 // "I'm broken." Just a quiet ack chirp.
                 ESP_LOGI(TAG, "wizard timed out without changes — back to idle");
                 wifi_connected = wifi_has_creds();
-                audio_chirp(600, 80);
+                // Quiet flat ack — no bend, just "yep, back to idle".
+                audio_chirp(500, 100);
                 vTaskDelay(pdMS_TO_TICKS(500));
                 continue;
             }
@@ -231,17 +248,21 @@ void app_main(void) {
         if (trigger == WAKE_TAP) {
             ESP_LOGI(TAG, "tap detected — shaking it off");
             servo_shake_off();
-        } else {
-            audio_chirp(900, 60);  // "heard the button"
         }
+        // No "heard the button" chirp on button press — the wake bend
+        // below covers it. Stacking two cues before the session opens
+        // muddied the moment.
 
         ESP_LOGI(TAG, "starting relay session");
+        // Wake bend — same chirp_up the rest of the firmware uses
+        // for "ready to talk" moments. Single ascending pitch bend.
         audio_chirp_up();
         // Path C: relay holds the ElevenAgents WS upstream; duck speaks raw
         // binary PCM to it. No signed URL fetch needed on the chip.
         agent_run_session(NULL, NULL);
         ESP_LOGI(TAG, "session ended");
-        audio_chirp(600, 100);
+        // Hangup bend — descending counterpart to the wake bend.
+        audio_chirp_down();
         led_off();
         // Speaker DMA + amp ring keep producing audio for ~1s after the
         // session closes (peaks ~19k seen in idle-peak diagnostics). Silence

@@ -328,45 +328,210 @@ bool audio_speaker_active(void) {
     return audio_now_ms() < s_spk_active_until_ms;
 }
 
-void audio_chirp(int freq_hz, int duration_ms) {
+// ============================================================
+// Chirp synth — sawtooth oscillator + Chamberlin SVF bandpass
+// ============================================================
+//
+// Port of the original Teensy duck's ChirpSynth.ino — a 2x oversampled
+// state-variable filter on a sawtooth oscillator gives the duck its
+// squelchy "quack/whistle/uh-uh" character. The original ran at 44.1kHz
+// to match Teensy Audio; coefficients are frequency-relative so the
+// math re-derives cleanly at our 16kHz I2S bus.
+//
+// Algorithm matches Teensy's AudioFilterStateVariable exactly: 2x
+// oversampled Chamberlin SVF (iter 1 uses (input + previous)/2, iter 2
+// uses input directly). Don't simplify to 1x — the oversampling is what
+// keeps high-resonance filter sweeps from blowing up at audio rate.
+//
+// Public surface (audio.h): audio_chirp_up / audio_chirp_down. Both
+// generate a two-note pair through the synth — "happy ascending +
+// opening filter" vs "sad descending + closing filter". Same coarse
+// shape as the old sine-only implementations, just with the duck
+// character on top.
+typedef struct {
+    float low;          // SVF lowpass state
+    float band;         // SVF bandpass state
+    float prev_input;   // for 2x oversample interpolation
+    float f;            // freq coef = sin(pi * f / (2 * sr))
+    float damp;         // 1.0 / Q
+} chirp_svf_t;
+
+static inline void chirp_svf_reset(chirp_svf_t *s) {
+    s->low = s->band = s->prev_input = 0.0f;
+}
+
+static void chirp_svf_set_freq(chirp_svf_t *s, float center_hz, float Q) {
+    // Clamp range matches the Teensy original. center_hz/2.5 is the upper
+    // ceiling that keeps the SVF stable at the working sample rate; Q in
+    // [0.7, 5.0] is the resonance band the original tuning was made for.
+    if (center_hz < 20.0f) center_hz = 20.0f;
+    float max_hz = (float)AUDIO_SAMPLE_RATE_HZ / 2.5f;
+    if (center_hz > max_hz) center_hz = max_hz;
+    if (Q < 0.7f) Q = 0.7f;
+    if (Q > 5.0f) Q = 5.0f;
+    s->f = sinf((float)M_PI * center_hz /
+                ((float)AUDIO_SAMPLE_RATE_HZ * 2.0f));
+    s->damp = 1.0f / Q;
+}
+
+// Run one input sample through the SVF, return bandpass output. 2x
+// oversampled: iter 1 uses interpolated (input + prev)/2, iter 2 uses
+// input directly. Both update low/band states; we read band on exit.
+static inline float chirp_svf_process(chirp_svf_t *s, float input) {
+    float high;
+    float mid = (input + s->prev_input) * 0.5f;
+    s->low  += s->f * s->band;
+    high     = mid - s->low - s->damp * s->band;
+    s->band += s->f * high;
+    s->low  += s->f * s->band;
+    high     = input - s->low - s->damp * s->band;
+    s->band += s->f * high;
+    s->prev_input = input;
+    return s->band;
+}
+
+// Sawtooth oscillator — accumulator phase wraps [0,1), output [-1,1].
+// The original also has sineSample but bambu's audio_chirp() above
+// already covers that case; the squelch synth is sawtooth-only.
+static inline float chirp_saw_sample(float *phase, float freq_hz) {
+    *phase += freq_hz / (float)AUDIO_SAMPLE_RATE_HZ;
+    if (*phase >= 1.0f) *phase -= 1.0f;
+    return 2.0f * (*phase) - 1.0f;
+}
+
+// Synthesize a single sawtooth note with a linear frequency sweep and
+// an exponential filter envelope, write to the speaker. `duration_ms`
+// covers the audible portion; the 5ms head + tail attack/release runs
+// inside that window so the sample budget matches the timing model
+// the call sites already have for audio_chirp().
+//
+// `filter_start_hz` / `filter_end_hz` define the SVF center sweep —
+// "opening filter" (start < end) gives the bright "whistle" quality;
+// "closing filter" (start > end) gives the muffled "uh-uh" quality.
+// `filter_rise_rate` is the exponential envelope time constant — 5
+// is the original's expressive setting, 10+ is snappier for short
+// UI cues. Q stays at 5.0 (matches the original's tuning).
+static void chirp_squelch_note(int start_freq_hz, int end_freq_hz,
+                                int duration_ms,
+                                float filter_start_hz, float filter_end_hz,
+                                float filter_rise_rate) {
     const int sr = AUDIO_SAMPLE_RATE_HZ;
     int total = (sr * duration_ms) / 1000;
     int chunk = 256;
     int16_t buf[256];
     float phase = 0.0f;
-    float step = 2.0f * (float)M_PI * (float)freq_hz / (float)sr;
-    int written_samples = 0;
-    while (written_samples < total) {
-        int n = (total - written_samples < chunk) ? (total - written_samples) : chunk;
+    chirp_svf_t svf;
+    chirp_svf_reset(&svf);
+    chirp_svf_set_freq(&svf, filter_start_hz, 5.0f);
+
+    int written = 0;
+    int attack_release_samples = sr / 100;  // 10ms each side
+    while (written < total) {
+        int n = (total - written < chunk) ? (total - written) : chunk;
         for (int i = 0; i < n; i++) {
+            int idx = written + i;
+            float t = (float)idx / (float)total;  // [0,1)
+
+            // Linear oscillator frequency sweep.
+            float freq = (float)start_freq_hz +
+                         ((float)end_freq_hz - (float)start_freq_hz) * t;
+
+            // Exponential filter sweep — same shape as the Teensy
+            // original (1 - exp(-t_sec * rise_rate)).
+            float t_sec = (float)idx / (float)sr;
+            float fenv = 1.0f - expf(-t_sec * filter_rise_rate);
+            float fhz = filter_start_hz +
+                        (filter_end_hz - filter_start_hz) * fenv;
+            chirp_svf_set_freq(&svf, fhz, 5.0f);
+
+            // Sawtooth → bandpass → amplitude envelope.
+            float s = chirp_saw_sample(&phase, freq);
+            s = chirp_svf_process(&svf, s);
+
+            // Linear attack/release so the start/end clicks are gone.
             float env = 1.0f;
-            int from_start = written_samples + i;
-            int from_end = total - from_start;
-            if (from_start < sr / 100) env = (float)from_start / (sr / 100.0f);
-            if (from_end < sr / 100) env = (float)from_end / (sr / 100.0f);
-            buf[i] = (int16_t)(env * 12000.0f * sinf(phase));
-            phase += step;
-            if (phase > 2.0f * (float)M_PI) phase -= 2.0f * (float)M_PI;
+            if (idx < attack_release_samples)
+                env = (float)idx / (float)attack_release_samples;
+            else if (total - idx < attack_release_samples)
+                env = (float)(total - idx) / (float)attack_release_samples;
+
+            // Amplitude tuned by ear to sit just under the agent voice
+            // level coming from ElevenLabs (which peaks ~16k–20k). The
+            // sawtooth + resonant bandpass is perceptually punchier
+            // than a sine at the same RMS, so we run it at 13500 even
+            // though int16 headroom would allow more — chirps that are
+            // louder than the agent's voice read as "the duck is
+            // overreacting" instead of as quiet UI feedback.
+            float v = env * 13500.0f * s;
+            if (v > 32000.0f)  v = 32000.0f;
+            if (v < -32000.0f) v = -32000.0f;
+            buf[i] = (int16_t)v;
         }
         audio_spk_write(buf, n);
-        written_samples += n;
+        written += n;
     }
-    memset(buf, 0, sizeof(buf));
-    int silence_total = sr / 20;  // 50ms tail of silence
-    int s_written = 0;
-    while (s_written < silence_total) {
-        int n = (silence_total - s_written < chunk) ? (silence_total - s_written) : chunk;
-        audio_spk_write(buf, n);
-        s_written += n;
+}
+
+// Short silence between notes so the two halves read as a pair, not a
+// glide. Same gap audio_chirp() leaves after a tone.
+static void chirp_silence(int duration_ms) {
+    const int sr = AUDIO_SAMPLE_RATE_HZ;
+    int total = (sr * duration_ms) / 1000;
+    int16_t zeros[256] = {0};
+    int written = 0;
+    while (written < total) {
+        int n = (total - written < 256) ? (total - written) : 256;
+        audio_spk_write(zeros, n);
+        written += n;
     }
+}
+
+void audio_chirp(int freq_hz, int duration_ms) {
+    // Single-note squelch: filter opens from a half-octave below the
+    // carrier up to ~2× carrier across the note. This gives every
+    // ad-hoc chirp the same "duck" character as the named chirp_up /
+    // chirp_down voices. Call sites in main.c (boot beeps, settings
+    // mode, wizard entry) keep their distinct frequency choices —
+    // they just sound squelchy now instead of pure sine, so the whole
+    // onboarding flow has consistent timbre.
+    float filter_start = (float)freq_hz * 0.7f;
+    float filter_end   = (float)freq_hz * 2.2f;
+    chirp_squelch_note(freq_hz, freq_hz, duration_ms,
+                       filter_start, filter_end, 12.0f);
+    // Match the old behavior's 50ms silent tail — call sites string
+    // multiple chirps back-to-back and rely on the gap so they read
+    // as separate notes rather than one glide.
+    chirp_silence(50);
+}
+
+void audio_chirp_bend(int start_hz, int end_hz, int duration_ms) {
+    // Filter sweep tracks the pitch sweep — opens from the lower freq's
+    // half-octave below up to the higher freq's ~2x. This keeps the
+    // squelchy timbre consistent across the bend instead of one half
+    // sounding muffled and the other bright.
+    int low_hz  = start_hz < end_hz ? start_hz : end_hz;
+    int high_hz = start_hz > end_hz ? start_hz : end_hz;
+    float filter_start = (float)low_hz  * 0.7f;
+    float filter_end   = (float)high_hz * 2.2f;
+    chirp_squelch_note(start_hz, end_hz, duration_ms,
+                       filter_start, filter_end, 12.0f);
+    chirp_silence(50);
 }
 
 void audio_chirp_up(void) {
-    audio_chirp(700, 90);
-    audio_chirp(1100, 110);
+    // "Wake" — single ascending pitch bend in the duck's vocal
+    // register. Lives in the same low-mid range as the boot and
+    // connect bends so the duck's voice has one consistent pitch
+    // identity rather than UI cues jumping into a synth-beep
+    // register on every state change.
+    audio_chirp_bend(380, 640, 220);
 }
 
 void audio_chirp_down(void) {
-    audio_chirp(700, 90);
-    audio_chirp(450, 140);
+    // "Hangup" — descending pitch bend, neutral. Same vocal
+    // register as chirp_up; reversed direction reads as
+    // "session ended" / "letting go" without sounding sad
+    // (the longer-fall "I need help" bend in main.c handles
+    // genuinely sad).
+    audio_chirp_bend(640, 380, 220);
 }

@@ -31,10 +31,12 @@ static const char *TAG = "phrases";
 // referenced phrase is missing from CMakeLists, which is the right
 // behavior — we want compile-time confirmation that all phrase IDs
 // resolve to actual blobs.
-extern const uint8_t _binary_tap_to_start_opus_start[] asm("_binary_tap_to_start_opus_start");
-extern const uint8_t _binary_tap_to_start_opus_end[]   asm("_binary_tap_to_start_opus_end");
-extern const uint8_t _binary_wifi_up_opus_start[]      asm("_binary_wifi_up_opus_start");
-extern const uint8_t _binary_wifi_up_opus_end[]        asm("_binary_wifi_up_opus_end");
+extern const uint8_t _binary_tap_to_start_opus_start[]  asm("_binary_tap_to_start_opus_start");
+extern const uint8_t _binary_tap_to_start_opus_end[]    asm("_binary_tap_to_start_opus_end");
+extern const uint8_t _binary_wifi_up_opus_start[]       asm("_binary_wifi_up_opus_start");
+extern const uint8_t _binary_wifi_up_opus_end[]         asm("_binary_wifi_up_opus_end");
+extern const uint8_t _binary_wifi_connected_opus_start[] asm("_binary_wifi_connected_opus_start");
+extern const uint8_t _binary_wifi_connected_opus_end[]   asm("_binary_wifi_connected_opus_end");
 
 typedef struct {
     const uint8_t *start;
@@ -49,6 +51,10 @@ static const phrase_blob_t s_blobs[PHRASE_COUNT] = {
     },
     [PHRASE_WIFI_UP] = {
         _binary_wifi_up_opus_start, _binary_wifi_up_opus_end, "wifi_up",
+    },
+    [PHRASE_WIFI_CONNECTED] = {
+        _binary_wifi_connected_opus_start, _binary_wifi_connected_opus_end,
+        "wifi_connected",
     },
 };
 

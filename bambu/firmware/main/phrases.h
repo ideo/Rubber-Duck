@@ -14,6 +14,7 @@
 typedef enum {
     PHRASE_TAP_TO_START = 0,   // boot, no WiFi creds
     PHRASE_WIFI_UP,            // wizard's AP is live, captive portal ready
+    PHRASE_WIFI_CONNECTED,     // existing-creds path, STA reconnected
     PHRASE_COUNT,              // sentinel
 } phrase_id_t;
 

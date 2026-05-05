@@ -59,6 +59,14 @@ PHRASES: dict[str, str] = {
         "WiFi's up. Look for Duck Duck Duck and join it."
     ),
 
+    # Existing-creds path: chip booted, NVS already had WiFi + bound
+    # printers, STA reconnected fast. Confirms the all-good state
+    # before the user even has time to wonder if the duck came back.
+    # Pre-conversation, so a static phrase is the right tool.
+    "wifi_connected": (
+        "I'm connected!"
+    ),
+
     # NOTE: there's no static "ready" phrase here. The post-onboarding
     # confirmation ("All set. I'm listening for X and Y. Get printing!")
     # rides the same notify pipeline as a printer event — the relay

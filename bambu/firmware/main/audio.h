@@ -41,9 +41,18 @@ bool audio_speaker_active(void);
 void audio_mic_enable(bool on);
 bool audio_mic_is_enabled(void);
 
-// Play a short tone burst (sine wave) for audible boot/state feedback.
-// freq_hz typical 600–1500. duration_ms typical 80–250.
+// Play a short tone burst for audible boot/state feedback. Goes
+// through the same sawtooth+SVF synth as chirp_up/chirp_down so the
+// duck's character is consistent across all chirps. freq_hz typical
+// 250–1500; duration_ms typical 80–250.
 void audio_chirp(int freq_hz, int duration_ms);
+
+// Single-note pitch bend through the chirp synth — sawtooth +
+// bandpass filter, frequency sweeps linearly from start to end across
+// the duration. Sounds more like a duck "wuh" than two stepped tones
+// when start != end. For a bend that ascends roughly a fifth, try
+// (320, 480, 200ms). For a flat note, use the same value for both.
+void audio_chirp_bend(int start_hz, int end_hz, int duration_ms);
 
 // Two-tone "chirp up" — quick happy ascending pair. Use for "ready / connected".
 void audio_chirp_up(void);
