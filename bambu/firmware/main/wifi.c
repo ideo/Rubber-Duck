@@ -1,10 +1,13 @@
 #include "wifi.h"
 
 #include <string.h>
+#include <time.h>
 
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_netif.h>
+#include <esp_netif_sntp.h>
+#include <esp_sntp.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
@@ -27,6 +30,25 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(s_event_group, WIFI_CONNECTED_BIT);
+        // Kick off SNTP so the chip has wall-clock time. ESP-IDF tracks
+        // whether SNTP is already running internally — calling
+        // esp_netif_sntp_init twice is a no-op, so this is safe to fire
+        // on every reconnect. UTC by default; the agent (and any future
+        // chip-side code that wants local time) can apply a timezone
+        // via setenv("TZ", ...) + tzset(). Configurable per-deploy via
+        // the BAMBU_DUCK_TZ compile flag below if a fleet wants a
+        // baked-in default zone.
+        static bool sntp_started = false;
+        if (!sntp_started) {
+            esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+            esp_netif_sntp_init(&cfg);
+#ifdef BAMBU_DUCK_TZ
+            setenv("TZ", BAMBU_DUCK_TZ, 1);
+            tzset();
+#endif
+            sntp_started = true;
+            ESP_LOGI(TAG, "SNTP init: pool.ntp.org (UTC until first sync)");
+        }
     }
 }
 

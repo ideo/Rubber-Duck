@@ -9,6 +9,23 @@ CONFIG_IDF_TARGET="esp32s3"
 # button-press chirp once WiFi was up. If we add a decoupling cap or move
 # off USB power, revisit.
 
+# Power management — DFS lets the CPU drop to min_freq_mhz when idle and
+# scale back up automatically under load (WiFi RX, mic capture, agent
+# voice). esp_pm_configure() in main.c sets the actual max/min values
+# at runtime; this just enables the framework. Combined with WiFi
+# modem-sleep (default-on), it's a meaningful continuous power save
+# vs the chip running CPU full-tilt 24/7.
+CONFIG_PM_ENABLE=y
+# Tickless idle — FreeRTOS skips its 1kHz tick interrupt when no task
+# is ready to run, letting DFS drop deeper. Required for PM to actually
+# save power; with the tick still firing, the CPU never gets a long
+# enough idle window to scale down.
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# Put WiFi sleep wake-up code in IRAM so beacon-triggered wakeups don't
+# pay flash-cache miss penalty — modem-sleep with IRAM opt saves
+# more on the wake side without shaving the sleep window.
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=y
+
 # 1kHz FreeRTOS tick — finer scheduling matches our 20ms audio cadence,
 # avoids 10ms quantum jitter in mic_task / ws_send_task.
 CONFIG_FREERTOS_HZ=1000

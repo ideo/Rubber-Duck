@@ -152,8 +152,28 @@ static void mic_task(void *arg) {
             size_t bytes = n * sizeof(int16_t);
             size_t sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
             if (sent < bytes) {
-                ESP_LOGW(TAG, "mic stream full, resetting");
-                xStreamBufferReset(s_mic_stream);
+                // Backpressure (#50): WS uploader stalled (weak WiFi
+                // / TLS retry / relay queue) and the ring filled.
+                // Old behavior: xStreamBufferReset — wiped the WHOLE
+                // buffer, losing ~2 seconds of audio per stall and
+                // producing audible chop on the agent side.
+                //
+                // New: drop ONE oldest chunk's worth and re-send the
+                // current frame. We lose 80 ms of stale audio instead
+                // of 2 seconds of mostly-fresh audio. The agent cares
+                // about recent samples (it's about to transcribe);
+                // trading historical audio for recent is the right
+                // direction. Logged at WARN so persistent backpressure
+                // still surfaces in logs.
+                ESP_LOGW(TAG, "mic stream full — dropping oldest 80ms "
+                              "to make room");
+                int16_t discard[AUDIO_FRAME_SAMPLES * 4];  // 80ms chunk
+                xStreamBufferReceive(s_mic_stream, discard,
+                                     sizeof(discard), 0);
+                sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
+                if (sent == bytes) {
+                    frames_pushed++;
+                }
             } else {
                 frames_pushed++;
             }
@@ -263,7 +283,14 @@ static void url_escape(const char *src, char *out, size_t out_cap) {
 esp_err_t agent_run_session(const char *event, const char *subtask) {
     // 80ms chunks at 16kHz mono int16 = 320*4 samples * 2 bytes = 2560 bytes
     const size_t MIC_CHUNK_BYTES = AUDIO_FRAME_SAMPLES * 4 * sizeof(int16_t);
-    s_mic_stream = xStreamBufferCreate(16 * 1024, MIC_CHUNK_BYTES);
+    // 64KB ring = ~25 chunks ≈ 2 seconds of mic audio. Sized to
+    // absorb a 1-second WiFi stall (RSSI -54 dBm class) without
+    // hitting the drop-oldest path; pre-#50 buffer was 16KB which
+    // overflowed on stalls > 500ms. Allocates from internal SRAM
+    // which is plenty (~250KB free at session-open time on
+    // ESP32-S3); session-scoped so the cost only exists while
+    // talking, freed on session-end.
+    s_mic_stream = xStreamBufferCreate(64 * 1024, MIC_CHUNK_BYTES);
     if (!s_mic_stream) return ESP_ERR_NO_MEM;
     // ElevenLabs sends agent audio faster than realtime (it pre-buffers
     // entire utterances). For a 10s sentence ~320KB arrives at once. Spk

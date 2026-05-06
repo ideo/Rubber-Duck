@@ -12,6 +12,7 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_pm.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -49,6 +50,27 @@ void app_main(void) {
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
+    }
+
+    // Dynamic frequency scaling — let the CPU drop to 80 MHz when idle
+    // (no tasks ready, no audio in flight) and ramp back to 160 MHz
+    // under load. Combined with WiFi modem-sleep + tickless idle, this
+    // is a continuous heat / current saver — measurable on the package
+    // temperature even if not on a power-meter readout. The 160 MHz
+    // ceiling matches sdkconfig's CPU_FREQ_MHZ — see the brownout note
+    // there for why we don't push to 240. light_sleep_enable=false on
+    // purpose: light sleep with WiFi adds wake-from-beacon complexity
+    // and has historically caused stability issues; DFS alone gets
+    // most of the win without that risk.
+    esp_pm_config_t pm = {
+        .max_freq_mhz = 160,
+        .min_freq_mhz = 80,
+        .light_sleep_enable = false,
+    };
+    esp_err_t pm_err = esp_pm_configure(&pm);
+    if (pm_err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_pm_configure failed: %s — DFS not active",
+                 esp_err_to_name(pm_err));
     }
 
     led_init();
