@@ -148,7 +148,26 @@ plugin-gemini/   Gemini CLI extension — experimental
 firmware/        Arduino firmware for hardware duck (ESP32-S3, Teensy 4.0)
 scripts/         Shell scripts (tmux launcher, hook helpers)
 hardware/        CAD (SolidWorks, STEP) and EE (Eagle, Fusion 360) source files
+bambu/           Bambu Duck — sibling product, see "Other ducks" below
 ```
+
+## Other ducks in the family
+
+Two distinct products live in this repo. They share lineage (the squelchy
+chirp synth, the servo idle behaviors, the same opinionated rubber-duck
+voice) but they're built around different hosts:
+
+| | **Claude Code Duck** (this README) | **Bambu Duck** ([`bambu/`](bambu/)) |
+|---|---|---|
+| **What it watches** | Your Claude Code session on a Mac | A Bambu 3D printer |
+| **Host required** | macOS 26 + Claude Code/Desktop | Nothing — runs standalone |
+| **Talks via** | Embedded HTTP+WS server on the Mac | ElevenAgents conversational AI |
+| **Hardware** | Optional Teensy/ESP32 connected over USB | ESP32-S3 with mic + speaker, WiFi onboard |
+| **Setup surface** | App + plugin install on your Mac | Captive portal: WiFi + Bambu login on phone |
+| **License/repo** | Same repo, MIT software / CERN-OHL-P-2.0 hardware | Same repo, same licenses |
+
+If you're here for the **Mac/Claude Code duck**, keep reading.
+If you're looking for **the 3D-printer companion that needs no computer**, head to [`bambu/`](bambu/) and start with [`bambu/README.md`](bambu/README.md).
 
 ### Hardware (Optional)
 

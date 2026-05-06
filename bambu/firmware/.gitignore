@@ -1,0 +1,16 @@
+# ESP-IDF build outputs (one dir per variant — see Makefile)
+build/
+build_*/
+
+# Active sdkconfig is local-machine state; sdkconfig.defaults is committed.
+sdkconfig
+sdkconfig.old
+
+# IDF dependency lockfile + downloaded components
+managed_components/
+
+# Local NVS provisioning bin/csv (machine-specific provisioning)
+provision.local.*
+
+# Captured audio dumps from local debugging
+*.wav

@@ -1,0 +1,33 @@
+# Litestream config — continuous SQLite-to-S3 replication for ducks.db.
+#
+# Activated only if LITESTREAM_BUCKET is set (the entrypoint script
+# checks before invoking litestream). Skip if you're running locally
+# or you don't care about backups.
+#
+# Recommended target: Backblaze B2 (~pennies/month for our scale,
+# S3-compatible). Set LITESTREAM_ENDPOINT to your B2 endpoint URL.
+# Leave unset for AWS S3 (default endpoint).
+#
+# Restore semantics: on container start, if /data/ducks.db doesn't
+# exist but a replica does, litestream restores from the latest
+# snapshot before uvicorn starts. Recovery time scales with DB size
+# (currently ~64KB; effectively instant).
+
+dbs:
+  - path: /data/ducks.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        # Path prefix inside the bucket. Including FLY_APP_NAME means
+        # one bucket can hold replicas for multiple deployments
+        # without collision.
+        path: ${FLY_APP_NAME}/ducks
+        endpoint: ${LITESTREAM_ENDPOINT}
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        # Snapshot every 6 hours, retain 24 hours of WAL history.
+        # SQLite WAL streaming is the primary recovery vector;
+        # snapshots are mostly useful for "I need to spin up a fresh
+        # replica machine fast" cases.
+        snapshot-interval: 6h
+        retention: 24h

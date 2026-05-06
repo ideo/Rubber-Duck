@@ -1,0 +1,19 @@
+# Don't bake local state / secrets into the image.
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Local dev DB and legacy single-tenant store — runtime data, not source.
+ducks.db
+ducks.db-shm
+ducks.db-wal
+tokens.json
+
+# Recordings + git metadata.
+recordings/
+.git/
+
+# Docker config itself doesn't need to ship.
+Dockerfile
+.dockerignore

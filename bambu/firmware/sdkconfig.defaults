@@ -1,0 +1,73 @@
+# ============================================================
+# Bambu Duck — sdkconfig defaults (XIAO Seeed ESP32-S3 Sense)
+# ============================================================
+
+# Target chip
+CONFIG_IDF_TARGET="esp32s3"
+
+# CPU frequency: 160 MHz default. Tried 240 MHz but caused brownout on
+# button-press chirp once WiFi was up. If we add a decoupling cap or move
+# off USB power, revisit.
+
+# Power management — DFS lets the CPU drop to min_freq_mhz when idle and
+# scale back up automatically under load (WiFi RX, mic capture, agent
+# voice). esp_pm_configure() in main.c sets the actual max/min values
+# at runtime; this just enables the framework. Combined with WiFi
+# modem-sleep (default-on), it's a meaningful continuous power save
+# vs the chip running CPU full-tilt 24/7.
+CONFIG_PM_ENABLE=y
+# Tickless idle — FreeRTOS skips its 1kHz tick interrupt when no task
+# is ready to run, letting DFS drop deeper. Required for PM to actually
+# save power; with the tick still firing, the CPU never gets a long
+# enough idle window to scale down.
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# Put WiFi sleep wake-up code in IRAM so beacon-triggered wakeups don't
+# pay flash-cache miss penalty — modem-sleep with IRAM opt saves
+# more on the wake side without shaving the sleep window.
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=y
+
+# 1kHz FreeRTOS tick — finer scheduling matches our 20ms audio cadence,
+# avoids 10ms quantum jitter in mic_task / ws_send_task.
+CONFIG_FREERTOS_HZ=1000
+
+# Bigger TCP send buffer — fewer stalls when WS write bursts.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+
+# PSRAM (Sense board has 8MB octal PSRAM)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Flash size (Sense has 8MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Custom partition table (room for OTA later)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Main task: bigger stack, mbedTLS / WebSocket / cJSON eat stack quickly
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# WebSocket client (added via component manager)
+CONFIG_WS_TRANSPORT=y
+
+# TLS root cert bundle — required for wss:// to the relay (Fly.io edge
+# uses Let's Encrypt). The FULL bundle is the Mozilla NSS root list
+# (~130 CAs, ~150 KB), refreshed each ESP-IDF release. Validates any
+# public-CA-fronted endpoint; no PEM management on the chip.
+#
+# Historical note: chip-side TLS previously failed against an ngrok
+# Cloudflare-fronted edge with MBEDTLS_ERR_SSL_INVALID_RECORD on every
+# record-size config we tried. Once we moved off ngrok onto Fly's
+# bespoke edge proxy (no Cloudflare record-size quirks), wss:// with
+# the default IN_CONTENT_LEN of 16384 works first try. See agent.c's
+# crt_bundle_attach wiring.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# WiFi: keep credentials in NVS, no hardcoded SSID
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+
+# Logging — keep modest in production, INFO is fine for dev
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

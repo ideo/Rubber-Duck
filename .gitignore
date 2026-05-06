@@ -20,3 +20,24 @@ firmware/rubber_duck_c3/
 
 # PlatformIO build artifacts
 firmware/**/.pio/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Bambu firmware NVS provisioning (contains WiFi pw + API key)
+bambu/firmware/provision.local.csv
+bambu/firmware/provision.local.bin
+
+# Bambu cloud login state (single-tenant relay; will become a dict keyed
+# by duck_id when multi-tenant lands per #31). Contains access_token +
+# account email — must never be committed.
+bambu/relay/tokens.json
+
+# ESP-IDF build artifacts (apply to any IDF project under firmware/ or bambu/)
+**/build/
+**/managed_components/
+**/sdkconfig
+**/sdkconfig.old
+**/dependencies.lock
