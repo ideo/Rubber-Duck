@@ -84,7 +84,13 @@ async def _broadcast_notify(duck_id: str, payload: str) -> None:
     for ws in list(clients):
         try:
             await ws.send_text(payload)
-        except Exception:
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            # FastAPI / Starlette raises WebSocketDisconnect on a closed
+            # client; RuntimeError when send is attempted after close
+            # ("Cannot call 'send' once a close message has been sent");
+            # OSError on broken sockets. Anything else (TypeError,
+            # KeyError, AttributeError) is a programmer bug — let it
+            # propagate so uvicorn surfaces it.
             dead.append(ws)
     for ws in dead:
         clients.discard(ws)
@@ -132,7 +138,10 @@ async def _inject_into_active_sessions(duck_id: str, event_type: str,
             setattr(upstream, _ANNOUNCED_ATTR, True)
             logger.info("notify injected (duck=%s): %s", duck_id, text)
             n += 1
-        except Exception as e:
+        except (websockets.WebSocketException, OSError) as e:
+            # Upstream died between connect and inject — not a bug, just
+            # a stale entry in _active_upstreams. Drop it. Programmer
+            # errors (TypeError on a wrong send shape etc.) still raise.
             logger.warning("inject failed (upstream gone?): %s", e)
             upstreams.discard(upstream)
     return n
@@ -461,7 +470,10 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
 
     try:
         signed = await _fetch_signed_url(api_key, agent_id)
-    except Exception as e:
+    except (httpx.HTTPError, KeyError, ValueError, OSError) as e:
+        # httpx network / status errors, KeyError if ElevenLabs's response
+        # is missing 'signed_url', ValueError on bad JSON, OSError on
+        # transport. Anything else is a programmer bug — propagate.
         logger.error("signed-url fetch failed: %s", e)
         await duck.close(code=1011)
         return
@@ -514,7 +526,16 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
             done, pending = await asyncio.wait({up, down, silence}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
-    except Exception as e:
+    except (websockets.WebSocketException, asyncio.TimeoutError, OSError,
+            json.JSONDecodeError) as e:
+        # Expected runtime errors during a live upstream session: WS
+        # closed/protocol issues, network/transport, malformed message
+        # from ElevenAgents. NARROW intentionally — programmer errors
+        # (TypeError from a stale function signature, AttributeError
+        # from a renamed attr, KeyError from a missing dict key)
+        # previously hid behind a broad `except Exception` here, which
+        # masked the _send_init signature mismatch bug for several
+        # iterations (see #39). Those propagate now.
         logger.exception("upstream session error: %s", e)
     finally:
         if upstream_ref is not None:
@@ -531,7 +552,8 @@ async def ws_duck_endpoint(duck: WebSocket) -> None:
             agent_wav.close()
         try:
             await duck.close()
-        except Exception:
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            # Already-closed / double-close races land here cleanly.
             pass
         logger.info("duck disconnected")
 
@@ -699,7 +721,13 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                             ack[f"printer_{i}_subscribed"] = (
                                 "1" if p["serial"] in bound_serials else "0")
                     except Exception as e:
-                        logger.warning("list_printers failed: %s", e)
+                        # Broad on purpose — _list_printers_fn is a
+                        # registered handler that can do anything (httpx,
+                        # DB, runtime). But log the EXCEPTION TYPE so
+                        # future programmer errors don't hide as a
+                        # generic "list_printers failed: foo".
+                        logger.warning("list_printers failed (%s): %s",
+                                       type(e).__name__, e)
                         ack["error"] = str(e)[:80]
                 await duck.send_text(json.dumps(ack, ensure_ascii=False))
                 continue
@@ -750,10 +778,16 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                                         name_by_serial[p["serial"]] = \
                                             p["name"]
                             except Exception as e:
+                                # Broad — live list_devices reaches Bambu
+                                # cloud via httpx; failure is a soft
+                                # degrade (row names still work). Type
+                                # in the log so the genre of failure is
+                                # visible (network vs auth vs bug).
                                 logger.warning(
                                     "set_printers: live list_devices "
-                                    "failed (%s) — falling back to row "
-                                    "names only", e)
+                                    "failed (%s: %s) — falling back to "
+                                    "row names only",
+                                    type(e).__name__, e)
                         chosen_names = [name_by_serial.get(s, "")
                                         for s in serials]
                         db.get().upsert_duck(
@@ -794,7 +828,13 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                         asyncio.create_task(
                             _dispatch_event(target, "setup_complete", line))
                     except Exception as e:
-                        logger.warning("set_printers failed: %s", e)
+                        # Broad — covers DB upserts, JSON parsing of row
+                        # data, and the live BambuState reconfigure
+                        # which touches paho-mqtt. Type in the log so
+                        # we can tell DB issues from MQTT issues at a
+                        # glance.
+                        logger.warning("set_printers failed (%s): %s",
+                                       type(e).__name__, e)
                         ack["error"] = "db_or_reconfigure_error"
                 await duck.send_text(json.dumps(ack, ensure_ascii=False))
                 continue
@@ -825,7 +865,10 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                                     "(agent=%s)", target, agent)
                         ack["ok"] = True
                     except Exception as e:
-                        logger.warning("set_eleven_creds upsert failed: %s", e)
+                        # Broad — db.upsert_duck path; sqlite3 errors
+                        # most likely. Type in log for diagnosis.
+                        logger.warning("set_eleven_creds upsert failed "
+                                       "(%s): %s", type(e).__name__, e)
                         ack["error"] = "db_error"
                 await duck.send_text(json.dumps(ack, ensure_ascii=False))
                 continue
@@ -845,6 +888,13 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                     # propagate so FastAPI's lifespan teardown can finish.
                     raise
                 except Exception as e:
+                    # Broad — _bambu_login_handler is registered by
+                    # main.py and reaches Bambu cloud + DB. HTTPException
+                    # comes through with structured detail; any other
+                    # runtime exception still produces a usable reply.
+                    # Type goes into the log so it's clear when we
+                    # caught something off-script (e.g., a TypeError
+                    # from a refactor that changed the handler shape).
                     code = "login_failed"
                     msg_text = str(e)
                     # Pull through structured fields if HTTPException-shaped
@@ -854,8 +904,8 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                         msg_text = detail.get("message", msg_text)
                     reply = {"type": "bambu_login_result", "ok": False,
                              "code": code, "message": msg_text}
-                    logger.warning("bambu_login failed (duck=%s): %s",
-                                   duck_id, reply)
+                    logger.warning("bambu_login failed (duck=%s, %s): %s",
+                                   duck_id, type(e).__name__, reply)
                 await duck.send_text(json.dumps(reply, ensure_ascii=False))
                 continue
             # Unknown message types — silently ignore.

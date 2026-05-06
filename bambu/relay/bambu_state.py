@@ -65,6 +65,19 @@ class _PrinterState:
         self.last_stage: str | None = None
         self.last_hms: set | None = None
         self.last_message_ts: float = 0.0
+        # Wall-clock start time of the *current* print (None when idle).
+        # Captured on transition into RUNNING — preferentially from
+        # Bambu's gcode_start_time field (UNIX seconds as string),
+        # falling back to time.time() if the field's missing. Used to
+        # compute history duration on FINISH/FAILED. Was previously
+        # `mc_print_sub_stage` which is a sub-stage enum, not a
+        # duration — yielded nonsense in history entries.
+        self.print_start_ts: float | None = None
+        # Bambu's per-print task identifier. Tracked so the FINISH-
+        # before-subscribe race (issue #24) is detectable: if the very
+        # first snapshot after relay reconnect shows FINISH/FAILED, we
+        # can record a history entry instead of silently missing it.
+        self.last_subtask_id: str | None = None
 
 
 class BambuState:
@@ -164,8 +177,17 @@ class BambuState:
         for cb in list(self._listeners):
             try:
                 cb(event)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — listener fanout
+                # Listener fanout runs on the MQTT thread. Re-raising
+                # would crash the thread and we'd stop receiving printer
+                # events for this duck — bad. So we keep this broad.
+                # BUT log the exception type explicitly so a buggy
+                # listener (TypeError from a refactor, KeyError from a
+                # missing field) shows up as something other than
+                # silence. Was previously a bare `except Exception: pass`
+                # which masked real bugs entirely (#39).
+                logger.warning("listener raised %s: %s",
+                                type(e).__name__, e)
 
     def _build_client(self) -> mqtt.Client:
         c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
@@ -305,15 +327,44 @@ class BambuState:
             printer.state.update(push)
             stage = push.get("gcode_state")
             subtask = printer.state.get("subtask_name")
+            subtask_id = printer.state.get("subtask_id")
+
+            # Capture print-start timestamp on transition INTO RUNNING.
+            # Bambu publishes gcode_start_time as a string of UNIX
+            # seconds; parse it if present, else use the local clock as
+            # a usable approximation. Reset to None on IDLE so a stale
+            # value doesn't leak into the next print's duration.
+            if stage == "RUNNING" and printer.last_stage in (
+                    "IDLE", "PREPARE", "FINISH", "FAILED", None):
+                start_str = push.get("gcode_start_time")
+                try:
+                    printer.print_start_ts = (
+                        float(start_str) if start_str else time.time())
+                except (TypeError, ValueError):
+                    printer.print_start_ts = time.time()
+            elif stage == "IDLE":
+                printer.print_start_ts = None
 
             if stage and stage != printer.last_stage:
                 if stage in ("FINISH", "FAILED"):
+                    duration_sec = None
+                    if printer.print_start_ts is not None:
+                        duration_sec = int(time.time() - printer.print_start_ts)
                     printer.history.append({
                         "ts": time.time(),
                         "outcome": stage,
                         "subtask": subtask,
-                        "duration_min": printer.state.get("mc_print_sub_stage"),
+                        "subtask_id": subtask_id,
+                        # duration_sec is None when we missed the RUNNING
+                        # transition (relay reconnect mid-print, or
+                        # FINISH-on-first-snapshot race below). Better
+                        # than the bogus mc_print_sub_stage value the
+                        # old code recorded as "duration_min".
+                        "duration_sec": duration_sec,
                     })
+                    # print_start_ts gets cleared on the next IDLE — keep
+                    # it here so a duplicate FINISH-before-IDLE doesn't
+                    # synthesize a second nonsense entry.
                 if printer.last_stage is not None:
                     if stage in ("PREPARE", "RUNNING") and \
                        printer.last_stage in ("IDLE", "FINISH", "FAILED", None):
@@ -331,7 +382,32 @@ class BambuState:
                     elif stage == "RUNNING" and printer.last_stage == "PAUSE":
                         self._fire({"type": "resume", "subtask": subtask,
                                     "printer_name": printer.printer_name})
+                else:
+                    # FINISH-before-subscribe race (issue #24): the
+                    # first snapshot after the relay (re)connects shows
+                    # the printer already at FINISH/FAILED. Old code
+                    # gated all listener fires + the history append
+                    # behind `last_stage is not None` — meaning a
+                    # print that completed in the gap between MQTT
+                    # disconnect and reconnect was lost entirely.
+                    # The history append above already runs (no
+                    # last_stage gate on it), so the print at least
+                    # appears in the print_history tool response; we
+                    # deliberately DON'T fire a finish/failed event
+                    # because the user already saw the result on the
+                    # printer panel and a delayed "your print just
+                    # finished" announcement would be more confusing
+                    # than helpful.
+                    if stage in ("FINISH", "FAILED"):
+                        logger.info(
+                            "first-snapshot %s (race-recovered): "
+                            "subtask=%r subtask_id=%r — recorded in "
+                            "history, no listener fired",
+                            stage, subtask, subtask_id)
                 printer.last_stage = stage
+
+            if subtask_id and subtask_id != printer.last_subtask_id:
+                printer.last_subtask_id = subtask_id
 
             if "hms" in push:
                 # Build a {attr → (attr, code)} map so we can look up

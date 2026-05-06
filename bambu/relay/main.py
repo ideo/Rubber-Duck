@@ -190,7 +190,10 @@ async def lifespan(_app: FastAPI):
         for duck_id, s in states.items():
             try:
                 s.stop()
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
+                # paho-mqtt's loop_stop / disconnect can raise OSError
+                # on a torn-down socket or RuntimeError if it was never
+                # started. Anything else is a bug — propagate.
                 logger.warning("stop failed for %s: %s", duck_id, e)
 
 
@@ -760,7 +763,12 @@ def bambu_status_scoped(duck_id: str,
     if s is not None:
         try:
             info["connected"] = bool(s._client.is_connected())
-        except Exception:
+        except (OSError, RuntimeError, AttributeError):
+            # paho-mqtt's is_connected() is supposed to be cheap, but
+            # has been observed to raise OSError mid-reconnect and
+            # AttributeError on a freshly-replaced client. Either way
+            # the right answer here is "not connected" — admin endpoint
+            # shouldn't 500 because of a transient inspection race.
             info["connected"] = False
         info["auth_failed"] = getattr(s, "auth_failed", False)
         info["last_message_age_ms"] = s.last_message_age_ms()
