@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>🦆 Bambu Duck — Flash from your browser</title>
+  <title>🦆 Flash a Duck — Duck Duck Duck</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🦆%3C/text%3E%3C/svg%3E">
   <!-- ESP Web Tools — Espressif's hosted WebSerial flasher. The
        <esp-web-install-button> custom element handles chip detection,
@@ -73,6 +73,35 @@
       font-size: .95rem;
     }
     .browser-warn strong { color: #b14a00; }
+    /* CSS-only tabs — radio buttons drive :checked sibling selectors.
+       No JS, works in every captive-portal-ish browser, and Pages
+       URLs survive copy-paste (no #hash state to lose). */
+    .tabs { margin-top: 1.5rem; }
+    .tabs input[type=radio] { position: absolute; opacity: 0; pointer-events: none; }
+    .tablabels { display: flex; gap: .25rem; border-bottom: 2px solid var(--line); }
+    .tablabels label {
+      padding: .8rem 1.4rem;
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      color: var(--sub);
+      font-weight: 500;
+      border: 1px solid transparent;
+      border-bottom: none;
+      margin-bottom: -2px;
+    }
+    .tablabels label:hover { color: var(--fg); }
+    .tabpanels > div { display: none; padding-top: 1.5rem; }
+    #tab-cc:checked ~ .tablabels label[for=tab-cc],
+    #tab-bambu:checked ~ .tablabels label[for=tab-bambu] {
+      color: var(--fg);
+      background: white;
+      border-color: var(--line);
+      border-bottom-color: white;
+    }
+    #tab-cc:checked    ~ .tabpanels #panel-cc,
+    #tab-bambu:checked ~ .tabpanels #panel-bambu {
+      display: block;
+    }
     details { margin: 1.6rem 0; }
     details summary {
       cursor: pointer;
@@ -97,9 +126,9 @@
 <div class="hero">
   <div class="icon">🦆</div>
   <div>
-    <h1>Flash a Bambu Duck</h1>
-    <p class="sub">Plug your duck into this computer over USB. Click the
-    button for your build. No software to install.</p>
+    <h1>Flash a Duck</h1>
+    <p class="sub">Plug your duck into this computer over USB. Pick the
+    product, then your hardware. No software to install.</p>
   </div>
 </div>
 
@@ -110,69 +139,127 @@
   an unsupported browser.
 </div>
 
-<h2>Step 1 — Deploy a relay (one-time, ~5 min)</h2>
-<p>The duck talks to a small server you run yourself. It bridges
-WebSocket conversation audio between the chip and ElevenLabs, and
-holds the per-printer MQTT subscription. <strong>The duck won't
-connect to anyone's relay but yours</strong> — these public binaries
-have no built-in default URL, on purpose. Your Bambu account
-credentials and ElevenLabs API key live on infrastructure you
-operate.</p>
+<div class="tabs">
+  <input type="radio" name="tab" id="tab-cc">
+  <input type="radio" name="tab" id="tab-bambu" checked>
 
-<p>The runbook is written so Claude Code can drive most of it for
-you. Clone the repo, drop into <code>bambu/</code>, run
-<code>claude</code>, and ask <em>"deploy a bambu duck for me"</em>:</p>
+  <div class="tablabels">
+    <label for="tab-cc">Claude Code Duck</label>
+    <label for="tab-bambu">3D Printer Duck</label>
+  </div>
 
-<pre style="background:#1a1a1a;color:#e8e8e8;padding:1rem 1.2rem;border-radius:8px;overflow-x:auto;font-size:.85em;line-height:1.4">git clone https://github.com/ideo/Rubber-Duck.git
+  <div class="tabpanels">
+
+    <!-- ============ CLAUDE CODE DUCK TAB ============ -->
+    <div id="panel-cc">
+      <p>The Mac companion duck — sits on your desk, watches your
+      Claude Code session, reacts with voice + servo + LED. The widget
+      app does most of the work; this firmware lives on the duck and
+      handles audio, animation, and serial protocol with the widget.</p>
+
+      <div class="browser-warn" style="background:#eef5ff;border-color:#9ec0e8">
+        <strong>Browser flashing for the Claude Code Duck is
+        coming soon.</strong> The Arduino-sketch build pipeline isn't
+        wired into our release workflow yet. For now, flash via the
+        Arduino IDE — see
+        <a href="https://github.com/ideo/Rubber-Duck/tree/main/firmware">firmware/README.md</a>
+        for board selection, library deps, and serial port setup.
+      </div>
+
+      <div class="variant" style="opacity:.65">
+        <h3>Ducky PCB</h3>
+        <p class="meta">The official IDEO Duck product PCB — custom
+        WROOM-1 board with full-duplex I2S, ChirpSynth audio engine,
+        servo + LED on the standard pinout.</p>
+        <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
+          Flash — coming soon
+        </button>
+      </div>
+
+      <div class="variant" style="opacity:.65">
+        <h3>XIAO Seeed S3</h3>
+        <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic /
+        amp / servo. DIY build path for hobbyists who don't want to
+        order the custom PCB.</p>
+        <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
+          Flash — coming soon
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ 3D PRINTER (BAMBU) DUCK TAB ============ -->
+    <div id="panel-bambu">
+      <p>The standalone 3D-printer companion. No Mac required — the
+      duck talks to ElevenLabs Conversational AI through a small relay
+      you run yourself, and the agent can query your Bambu printer's
+      live state mid-conversation.</p>
+
+      <h2 style="margin-top:1.5rem">Step 1 — Deploy a relay (one-time, ~5 min)</h2>
+      <p>The duck talks to a small server you run yourself. It bridges
+      WebSocket conversation audio between the chip and ElevenLabs, and
+      holds the per-printer MQTT subscription. <strong>The duck won't
+      connect to anyone's relay but yours</strong> — these public binaries
+      have no built-in default URL, on purpose. Your Bambu account
+      credentials and ElevenLabs API key live on infrastructure you
+      operate.</p>
+
+      <p>The runbook is written so Claude Code can drive most of it for
+      you. Clone the repo, drop into <code>bambu/</code>, run
+      <code>claude</code>, and ask <em>"deploy a bambu duck for me"</em>:</p>
+
+      <pre style="background:#1a1a1a;color:#e8e8e8;padding:1rem 1.2rem;border-radius:8px;overflow-x:auto;font-size:.85em;line-height:1.4">git clone https://github.com/ideo/Rubber-Duck.git
 cd Rubber-Duck/bambu
 claude</pre>
 
-<p class="sub">You'll need
-<a href="https://fly.io/docs/getting-started/installing-flyctl/">flyctl</a>
-+ a Fly account (free tier covers it),
-<a href="https://elevenlabs.io">an ElevenLabs API key</a>, and a
-<a href="https://bambulab.com">Bambu account</a>. The
-<a href="https://github.com/ideo/Rubber-Duck/blob/main/bambu/DEPLOY.md">DEPLOY.md
-runbook</a> walks Claude through every step.</p>
+      <p class="sub">You'll need
+      <a href="https://fly.io/docs/getting-started/installing-flyctl/">flyctl</a>
+      + a Fly account (free tier covers it),
+      <a href="https://elevenlabs.io">an ElevenLabs API key</a>, and a
+      <a href="https://bambulab.com">Bambu account</a>. The
+      <a href="https://github.com/ideo/Rubber-Duck/blob/main/bambu/DEPLOY.md">DEPLOY.md
+      runbook</a> walks Claude through every step.</p>
 
-<p>When the runbook hands you back, you'll have a URL like
-<code>wss://&lt;your-app&gt;.fly.dev</code>. Keep it handy — the duck's
-captive portal asks for it during onboarding (Step 3).</p>
+      <p>When the runbook hands you back, you'll have a URL like
+      <code>wss://&lt;your-app&gt;.fly.dev</code>. Keep it handy — the duck's
+      captive portal asks for it during onboarding (Step 3).</p>
 
-<h2>Step 2 — Pick a build + flash</h2>
+      <h2>Step 2 — Pick a build + flash</h2>
 
-<div class="variant">
-  <h3>Ducky PCB</h3>
-  <p class="meta">Custom WROOM-1 board with full-duplex I2S. Strong PCB
-  antenna, no audio quirks. Use this if you have the standard ducky
-  hardware. Captive portal asks for your own ElevenLabs API key.</p>
-  <esp-web-install-button manifest="manifests/ducky.json">
-  </esp-web-install-button>
+      <div class="variant">
+        <h3>Ducky PCB</h3>
+        <p class="meta">Custom WROOM-1 board with full-duplex I2S. Strong PCB
+        antenna, no audio quirks. Use this if you have the standard ducky
+        hardware. Captive portal asks for your own ElevenLabs API key.</p>
+        <esp-web-install-button manifest="manifests/ducky.json">
+        </esp-web-install-button>
+      </div>
+
+      <div class="variant">
+        <h3>XIAO Seeed S3</h3>
+        <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic / amp /
+        servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
+        absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
+        <esp-web-install-button manifest="manifests/xiao.json">
+        </esp-web-install-button>
+      </div>
+
+      <h2>Step 3 — Onboard the duck</h2>
+      <p>After the flash succeeds:</p>
+      <ol>
+        <li>Power-cycle the duck. It'll boot and play "press my button to start setup."</li>
+        <li>Press the back button. The duck creates a WiFi network called
+            <code>DuckDuckDuck-XXXX</code>.</li>
+        <li>Join that network from your phone. The captive portal pops
+            automatically (or browse to <code>192.168.4.1</code>).</li>
+        <li>Fill in: home WiFi, Bambu account, and the
+            <code>wss://...fly.dev</code> URL from Step 1.</li>
+        <li>Hit Save. The duck connects to your relay, walks you through
+            printer selection, and you're done.</li>
+      </ol>
+    </div>
+
+  </div>
 </div>
-
-<div class="variant">
-  <h3>XIAO Seeed S3</h3>
-  <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic / amp /
-  servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
-  absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
-  <esp-web-install-button manifest="manifests/xiao.json">
-  </esp-web-install-button>
-</div>
-
-
-<h2>Step 3 — Onboard the duck</h2>
-<p>After the flash succeeds:</p>
-<ol>
-  <li>Power-cycle the duck. It'll boot and play "press my button to start setup."</li>
-  <li>Press the back button. The duck creates a WiFi network called
-      <code>DuckDuckDuck-XXXX</code>.</li>
-  <li>Join that network from your phone. The captive portal pops
-      automatically (or browse to <code>192.168.4.1</code>).</li>
-  <li>Fill in: home WiFi, Bambu account, and the
-      <code>wss://...fly.dev</code> URL from Step 1.</li>
-  <li>Hit Save. The duck connects to your relay, walks you through
-      printer selection, and you're done.</li>
-</ol>
 
 <details>
   <summary>What if the button doesn't see my duck?</summary>
