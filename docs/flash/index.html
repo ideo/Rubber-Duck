@@ -51,18 +51,41 @@
     .hero .icon { font-size: 3rem; line-height: 1; }
     .hero p { margin: 0; }
     .variant {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 1.2rem;
+      align-items: start;
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 1.2rem 1.4rem;
       margin: 1rem 0;
       background: white;
     }
+    .variant .img {
+      width: 100px;
+      height: 100px;
+      border-radius: 8px;
+      background: #f0f0f0 url('img/placeholder-board.svg') center/contain no-repeat;
+      overflow: hidden;
+    }
+    .variant .img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .variant .body { min-width: 0; }
     .variant h3 { margin: 0 0 .25em; font-size: 1.05rem; }
     .variant .meta { color: var(--sub); font-size: .92rem; margin: 0 0 .9rem; }
     .variant esp-web-install-button {
       --esp-tools-button-color: #1a1a1a;
       --esp-tools-button-text-color: white;
       --esp-tools-button-border-radius: 8px;
+    }
+    @media (max-width: 480px) {
+      /* Stack image above text on narrow screens. */
+      .variant { grid-template-columns: 1fr; }
+      .variant .img { width: 100%; height: 140px; }
     }
     .browser-warn {
       padding: .9rem 1.1rem;
@@ -167,23 +190,31 @@
       </div>
 
       <div class="variant" style="opacity:.65">
-        <h3>Ducky PCB</h3>
-        <p class="meta">The official IDEO Duck product PCB — custom
-        WROOM-1 board with full-duplex I2S, ChirpSynth audio engine,
-        servo + LED on the standard pinout.</p>
-        <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
-          Flash — coming soon
-        </button>
+        <div class="img"><img src="img/ducky-pcb.jpg" alt="Ducky PCB"
+             onerror="this.style.display='none'"></div>
+        <div class="body">
+          <h3>Ducky PCB</h3>
+          <p class="meta">The official IDEO Duck product PCB — custom
+          WROOM-1 board with full-duplex I2S, ChirpSynth audio engine,
+          servo + LED on the standard pinout.</p>
+          <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
+            Flash — coming soon
+          </button>
+        </div>
       </div>
 
       <div class="variant" style="opacity:.65">
-        <h3>XIAO Seeed S3</h3>
-        <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic /
-        amp / servo. DIY build path for hobbyists who don't want to
-        order the custom PCB.</p>
-        <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
-          Flash — coming soon
-        </button>
+        <div class="img"><img src="img/xiao-s3.jpg" alt="XIAO Seeed ESP32-S3"
+             onerror="this.style.display='none'"></div>
+        <div class="body">
+          <h3>XIAO Seeed S3</h3>
+          <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic /
+          amp / servo. DIY build path for hobbyists who don't want to
+          order the custom PCB.</p>
+          <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
+            Flash — coming soon
+          </button>
+        </div>
       </div>
     </div>
 
@@ -226,21 +257,29 @@ claude</pre>
       <h2>Step 2 — Pick a build + flash</h2>
 
       <div class="variant">
-        <h3>Ducky PCB</h3>
-        <p class="meta">Custom WROOM-1 board with full-duplex I2S. Strong PCB
-        antenna, no audio quirks. Use this if you have the standard ducky
-        hardware. Captive portal asks for your own ElevenLabs API key.</p>
-        <esp-web-install-button manifest="manifests/ducky.json">
-        </esp-web-install-button>
+        <div class="img"><img src="img/ducky-pcb.jpg" alt="Ducky PCB"
+             onerror="this.style.display='none'"></div>
+        <div class="body">
+          <h3>Ducky PCB</h3>
+          <p class="meta">Custom WROOM-1 board with full-duplex I2S. Strong PCB
+          antenna, no audio quirks. Use this if you have the standard ducky
+          hardware. Captive portal asks for your own ElevenLabs API key.</p>
+          <esp-web-install-button manifest="manifests/ducky.json">
+          </esp-web-install-button>
+        </div>
       </div>
 
       <div class="variant">
-        <h3>XIAO Seeed S3</h3>
-        <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic / amp /
-        servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
-        absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
-        <esp-web-install-button manifest="manifests/xiao.json">
-        </esp-web-install-button>
+        <div class="img"><img src="img/xiao-s3.jpg" alt="XIAO Seeed ESP32-S3"
+             onerror="this.style.display='none'"></div>
+        <div class="body">
+          <h3>XIAO Seeed S3</h3>
+          <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic / amp /
+          servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
+          absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
+          <esp-web-install-button manifest="manifests/xiao.json">
+          </esp-web-install-button>
+        </div>
       </div>
 
       <h2>Step 3 — Onboard the duck</h2>
