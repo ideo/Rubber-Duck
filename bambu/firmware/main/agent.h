@@ -70,6 +70,16 @@ bambu_login_ws_result_t bambu_login_via_ws(const char *email,
 bool eleven_creds_send_via_ws(const char *key, const char *agent,
                                int timeout_ms);
 
+// Send {"type":"wipe_duck","duck_id"} over /ws/notify so the relay
+// deletes this duck's row (access_token, ElevenLabs creds, printer
+// binding, account email — everything tied to the previous owner).
+// Used by the captive portal's Factory Reset path before the chip
+// nvs_flash_erase()es itself + reboots. Best-effort: returns false
+// (without erroring out the caller) if the WS isn't up — chip-side
+// wipe should still proceed in that case. `timeout_ms` is the wait
+// for the relay's wipe_duck_result ack.
+bool wipe_duck_via_ws(int timeout_ms);
+
 // Send {"type":"set_printers","duck_id","serials":"S1|S2|..."} so the
 // relay narrows this duck's MQTT subscriptions to the chosen subset.
 // `serials_pipe` is a pipe-delimited list — caller is responsible for

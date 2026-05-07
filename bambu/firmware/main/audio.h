@@ -88,3 +88,14 @@ void audio_chirp_uh_uh(void);
 // Bound to the back button's short press in main.c. Long press is
 // re-onboard, double-tap is wake-for-conversation.
 void audio_cycle_volume(void);
+
+// Direct volume setter for the captive portal. Same NVS-persisted
+// step model as the cycle (0=Loud, 1=Normal, 2=Quiet, 3=Whisper,
+// 4=Mute); out-of-range values are ignored. Skips the announce
+// chirp because the captive portal user isn't necessarily near
+// the duck.
+void audio_set_volume_step(uint8_t step);
+
+// Read the current volume step (0-4). Used by the captive portal
+// to render the dropdown's selected option.
+uint8_t audio_get_volume_step(void);

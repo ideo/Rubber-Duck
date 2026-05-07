@@ -31,6 +31,36 @@ if not logger.handlers:
     logger.propagate = False
 
 
+def _age_human(age_sec: int) -> str:
+    """Human-readable age string suitable for the agent to read aloud.
+    Coarse-grained on purpose — the agent should say "yesterday" or
+    "3 days ago" not "1 day, 4 hours, 17 minutes ago." The buckets
+    align with how a human would naturally narrate elapsed time when
+    glancing at a print job log."""
+    if age_sec < 60:
+        return "just now"
+    if age_sec < 60 * 60:
+        m = age_sec // 60
+        return "1 minute ago" if m == 1 else f"{m} minutes ago"
+    if age_sec < 60 * 60 * 24:
+        h = age_sec // 3600
+        return "1 hour ago" if h == 1 else f"{h} hours ago"
+    if age_sec < 60 * 60 * 48:
+        return "yesterday"
+    days = age_sec // (60 * 60 * 24)
+    if days < 7:
+        return f"{days} days ago"
+    if days < 14:
+        return "a week ago"
+    if days < 30:
+        weeks = days // 7
+        return f"{weeks} weeks ago"
+    if days < 60:
+        return "a month ago"
+    months = days // 30
+    return f"{months} months ago"
+
+
 def _hms_severity(attr: int) -> int:
     """Decode the severity nibble from a Bambu HMS uint32 `attr`. Format
     (per community reverse-engineering of Bambu's MQTT protocol):
@@ -350,8 +380,27 @@ class BambuState:
                     duration_sec = None
                     if printer.print_start_ts is not None:
                         duration_sec = int(time.time() - printer.print_start_ts)
+                    # ts: when did this print actually finish? Two cases:
+                    #   - We saw the RUNNING→FINISH transition live →
+                    #     time.time() is the right answer (within ~ms).
+                    #   - We're race-recovering on the first snapshot
+                    #     and the print finished BEFORE the relay
+                    #     restarted. time.time() would lie ("just now"
+                    #     for a print that finished days ago). Fall
+                    #     back to gcode_start_time which is in the same
+                    #     ballpark — not the end time, but at least the
+                    #     right day/week. Detected via last_stage being
+                    #     None at this point in the dispatch.
+                    finish_ts = time.time()
+                    if printer.last_stage is None:
+                        start_str = push.get("gcode_start_time")
+                        try:
+                            if start_str:
+                                finish_ts = float(start_str)
+                        except (TypeError, ValueError):
+                            pass
                     printer.history.append({
-                        "ts": time.time(),
+                        "ts": finish_ts,
                         "outcome": stage,
                         "subtask": subtask,
                         "subtask_id": subtask_id,
@@ -452,19 +501,31 @@ class BambuState:
         active_hms = [h for h in (s.get("hms") or [])
                       if h.get("attr")
                       and _hms_severity(h.get("attr", 0)) >= 1]
-        return {
-            "stage": s.get("gcode_state"),
-            "subtask": s.get("subtask_name"),
-            "percent": s.get("mc_percent"),
-            "layer": s.get("layer_num"),
-            "total_layers": s.get("total_layer_num"),
-            "remaining_min": s.get("mc_remaining_time"),
+        stage = s.get("gcode_state")
+        # Only RUNNING / PREPARE / PAUSE represent actively-running
+        # work. IDLE / FINISH / FAILED still have stale subtask /
+        # percent fields lingering from the last job — Bambu doesn't
+        # clear them on completion. The old snapshot exposed those
+        # stale fields in the same shape as live ones, and the agent
+        # would describe a 2-hour-old finished print as if it were
+        # current. Now we segregate: live fields only when the stage
+        # is actually live, otherwise null. The "last_*" block carries
+        # the most recent completed print's name + outcome + age so
+        # the agent can mention it as past-tense if the user asks.
+        is_live = stage in ("RUNNING", "PREPARE", "PAUSE")
+        snap: dict = {
+            "stage": stage,
+            "subtask":         s.get("subtask_name") if is_live else None,
+            "percent":         s.get("mc_percent") if is_live else None,
+            "layer":           s.get("layer_num") if is_live else None,
+            "total_layers":    s.get("total_layer_num") if is_live else None,
+            "remaining_min":   s.get("mc_remaining_time") if is_live else None,
             "nozzle_target_c": s.get("nozzle_target_temper"),
-            "nozzle_c": s.get("nozzle_temper"),
-            "bed_target_c": s.get("bed_target_temper"),
-            "bed_c": s.get("bed_temper"),
-            "chamber_c": s.get("chamber_temper"),
-            "hms_codes": [h["attr"] for h in active_hms],
+            "nozzle_c":        s.get("nozzle_temper"),
+            "bed_target_c":    s.get("bed_target_temper"),
+            "bed_c":           s.get("bed_temper"),
+            "chamber_c":       s.get("chamber_temper"),
+            "hms_codes":   [h["attr"] for h in active_hms],
             # Friendly TTS phrases parallel to hms_codes — same length,
             # same order. Entries are None when we don't have a phrase
             # for that code (caller falls back to a generic message).
@@ -472,6 +533,26 @@ class BambuState:
             "hms_phrases": [_hms_lookup_phrase(h.get("attr"), h.get("code"))
                             for h in active_hms],
         }
+        # Most recent completed print (FINISH or FAILED), if we have
+        # one in history. Pulled out separately so the agent can say
+        # "C3-P0 finished a print 2 hours ago" without confusing it
+        # with current activity. Empty/None when no history yet.
+        last_done = None
+        for h in reversed(printer.history):
+            if h.get("outcome") in ("FINISH", "FAILED"):
+                last_done = h
+                break
+        if last_done is not None:
+            now = time.time()
+            age_sec = max(0, int(now - last_done.get("ts", now)))
+            snap["last_print_subtask"]   = last_done.get("subtask")
+            snap["last_print_outcome"]   = last_done.get("outcome")
+            snap["last_print_age_human"] = _age_human(age_sec)
+        else:
+            snap["last_print_subtask"]   = None
+            snap["last_print_outcome"]   = None
+            snap["last_print_age_human"] = None
+        return snap
 
     def snapshot(self) -> dict:
         """Multi-printer snapshot. Returns
@@ -495,12 +576,24 @@ class BambuState:
 
     def history(self, n: int) -> list[dict]:
         """Most-recent N events across ALL printers, merged + sorted by ts.
-        Each entry includes printer_name so the agent can attribute."""
+        Each entry includes printer_name so the agent can attribute,
+        plus age_min (int minutes since the event) and age_human
+        ("just now" / "3 hours ago" / "yesterday" / "3 days ago") so
+        the agent can contextualize without doing arithmetic on raw
+        unix timestamps. The agent's system prompt instructs it to
+        prefer age_human in spoken responses."""
+        now = time.time()
         with self._lock:
             merged: list[dict] = []
             for p in self._printers.values():
                 for h in p.history:
-                    merged.append({**h, "printer_name": p.printer_name})
+                    age_sec = max(0, int(now - h.get("ts", now)))
+                    merged.append({
+                        **h,
+                        "printer_name": p.printer_name,
+                        "age_min": age_sec // 60,
+                        "age_human": _age_human(age_sec),
+                    })
             merged.sort(key=lambda h: h.get("ts", 0))
             return merged[-n:]
 

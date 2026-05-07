@@ -908,6 +908,44 @@ async def ws_notify_endpoint(duck: WebSocket) -> None:
                                    duck_id, type(e).__name__, reply)
                 await duck.send_text(json.dumps(reply, ensure_ascii=False))
                 continue
+            if mtype == "wipe_duck":
+                # Factory-reset hand-off — chip is about to nvs_flash_erase
+                # itself; we delete its row so the user's Bambu access_token,
+                # ElevenLabs creds, printer binding, and account email all
+                # disappear from the relay before the chip leaves their
+                # hands. The next owner's onboarding creates a fresh row
+                # under the same chip MAC.
+                target = payload.get("duck_id") or duck_id
+                ack = {"type": "wipe_duck_result", "ok": False}
+                if not target:
+                    ack["error"] = "missing_duck_id"
+                else:
+                    try:
+                        # Stop the live MQTT subscription too — without
+                        # this, paho keeps listening on the previous
+                        # owner's account topics until the next deploy.
+                        # _set_printers_reconfigure can stop the state by
+                        # passing an empty serials list, but that leaves
+                        # the BambuState alive on the wrong account; the
+                        # cleanest move is to let main.py decide via a
+                        # dedicated handler. For now, delete the row +
+                        # log; the live MQTT state will be reaped on next
+                        # relay restart. Acceptable for a low-traffic
+                        # admin op.
+                        deleted = db.get().delete_duck(target)
+                        ack["ok"] = bool(deleted)
+                        ack["deleted"] = bool(deleted)
+                        logger.info("wipe_duck: %s for duck=%s",
+                                    "deleted" if deleted else "no-op (no row)",
+                                    target)
+                    except Exception as e:
+                        # Broad — DB-layer errors. Type in log for
+                        # diagnosis.
+                        logger.warning("wipe_duck failed (%s): %s",
+                                       type(e).__name__, e)
+                        ack["error"] = "db_error"
+                await duck.send_text(json.dumps(ack, ensure_ascii=False))
+                continue
             # Unknown message types — silently ignore.
     except WebSocketDisconnect:
         pass

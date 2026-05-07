@@ -637,6 +637,24 @@ void audio_chirp_uh_oh(void) {
     chirp_silence(50);
 }
 
+void audio_set_volume_step(uint8_t step) {
+    if (step >= VOLUME_PRESET_COUNT) return;
+    if (step == s_volume_step) return;        // no-op, no NVS churn
+    s_volume_step = step;
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, "vol_step", s_volume_step);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "volume set: step %u (%.2f)",
+             s_volume_step, VOLUME_PRESETS[s_volume_step]);
+}
+
+uint8_t audio_get_volume_step(void) {
+    return s_volume_step;
+}
+
 void audio_cycle_volume(void) {
     s_volume_step = (s_volume_step + 1) % VOLUME_PRESET_COUNT;
 

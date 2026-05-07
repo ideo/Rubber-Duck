@@ -23,6 +23,8 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs.h>
+#include <time.h>
 
 static const char *TAG = "servo";
 
@@ -62,17 +64,86 @@ static int64_t lastTTSRetargetMs = 0;
 // to "boot is fresh interaction" so the duck wakes up alert.
 static int64_t lastInteractionMs = 0;
 
+// Movement-mode selection (servo.h). NVS-persisted; loaded in servo_init.
+// Default TAPER preserves the behavior shipped before this setting
+// existed, so existing fleet behavior doesn't shift on upgrade.
+static volatile servo_move_mode_t s_move_mode = SERVO_MOVE_TAPER;
+
+// TZ offset in minutes east of UTC. NVS-persisted, written by the
+// captive portal's settings save. Used only by SERVO_MOVE_ALWAYS to
+// compute local hour for quiet-hours suppression. 0 = UTC.
+static volatile int16_t s_tz_offset_min = 0;
+
+// Quiet hours for SERVO_MOVE_ALWAYS — local hour [start, end). Hardcoded
+// to night-time-quiet today; could become user-configurable if more
+// fleet feedback warrants it.
+#define QUIET_HOUR_START 21
+#define QUIET_HOUR_END    6
+
+// True when local clock is between QUIET_HOUR_START and QUIET_HOUR_END
+// AND we have a credible time (SNTP synced — heuristic: post-2023). If
+// SNTP hasn't landed yet or TZ is unset, returns false (default to
+// "not quiet" so the user isn't surprised by a silent duck while we
+// wait for the network).
+static bool in_quiet_hours(void) {
+    time_t now = time(NULL);
+    if (now < 1700000000) return false;        // SNTP hasn't synced yet
+    int local_hour =
+        (int)(((int64_t)now + (int64_t)s_tz_offset_min * 60) / 3600 % 24);
+    if (local_hour < 0) local_hour += 24;      // negative offset case
+    if (QUIET_HOUR_START < QUIET_HOUR_END) {
+        return local_hour >= QUIET_HOUR_START && local_hour < QUIET_HOUR_END;
+    }
+    // Wraps midnight — start > end (e.g. 21 → 06).
+    return local_hour >= QUIET_HOUR_START || local_hour < QUIET_HOUR_END;
+}
+
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static int rand_range(int lo, int hi) { return lo + (rand() % (hi - lo + 1)); }
 
-// Pick the next idle-hop window (min..max ms) based on how long the
-// duck has been idle since user interaction. Four phases — alert /
-// settling / drowsy / dormant. The first phase mirrors config.h's
-// IDLE_HOP_MIN/MAX; later phases are absolute timings tuned by ear
-// for "duck has been ignored a while, settle down already." User
-// interaction (servo_note_interaction) resets to the alert phase.
+// Pick the next idle-hop window (min..max ms) based on the active
+// movement mode and how long the duck has been idle since user
+// interaction. The "alert" cadence comes from config.h's IDLE_HOP_MIN/
+// MAX so that single source of truth covers all three modes for the
+// active phase; mode-specific behavior layers on top.
+//
+// Mode behavior:
+//   ALWAYS              — alert always, dormant during quiet hours.
+//   TAPER (default)     — alert / settling / drowsy / dormant phases
+//                         driven by idle time since last interaction.
+//   INTERACTION_ONLY    — alert for 2 min after interaction, dormant
+//                         otherwise.
 static void next_hop_window(int64_t now, int *out_min_ms, int *out_max_ms) {
+    // "Dormant" is the same shape across all modes — one hop every
+    // ~12 hours. Effectively asleep; the duck waits to be touched.
+    const int DORMANT_MIN_MS = 12 * 60 * 60 * 1000;
+    const int DORMANT_MAX_MS = 12 * 60 * 60 * 1000;
+
     int64_t idle = now - lastInteractionMs;
+
+    if (s_move_mode == SERVO_MOVE_ALWAYS) {
+        if (in_quiet_hours()) {
+            *out_min_ms = DORMANT_MIN_MS;
+            *out_max_ms = DORMANT_MAX_MS;
+        } else {
+            *out_min_ms = IDLE_HOP_MIN_MS;
+            *out_max_ms = IDLE_HOP_MAX_MS;
+        }
+        return;
+    }
+
+    if (s_move_mode == SERVO_MOVE_INTERACTION_ONLY) {
+        if (idle < 2LL * 60 * 1000) {
+            *out_min_ms = IDLE_HOP_MIN_MS;
+            *out_max_ms = IDLE_HOP_MAX_MS;
+        } else {
+            *out_min_ms = DORMANT_MIN_MS;
+            *out_max_ms = DORMANT_MAX_MS;
+        }
+        return;
+    }
+
+    // SERVO_MOVE_TAPER — the default phased behavior.
     if (idle < 2LL * 60 * 1000) {
         // Alert (0–2 min): 4–15 s — the original cadence.
         *out_min_ms = IDLE_HOP_MIN_MS;
@@ -86,10 +157,9 @@ static void next_hop_window(int64_t now, int *out_min_ms, int *out_max_ms) {
         *out_min_ms = 25 * 60 * 1000;
         *out_max_ms = 60 * 60 * 1000;
     } else {
-        // Dormant (1 hr+): one hop every ~12 hours. Effectively
-        // "asleep" — the duck waits to be touched.
-        *out_min_ms = 12 * 60 * 60 * 1000;
-        *out_max_ms = 12 * 60 * 60 * 1000;
+        // Dormant (1 hr+).
+        *out_min_ms = DORMANT_MIN_MS;
+        *out_max_ms = DORMANT_MAX_MS;
     }
 }
 static float clampf(float v, float lo, float hi) {
@@ -239,6 +309,44 @@ void servo_note_interaction(void) {
     lastInteractionMs = now_ms();
 }
 
+void servo_set_move_mode(servo_move_mode_t mode) {
+    if (mode > SERVO_MOVE_INTERACTION_ONLY) return;
+    s_move_mode = mode;
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, "move_mode", (uint8_t)mode);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "movement mode set: %d", (int)mode);
+    // Push next hop out a beat so a mode change doesn't fire a hop
+    // immediately on top of the user's settings save action.
+    nextIdleHopMs = now_ms() + 2000;
+}
+
+servo_move_mode_t servo_get_move_mode(void) {
+    return s_move_mode;
+}
+
+// TZ offset setter — separate from the movement mode so the captive
+// portal can update them independently. Stored as int16 minutes-east-
+// of-UTC; range covers all real-world zones (-720 to +840).
+void servo_set_tz_offset_min(int16_t off_min) {
+    if (off_min < -720 || off_min > 840) return;
+    s_tz_offset_min = off_min;
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_i16(nvs, "tz_off_min", off_min);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "tz offset set: %d min", (int)off_min);
+}
+
+int16_t servo_get_tz_offset_min(void) {
+    return s_tz_offset_min;
+}
+
 esp_err_t servo_init(void) {
     ledc_timer_config_t timer_cfg = {
         .speed_mode = SERVO_LEDC_MODE,
@@ -273,6 +381,27 @@ esp_err_t servo_init(void) {
     // the "alert" hop phase. From there it tapers down by itself
     // unless the user double-taps / button-presses to wake it back up.
     lastInteractionMs = now_ms();
+
+    // Restore movement mode + TZ offset from NVS. Both live under the
+    // shared "audio" namespace alongside vol_step (small NVS surface,
+    // single namespace open + close keeps boot fast). Default:
+    // SERVO_MOVE_TAPER + UTC, matching pre-feature behavior so an
+    // existing duck doesn't surprise its owner on upgrade.
+    nvs_handle_t nvs;
+    if (nvs_open("audio", NVS_READONLY, &nvs) == ESP_OK) {
+        uint8_t mode = SERVO_MOVE_TAPER;
+        if (nvs_get_u8(nvs, "move_mode", &mode) == ESP_OK &&
+            mode <= SERVO_MOVE_INTERACTION_ONLY) {
+            s_move_mode = (servo_move_mode_t)mode;
+        }
+        int16_t tz = 0;
+        if (nvs_get_i16(nvs, "tz_off_min", &tz) == ESP_OK) {
+            s_tz_offset_min = tz;
+        }
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "movement mode: %d, tz_offset: %d min",
+             (int)s_move_mode, (int)s_tz_offset_min);
 
     xTaskCreate(servo_task, "servo", 4096, NULL, 3, NULL);
     ESP_LOGI(TAG, "servo init on GPIO%d (LEDC ch%d)", SERVO_PIN, SERVO_LEDC_CHANNEL);

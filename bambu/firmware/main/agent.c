@@ -152,28 +152,14 @@ static void mic_task(void *arg) {
             size_t bytes = n * sizeof(int16_t);
             size_t sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
             if (sent < bytes) {
-                // Backpressure (#50): WS uploader stalled (weak WiFi
-                // / TLS retry / relay queue) and the ring filled.
-                // Old behavior: xStreamBufferReset — wiped the WHOLE
-                // buffer, losing ~2 seconds of audio per stall and
-                // producing audible chop on the agent side.
-                //
-                // New: drop ONE oldest chunk's worth and re-send the
-                // current frame. We lose 80 ms of stale audio instead
-                // of 2 seconds of mostly-fresh audio. The agent cares
-                // about recent samples (it's about to transcribe);
-                // trading historical audio for recent is the right
-                // direction. Logged at WARN so persistent backpressure
-                // still surfaces in logs.
-                ESP_LOGW(TAG, "mic stream full — dropping oldest 80ms "
-                              "to make room");
-                int16_t discard[AUDIO_FRAME_SAMPLES * 4];  // 80ms chunk
-                xStreamBufferReceive(s_mic_stream, discard,
-                                     sizeof(discard), 0);
-                sent = xStreamBufferSend(s_mic_stream, pcm, bytes, 0);
-                if (sent == bytes) {
-                    frames_pushed++;
-                }
+                // Buffer full → reset. Original behavior, correct for
+                // the strong-antenna ducky PCB where overflows are
+                // exceptional. The XIAO-specific drop-oldest variant
+                // briefly tried here (#50) is back on the shelf —
+                // bring it back as a XIAO-only path if backpressure
+                // shows up in real XIAO logs.
+                ESP_LOGW(TAG, "mic stream full, resetting");
+                xStreamBufferReset(s_mic_stream);
             } else {
                 frames_pushed++;
             }
@@ -283,14 +269,18 @@ static void url_escape(const char *src, char *out, size_t out_cap) {
 esp_err_t agent_run_session(const char *event, const char *subtask) {
     // 80ms chunks at 16kHz mono int16 = 320*4 samples * 2 bytes = 2560 bytes
     const size_t MIC_CHUNK_BYTES = AUDIO_FRAME_SAMPLES * 4 * sizeof(int16_t);
-    // 64KB ring = ~25 chunks ≈ 2 seconds of mic audio. Sized to
-    // absorb a 1-second WiFi stall (RSSI -54 dBm class) without
-    // hitting the drop-oldest path; pre-#50 buffer was 16KB which
-    // overflowed on stalls > 500ms. Allocates from internal SRAM
-    // which is plenty (~250KB free at session-open time on
-    // ESP32-S3); session-scoped so the cost only exists while
-    // talking, freed on session-end.
-    s_mic_stream = xStreamBufferCreate(64 * 1024, MIC_CHUNK_BYTES);
+    // 16KB internal-RAM ring — restored to the known-good size after
+    // a brief #50 detour bumped it to 64KB. Two regressions chased
+    // each other: 64KB internal starved mbedTLS of the heap it needs
+    // for session-WS TLS setup (alloc-failed); moving to PSRAM to
+    // free internal RAM introduced cache-coherency crashes on the
+    // mic_task↔ws_send_task hand-off the moment the user started
+    // speaking. The original behavior is correct for the ducky PCB,
+    // which has the strong PCB antenna and never saw the backpressure
+    // overflows #50 was filed against. If the XIAO build needs the
+    // bigger buffer to handle its weaker chip antenna, that's a
+    // variant-conditional change — not a universal one.
+    s_mic_stream = xStreamBufferCreate(16 * 1024, MIC_CHUNK_BYTES);
     if (!s_mic_stream) return ESP_ERR_NO_MEM;
     // ElevenLabs sends agent audio faster than realtime (it pre-buffers
     // entire utterances). For a 10s sentence ~320KB arrives at once. Spk
@@ -655,6 +645,27 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                 return;
             }
 
+            if (strcmp(type_field, "wipe_duck_result") == 0) {
+                // {"type":"wipe_duck_result","ok":true|false,"deleted":...}
+                // Reuses the s_eleven_done semaphore + s_eleven_last_ok
+                // because they're a generic "small ack" channel — only
+                // one such request is ever in flight at a time (the
+                // captive portal blocks on each round-trip). Cheaper
+                // than another semaphore for a one-time hand-off op.
+                const char *ok_pos = memmem(d->data_ptr, d->data_len, "\"ok\"", 4);
+                bool ok_true = false;
+                if (ok_pos) {
+                    const char *limit = (const char *)d->data_ptr + d->data_len;
+                    const char *cursor = ok_pos + 4;
+                    while (cursor < limit && (*cursor == ' ' || *cursor == ':' || *cursor == '\t')) cursor++;
+                    ok_true = (cursor + 4 <= limit) && memcmp(cursor, "true", 4) == 0;
+                }
+                s_eleven_last_ok = ok_true;
+                ESP_LOGI(TAG, "wipe_duck_result: ok=%d", ok_true);
+                if (s_eleven_done) xSemaphoreGive(s_eleven_done);
+                return;
+            }
+
             if (strcmp(type_field, "list_printers_result") == 0) {
                 // Settings-only fast-path response — same shape as
                 // the printer list embedded in bambu_login_result.
@@ -1001,6 +1012,45 @@ bool eleven_creds_send_via_ws(const char *key, const char *agent,
 
     if (xSemaphoreTake(s_eleven_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
         ESP_LOGW(TAG, "set_eleven_creds timeout (%d ms)", timeout_ms);
+        return false;
+    }
+    return s_eleven_last_ok;
+}
+
+bool wipe_duck_via_ws(int timeout_ms) {
+    // Best-effort: if the notify WS isn't up, return false and let the
+    // caller proceed with NVS erase anyway. The relay will eventually
+    // GC stale rows on its own (whenever we add that), and the next
+    // owner's bambu_login will overwrite the relevant credentials.
+    // Not catastrophic to skip on a flaky network.
+    if (!s_notify_ws || !s_notify_ws_connected) {
+        ESP_LOGW(TAG, "wipe_duck_via_ws: notify WS not connected — "
+                      "skipping relay wipe, chip-side erase will proceed");
+        return false;
+    }
+    if (s_eleven_done == NULL) {
+        s_eleven_done = xSemaphoreCreateBinary();
+        if (s_eleven_done == NULL) return false;
+    }
+
+    char body[100];
+    int n = snprintf(body, sizeof(body),
+        "{\"type\":\"wipe_duck\",\"duck_id\":\"%s\"}", duck_id_get());
+    if (n <= 0 || n >= (int)sizeof(body)) return false;
+
+    xSemaphoreTake(s_eleven_done, 0);
+    s_eleven_last_ok = false;
+
+    int sent = esp_websocket_client_send_text(s_notify_ws, body, n,
+                                              pdMS_TO_TICKS(5000));
+    if (sent < n) {
+        ESP_LOGE(TAG, "wipe_duck send failed (%d of %d)", sent, n);
+        return false;
+    }
+    ESP_LOGI(TAG, "wipe_duck sent — waiting for relay ack");
+
+    if (xSemaphoreTake(s_eleven_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "wipe_duck timeout (%d ms)", timeout_ms);
         return false;
     }
     return s_eleven_last_ok;

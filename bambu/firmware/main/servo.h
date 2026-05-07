@@ -35,3 +35,28 @@ void servo_shake_off(void);
 // this so the duck doesn't perk up just because something automatic
 // happened on the printer.
 void servo_note_interaction(void);
+
+// Movement modes — captive-portal-selectable, NVS-persisted.
+//   ALWAYS              — alert all day. Quiet 9pm–6am local time
+//                         when SNTP + TZ are known; otherwise alert
+//                         around the clock.
+//   TAPER               — alert (0–2min) → settling (2–10min) →
+//                         drowsy (10min–1hr) → dormant (1hr+). Default.
+//   INTERACTION_ONLY    — alert for 2min after a wake; dormant
+//                         otherwise. For the "duck shouldn't move
+//                         unless I'm looking at it" preference.
+typedef enum {
+    SERVO_MOVE_ALWAYS = 0,
+    SERVO_MOVE_TAPER  = 1,
+    SERVO_MOVE_INTERACTION_ONLY = 2,
+} servo_move_mode_t;
+
+void servo_set_move_mode(servo_move_mode_t mode);
+servo_move_mode_t servo_get_move_mode(void);
+
+// TZ offset (minutes east of UTC, e.g. -300 for US Eastern Standard,
+// -240 for US Eastern Daylight) used by SERVO_MOVE_ALWAYS for quiet-
+// hours detection. Captive portal exposes a small dropdown of common
+// zones; default 0 (UTC) means quiet hours fire on UTC clock until set.
+void servo_set_tz_offset_min(int16_t off_min);
+int16_t servo_get_tz_offset_min(void);

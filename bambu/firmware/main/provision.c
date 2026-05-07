@@ -35,8 +35,10 @@
 // then comes down (eventually; not aggressive about it).
 #include "provision.h"
 #include "agent.h"
+#include "audio.h"
 #include "config.h"   // BUTTON_PIN
 #include "phrases.h"
+#include "servo.h"
 #include "wifi.h"
 
 #include <stdio.h>
@@ -54,6 +56,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/semphr.h>
+#include <nvs_flash.h>
 #include <freertos/task.h>
 #include <lwip/sockets.h>
 #include <lwip/netdb.h>
@@ -269,6 +272,93 @@ static const char html_head[] =
     "</style></head><body>";
 static const char html_tail[] = "</body></html>";
 
+// Emit the settings section (volume, movement mode, time zone) with
+// the currently-persisted values pre-selected. Shared between the
+// initial form and the picker page so a re-entry user can adjust
+// settings without re-doing onboarding. Form `name=` attributes
+// (`vol`, `move`, `tz`) are parsed by both /save and /pick handlers.
+static void render_settings_section(httpd_req_t *req) {
+    uint8_t vol = audio_get_volume_step();
+    servo_move_mode_t move = servo_get_move_mode();
+    int16_t tz = servo_get_tz_offset_min();
+
+    static const char head[] =
+        "<h2>Settings</h2>"
+        "<p class=sub>How loud the duck speaks, when it moves its head, "
+        "and what time zone you're in (so the quiet-hours mode knows "
+        "when night is).</p>"
+        "<label for=vol>Volume</label>"
+        "<select id=vol name=vol>";
+    httpd_resp_send_chunk(req, head, sizeof(head) - 1);
+    static const char *vol_labels[] = {
+        "Loud", "Normal", "Quiet", "Whisper", "Mute"
+    };
+    for (int i = 0; i < 5; i++) {
+        char opt[80];
+        int n = snprintf(opt, sizeof(opt),
+            "<option value=%d%s>%s</option>",
+            i, (vol == i) ? " selected" : "", vol_labels[i]);
+        if (n > 0) httpd_resp_send_chunk(req, opt, n);
+    }
+
+    static const char move_head[] =
+        "</select>"
+        "<label>Movement</label>"
+        "<div style='margin-bottom:.8em'>";
+    httpd_resp_send_chunk(req, move_head, sizeof(move_head) - 1);
+    static const char *move_labels[] = {
+        "Always alive (quiet 9pm–6am)",
+        "Tapered (active, then settles down)",
+        "Only after I touch it (quiet otherwise)",
+    };
+    for (int i = 0; i < 3; i++) {
+        char opt[200];
+        int n = snprintf(opt, sizeof(opt),
+            "<div style='padding:.3em 0'>"
+            "<input type=radio id=m%d name=move value=%d%s>"
+            "<label for=m%d style='display:inline;font-weight:400;cursor:pointer'>"
+            "%s</label></div>",
+            i, i, ((int)move == i) ? " checked" : "", i, move_labels[i]);
+        if (n > 0) httpd_resp_send_chunk(req, opt, n);
+    }
+
+    static const char tz_head[] =
+        "</div>"
+        "<label for=tz>Time zone</label>"
+        "<select id=tz name=tz>";
+    httpd_resp_send_chunk(req, tz_head, sizeof(tz_head) - 1);
+    // Common offsets, minutes east of UTC. Standard time only — DST
+    // shifts twice a year, user updates manually if their region
+    // observes it. Covers continental US, Hawaii, UK, CET, JST.
+    static const struct { int16_t mins; const char *label; } tz_opts[] = {
+        {    0, "UTC"                                  },
+        { -480, "US Pacific (PST, UTC−8)"              },
+        { -420, "US Pacific Daylight (PDT, UTC−7)"     },
+        { -420, "US Mountain (MST, UTC−7)"             },
+        { -360, "US Mountain Daylight (MDT, UTC−6)"    },
+        { -360, "US Central (CST, UTC−6)"              },
+        { -300, "US Central Daylight (CDT, UTC−5)"     },
+        { -300, "US Eastern (EST, UTC−5)"              },
+        { -240, "US Eastern Daylight (EDT, UTC−4)"     },
+        { -600, "US Hawaii (HST, UTC−10)"              },
+        {   60, "Europe Central (CET, UTC+1)"          },
+        {  120, "Europe Central Summer (CEST, UTC+2)"  },
+        {  540, "Asia Tokyo (JST, UTC+9)"              },
+    };
+    bool tz_matched = false;
+    for (size_t i = 0; i < sizeof(tz_opts) / sizeof(tz_opts[0]); i++) {
+        bool sel = (tz_opts[i].mins == tz) && !tz_matched;
+        if (sel) tz_matched = true;
+        char opt[120];
+        int n = snprintf(opt, sizeof(opt),
+            "<option value=%d%s>%s</option>",
+            (int)tz_opts[i].mins, sel ? " selected" : "", tz_opts[i].label);
+        if (n > 0) httpd_resp_send_chunk(req, opt, n);
+    }
+    static const char tz_tail[] = "</select>";
+    httpd_resp_send_chunk(req, tz_tail, sizeof(tz_tail) - 1);
+}
+
 static void render_collect_wifi(httpd_req_t *req) {
     httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
     static const char start[] =
@@ -299,7 +389,7 @@ static void render_collect_wifi(httpd_req_t *req) {
                          clean, clean, s_scan_results[i].rssi);
         if (n > 0) httpd_resp_send_chunk(req, opt, n);
     }
-    static const char tail[] =
+    static const char tail_pre[] =
         "</select>"
         "<label for=pw>WiFi password</label>"
         "<input type=password id=pw name=pw autocomplete=off"
@@ -329,6 +419,8 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<input type=text id=eagent name=eagent autocomplete=off "
         " autocorrect=off autocapitalize=off spellcheck=false>"
 #endif
+        ;
+    static const char tail_post[] =
         "<details><summary class=sub>Advanced — relay URL</summary>"
         "<p class=sub>If you're running your own relay, paste its WebSocket "
         "URL here (e.g. wss://duck.fly.dev). Leave blank to use the default.</p>"
@@ -337,8 +429,25 @@ static void render_collect_wifi(httpd_req_t *req) {
         " autocomplete=off autocorrect=off autocapitalize=off spellcheck=false>"
         "</details>"
         "<button type=submit>Set up</button>"
+        "</form>"
+        // Factory Reset — separate form posting to /factory_reset.
+        // Wipes the relay row (Bambu access_token, ElevenLabs creds,
+        // printer binding) AND the chip's NVS (WiFi creds, volume,
+        // any cached state) then reboots fresh. For when shipping a
+        // duck to someone else, or moving it between Bambu accounts
+        // cleanly. Inline confirm prompt because the action is
+        // irreversible — single accidental tap shouldn't wipe.
+        "<form method=POST action=/factory_reset style='margin-top:2em'"
+        " onsubmit='return confirm(\"Wipe this duck completely? "
+        "Bambu account, WiFi, and all settings will be cleared. "
+        "Cannot be undone.\")'>"
+        "<button type=submit style='background:#fee;color:#900;"
+        "border:1px solid #c66;font-weight:400'>"
+        "Factory Reset</button>"
         "</form>";
-    httpd_resp_send_chunk(req, tail, sizeof(tail) - 1);
+    httpd_resp_send_chunk(req, tail_pre, sizeof(tail_pre) - 1);
+    render_settings_section(req);
+    httpd_resp_send_chunk(req, tail_post, sizeof(tail_post) - 1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
     httpd_resp_send_chunk(req, NULL, 0);
 }
@@ -460,6 +569,10 @@ static void render_pick_printers(httpd_req_t *req) {
             info.online ? "online" : "offline");
         if (cn > 0) httpd_resp_send_chunk(req, chunk, cn);
     }
+    // Settings on the picker too — re-entry path lets the user adjust
+    // volume / movement mode / TZ without re-doing the full onboarding.
+    // /pick handler parses these alongside the printer checkboxes.
+    render_settings_section(req);
     httpd_resp_send_chunk(req,
         "<button type=submit>Save</button>"
         "</form>"
@@ -471,6 +584,20 @@ static void render_pick_printers(httpd_req_t *req) {
         "<button type=submit style='background:#eee;font-weight:400;"
         "color:#666;font-size:.9em'>"
         "Sign out and start over</button>"
+        "</form>"
+        // Factory Reset on the picker page — this is the most common
+        // re-entry point (long-press while already onboarded) so the
+        // hand-off path needs to be reachable here as well as the
+        // first-run sign-in form. Same red styling + confirm dialog
+        // as the version on render_form so the action looks
+        // consistent and irreversible across pages.
+        "<form method=POST action=/factory_reset style='margin-top:2em'"
+        " onsubmit='return confirm(\"Wipe this duck completely? "
+        "Bambu account, WiFi, and all settings will be cleared. "
+        "Cannot be undone.\")'>"
+        "<button type=submit style='background:#fee;color:#900;"
+        "border:1px solid #c66;font-weight:400'>"
+        "Factory Reset</button>"
         "</form>", -1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
     httpd_resp_send_chunk(req, NULL, 0);
@@ -585,6 +712,27 @@ static esp_err_t save_handler(httpd_req_t *req) {
     s_bambu_user_id[0] = '\0';
     if (s_creds_mutex) xSemaphoreGive(s_creds_mutex);
 
+    // Settings (volume / movement mode / TZ) are independently NVS-
+    // persisted on each form submission so users can change them
+    // without re-doing the WiFi+Bambu round-trip. Empty fields ->
+    // skip (keep existing). Apply via the audio + servo public APIs
+    // so we don't open NVS handles directly here.
+    char buf[16];
+    if (form_get(body, "vol", buf, sizeof(buf)) && buf[0]) {
+        int v = atoi(buf);
+        if (v >= 0 && v <= 4) audio_set_volume_step((uint8_t)v);
+    }
+    if (form_get(body, "move", buf, sizeof(buf)) && buf[0]) {
+        int m = atoi(buf);
+        if (m >= 0 && m <= 2) servo_set_move_mode((servo_move_mode_t)m);
+    }
+    if (form_get(body, "tz", buf, sizeof(buf)) && buf[0]) {
+        // Form value is a signed integer in minutes east of UTC.
+        // atoi handles the sign; range-check inside the setter
+        // rejects out-of-range values.
+        servo_set_tz_offset_min((int16_t)atoi(buf));
+    }
+
     // Persist WiFi to NVS (so reboot recovers). Bambu creds stay in
     // memory only — they get sent to the relay over WS during the
     // wizard's worker phase, then we forget them.
@@ -623,12 +771,32 @@ static esp_err_t save_handler(httpd_req_t *req) {
 // success; on failure we leave the user on the picker page so they
 // can retry.
 static esp_err_t pick_handler(httpd_req_t *req) {
-    char body[256] = {0};
+    // Body capacity bumped from 256 → 512 to accommodate the settings
+    // fields (vol, move, tz) appended in the same submission. Picker
+    // bodies historically capped well under 200 bytes; settings add
+    // ≤30 bytes; 512 leaves margin for future additions.
+    char body[512] = {0};
     int len = req->content_len < (int)sizeof(body) - 1
                 ? req->content_len : (int)sizeof(body) - 1;
     if (len > 0) {
         int got = httpd_req_recv(req, body, len);
         if (got > 0) body[got] = '\0';
+    }
+
+    // Settings — same shape as the form's /save handler; persisted via
+    // public audio/servo APIs so this code doesn't touch NVS directly.
+    // Empty fields skip (keep existing).
+    char buf[16];
+    if (form_get(body, "vol", buf, sizeof(buf)) && buf[0]) {
+        int v = atoi(buf);
+        if (v >= 0 && v <= 4) audio_set_volume_step((uint8_t)v);
+    }
+    if (form_get(body, "move", buf, sizeof(buf)) && buf[0]) {
+        int m = atoi(buf);
+        if (m >= 0 && m <= 2) servo_set_move_mode((servo_move_mode_t)m);
+    }
+    if (form_get(body, "tz", buf, sizeof(buf)) && buf[0]) {
+        servo_set_tz_offset_min((int16_t)atoi(buf));
     }
 
     // Build the pipe-delimited serials list from checked p0..p7 boxes.
@@ -675,9 +843,21 @@ static esp_err_t pick_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "/pick: %d printer(s) selected, set_printers ack OK",
              chosen_count);
     s_state = WIZ_DONE;
-    httpd_resp_set_status(req, "303 See Other");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
+    // Render an inline success page instead of redirecting to /.
+    // Redirecting forced the phone to load another page that AP-teardown
+    // ate halfway through, which read as "wizard never ended." A direct
+    // page tells the user "Save worked, you're done" before the AP
+    // collapses under them.
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
+    httpd_resp_send_chunk(req,
+        "<h1>🦆 All set!</h1>"
+        "<p class=sub>Saved. The duck is closing this WiFi network — "
+        "your phone will reconnect to your home WiFi automatically. "
+        "You can close this page.</p>",
+        -1);
+    httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -722,6 +902,89 @@ static esp_err_t restart_handler(httpd_req_t *req) {
     httpd_resp_set_status(req, "303 See Other");
     httpd_resp_set_hdr(req, "Location", "/");
     httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+// /factory_reset — full wipe for handing the duck off to a new owner.
+//
+//   1. Tell the relay to delete this duck's row (revokes the prior
+//      owner's Bambu access_token + ElevenLabs creds + printer
+//      binding immediately, even if step 3 fails).
+//   2. Render a "Wiping..." page so the user sees something happen
+//      before WiFi drops.
+//   3. nvs_flash_erase() — wipes WiFi creds, volume step, the
+//      provision_pending flag, anything else stored in NVS.
+//   4. esp_restart() — comes up fresh-out-of-box on next boot, the
+//      "press my button to set up" path.
+//
+// Worker pattern (deferred async): the HTTP request returns
+// immediately with the wiping page; an actual wipe happens in a
+// short-lived task so we don't fight the AP/HTTP teardown when
+// nvs_flash_erase + restart fire.
+static void factory_reset_worker(void *arg) {
+    (void)arg;
+    // Give the response a beat to flush to the browser before WiFi /
+    // captive portal go away under it.
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Step 1: tell the relay to delete the row. Best-effort — chip
+    // erase proceeds either way. 5s timeout so a flaky relay can't
+    // strand the user mid-wipe.
+    bool ok = wipe_duck_via_ws(5000);
+    ESP_LOGI(TAG, "/factory_reset: relay wipe %s",
+             ok ? "ack'd" : "skipped/failed (chip erase will proceed)");
+    // Brief pause so any in-flight WS frame on the notify channel
+    // can drain before we yank the rug.
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Step 2: erase the entire NVS partition. Wipes WiFi creds (the
+    // "duck" namespace), volume step (the "audio" namespace), the
+    // provision_pending flag, anything else. Next boot's nvs_flash_init
+    // will re-create empty namespaces on demand.
+    ESP_LOGI(TAG, "/factory_reset: erasing NVS");
+    esp_err_t err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_erase failed: %s — restarting anyway",
+                 esp_err_to_name(err));
+    }
+
+    // Step 3: reboot. The chip comes up with no WiFi creds, no Bambu
+    // binding, plays the "press my button" phrase, fresh out of box
+    // for the next owner.
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}
+
+static esp_err_t factory_reset_handler(httpd_req_t *req) {
+    // Drain body — POST, no fields, but httpd needs us to consume.
+    char buf[64];
+    int remaining = req->content_len;
+    while (remaining > 0) {
+        int n = httpd_req_recv(req, buf, remaining < (int)sizeof(buf)
+                                          ? remaining : (int)sizeof(buf));
+        if (n <= 0) break;
+        remaining -= n;
+    }
+
+    // Show a confirmation page that survives the imminent reboot —
+    // by the time the user reads it, WiFi/AP are gone. They'll need
+    // to power-cycle or just plug into a new network for the next
+    // owner.
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
+    httpd_resp_send_chunk(req,
+        "<h1>Wiping this duck</h1>"
+        "<p class=sub>Clearing WiFi, Bambu account, and relay binding. "
+        "The duck will reboot in a few seconds. This page won't update — "
+        "the duck's WiFi network is going away.</p>"
+        "<p class=sub>Power-cycle to confirm: when you next plug it in, "
+        "it should ask you to press its button to start setup.</p>",
+        -1);
+    httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
+    httpd_resp_send_chunk(req, NULL, 0);
+
+    ESP_LOGW(TAG, "/factory_reset: triggered — spawning wipe worker");
+    xTaskCreate(factory_reset_worker, "fact_rst", 4096, NULL, 5, NULL);
     return ESP_OK;
 }
 
@@ -1053,11 +1316,13 @@ esp_err_t wifi_provision_run(void) {
     httpd_uri_t code = { .uri = "/code", .method = HTTP_POST, .handler = code_handler };
     httpd_uri_t pick = { .uri = "/pick", .method = HTTP_POST, .handler = pick_handler };
     httpd_uri_t rstr = { .uri = "/restart", .method = HTTP_POST, .handler = restart_handler };
+    httpd_uri_t fres = { .uri = "/factory_reset", .method = HTTP_POST, .handler = factory_reset_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &save);
     httpd_register_uri_handler(server, &code);
     httpd_register_uri_handler(server, &pick);
     httpd_register_uri_handler(server, &rstr);
+    httpd_register_uri_handler(server, &fres);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect);
     xTaskCreate(dns_hijack_task, "dns_hijack", 4096, NULL, 5, NULL);
 
@@ -1131,12 +1396,13 @@ esp_err_t wifi_provision_run(void) {
     }
     if (!timed_out && !cancelled) {
         ESP_LOGI(TAG, "wizard reached DONE — brief AP-up window for success page");
-        // Just enough for the browser to load the "You're set" page
-        // and the user to read it (~3s). The user has already done
-        // the meaningful work (Save); no point holding the AP open
-        // longer than the success-page read time. STA stays
-        // connected throughout; only the AP goes away.
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        // Just enough for the HTTP response to flush + the phone to
+        // render the "All set" page (~800ms). Was 3s and read as
+        // "wizard is stuck" — user complained the AP lingered too
+        // long. The success page already flashes the meaningful
+        // confirmation before this delay; this is purely buffer for
+        // the response/render to land.
+        vTaskDelay(pdMS_TO_TICKS(800));
     }
     ESP_LOGI(TAG, "tearing down AP (timed_out=%d cancelled=%d)",
              timed_out, cancelled);
