@@ -16,6 +16,7 @@
 #include "config.h"
 #include "duck_id.h"
 #include "servo.h"
+#include "wifi.h"   // relay_url_load / relay_url_has
 
 #include <stdio.h>
 #include <string.h>
@@ -269,18 +270,23 @@ static void url_escape(const char *src, char *out, size_t out_cap) {
 esp_err_t agent_run_session(const char *event, const char *subtask) {
     // 80ms chunks at 16kHz mono int16 = 320*4 samples * 2 bytes = 2560 bytes
     const size_t MIC_CHUNK_BYTES = AUDIO_FRAME_SAMPLES * 4 * sizeof(int16_t);
-    // 16KB internal-RAM ring — restored to the known-good size after
-    // a brief #50 detour bumped it to 64KB. Two regressions chased
-    // each other: 64KB internal starved mbedTLS of the heap it needs
-    // for session-WS TLS setup (alloc-failed); moving to PSRAM to
-    // free internal RAM introduced cache-coherency crashes on the
-    // mic_task↔ws_send_task hand-off the moment the user started
-    // speaking. The original behavior is correct for the ducky PCB,
-    // which has the strong PCB antenna and never saw the backpressure
-    // overflows #50 was filed against. If the XIAO build needs the
-    // bigger buffer to handle its weaker chip antenna, that's a
-    // variant-conditional change — not a universal one.
+    // Mic ring buffer. Sized per build variant.
+    //
+    // Ducky PCB (default): 16KB internal RAM. Strong PCB antenna,
+    // overflows are exceptional. The known-good shipping value.
+    //
+    // XIAO: 32KB internal RAM. Chip antenna is meaningfully weaker
+    // and `mic stream full, resetting` overflows are routine on
+    // 16KB. 32KB doubles the absorption (~1s of audio) without
+    // straying into the 64KB territory that previously starved
+    // mbedTLS of internal heap during session-WS TLS setup. PSRAM
+    // is off the table — concurrent producer/consumer hand-off via
+    // FreeRTOS stream buffers in PSRAM hit cache-coherency crashes.
+#ifdef DUCK_VARIANT_XIAO
+    s_mic_stream = xStreamBufferCreate(32 * 1024, MIC_CHUNK_BYTES);
+#else
     s_mic_stream = xStreamBufferCreate(16 * 1024, MIC_CHUNK_BYTES);
+#endif
     if (!s_mic_stream) return ESP_ERR_NO_MEM;
     // ElevenLabs sends agent audio faster than realtime (it pre-buffers
     // entire utterances). For a 10s sentence ~320KB arrives at once. Spk
@@ -290,6 +296,25 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
     if (!s_spk_stream) {
         vStreamBufferDelete(s_mic_stream); s_mic_stream = NULL;
         return ESP_ERR_NO_MEM;
+    }
+
+    // Resolve the relay base URL. NVS-stored value (collected by the
+    // captive portal) wins over the compile-time default — so a
+    // turnkey build can be redirected at runtime, and an open-source
+    // build (no compile-time default) refuses sessions until a URL
+    // has been configured. Only ws:// or wss:// URLs are accepted by
+    // relay_url_save; we still NUL-init defensively.
+    char relay_base[160] = {0};
+    if (relay_url_load(relay_base, sizeof(relay_base)) != ESP_OK) {
+#ifdef RELAY_BASE_URL
+        strlcpy(relay_base, RELAY_BASE_URL, sizeof(relay_base));
+#else
+        ESP_LOGE(TAG, "no relay URL configured — cannot start session. "
+                      "Set one via the captive portal (long-press to "
+                      "re-onboard) or build a turnkey image with "
+                      "RELAY_BASE_URL baked in.");
+        return ESP_ERR_NOT_FOUND;
+#endif
     }
 
     // Compose the URL. Notification sessions append ?event=<type>&subtask=<name>
@@ -302,13 +327,13 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
         if (subtask && subtask[0]) {
             char esc_subtask[600];
             url_escape(subtask, esc_subtask, sizeof(esc_subtask));
-            snprintf(url, sizeof(url), "%s?event=%s&subtask=%s",
-                     RELAY_DUCK_URL, esc_event, esc_subtask);
+            snprintf(url, sizeof(url), "%s/ws/duck?event=%s&subtask=%s",
+                     relay_base, esc_event, esc_subtask);
         } else {
-            snprintf(url, sizeof(url), "%s?event=%s", RELAY_DUCK_URL, esc_event);
+            snprintf(url, sizeof(url), "%s/ws/duck?event=%s", relay_base, esc_event);
         }
     } else {
-        snprintf(url, sizeof(url), "%s", RELAY_DUCK_URL);
+        snprintf(url, sizeof(url), "%s/ws/duck", relay_base);
     }
 
     // Identify ourselves to the relay so it routes our session to our
@@ -503,7 +528,7 @@ static void notify_ws_event(void *handler_args, esp_event_base_t base,
                              int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *d = event_data;
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
-        ESP_LOGI(TAG, "notify channel connected to %s", RELAY_NOTIFY_URL);
+        ESP_LOGI(TAG, "notify channel connected (relay URL stored in NVS)");
         s_notify_ws_connected = true;
         s_notify_last_connected_ms = notify_now_ms();
         return;
@@ -778,8 +803,25 @@ static esp_err_t notify_ws_create_and_start(void) {
     snprintf(ws_headers, sizeof(ws_headers),
              "X-Duck-Id: %s\r\n", duck_id_get());
 
+    // Resolve relay base URL (NVS-stored override > compile-time
+    // default). Same precedence rule as the session WS path. Static
+    // because esp_websocket_client_init keeps a pointer into this
+    // string for the connection's lifetime.
+    static char notify_uri[200];
+    char relay_base[160] = {0};
+    if (relay_url_load(relay_base, sizeof(relay_base)) != ESP_OK) {
+#ifdef RELAY_BASE_URL
+        strlcpy(relay_base, RELAY_BASE_URL, sizeof(relay_base));
+#else
+        ESP_LOGE(TAG, "no relay URL configured — notify channel "
+                      "will not start. Set one via the captive portal.");
+        return ESP_ERR_NOT_FOUND;
+#endif
+    }
+    snprintf(notify_uri, sizeof(notify_uri), "%s/ws/notify", relay_base);
+
     esp_websocket_client_config_t cfg = {
-        .uri = RELAY_NOTIFY_URL,
+        .uri = notify_uri,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
         .buffer_size = 2048,

@@ -227,6 +227,59 @@ bool provision_pending_take(void) {
     return v != 0;
 }
 
+// ---- Relay URL ----
+
+bool relay_url_has(void) {
+    nvs_handle_t h;
+    if (nvs_open("duck", NVS_READONLY, &h) != ESP_OK) return false;
+    size_t len = 0;
+    esp_err_t err = nvs_get_str(h, "relay_url", NULL, &len);
+    nvs_close(h);
+    return err == ESP_OK && len > 1;  // len includes NUL; >1 = non-empty
+}
+
+esp_err_t relay_url_load(char *out_buf, size_t out_cap) {
+    if (!out_buf || out_cap == 0) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    size_t len = out_cap;
+    err = nvs_get_str(h, "relay_url", out_buf, &len);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        out_buf[0] = '\0';
+        return err;
+    }
+    return ESP_OK;
+}
+
+esp_err_t relay_url_save(const char *url) {
+    if (!url) return ESP_ERR_INVALID_ARG;
+    // Cheap shape validation — must be ws:// or wss://. Anything else
+    // (https://, http://, empty) is almost certainly a typo and would
+    // cause cryptic WS connect errors at runtime; reject early.
+    if (strncmp(url, "wss://", 6) != 0 && strncmp(url, "ws://", 5) != 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, "relay_url", url);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t relay_url_clear(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("duck", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_erase_key(h, "relay_url");
+    err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
 // ---- WiFi connect ----
 
 esp_err_t wifi_connect_blocking(int timeout_ms) {

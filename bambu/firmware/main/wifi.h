@@ -67,3 +67,33 @@ esp_err_t bambu_clear_creds(void);
 // consume + clear it atomically.
 esp_err_t set_provision_pending(bool pending);
 bool provision_pending_take(void);
+
+// ---- Relay URL ----
+//
+// Stored in NVS so non-turnkey (open-source) builds — which DON'T have
+// a compile-time default URL — can collect a relay URL via the
+// captive portal and remember it across reboots. Turnkey builds bake
+// a default at compile time but still honor a runtime override stored
+// here, so the same NVS-first lookup applies regardless of variant.
+//
+// Format: full WSS base URL with no trailing slash and no path
+// component, e.g. "wss://duck.fly.dev". agent.c composes per-endpoint
+// URLs by appending "/ws/duck" and "/ws/notify".
+
+bool relay_url_has(void);
+
+// Load into out_buf. Returns ESP_OK on success; out_buf is NUL-
+// terminated. ESP_ERR_NVS_NOT_FOUND if no URL has been saved (the
+// caller is expected to fall back to the compile-time default if
+// available, or refuse to start sessions if not).
+esp_err_t relay_url_load(char *out_buf, size_t out_cap);
+
+// Save a URL string. Validates that it starts with "wss://" or
+// "ws://" — anything else returns ESP_ERR_INVALID_ARG so a typo'd
+// "https://..." or empty string doesn't get persisted.
+esp_err_t relay_url_save(const char *url);
+
+// Wipe the stored URL. Used by Factory Reset path; nvs_flash_erase()
+// already covers it but this is here for symmetry with the other
+// clear_creds helpers.
+esp_err_t relay_url_clear(void);

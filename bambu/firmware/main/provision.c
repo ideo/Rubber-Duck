@@ -421,13 +421,40 @@ static void render_collect_wifi(httpd_req_t *req) {
 #endif
         ;
     static const char tail_post[] =
+#ifdef BAMBU_DUCK_TURNKEY
+        // Turnkey builds bake a relay URL at compile time. The field
+        // is still here as an Advanced override for fleet ducks that
+        // want to point at a different deployment (e.g. staging),
+        // but it's optional and tucked behind <details>.
         "<details><summary class=sub>Advanced — relay URL</summary>"
-        "<p class=sub>If you're running your own relay, paste its WebSocket "
-        "URL here (e.g. wss://duck.fly.dev). Leave blank to use the default.</p>"
+        "<p class=sub>The duck connects to its built-in relay by "
+        "default. Override here to point at a different WebSocket "
+        "URL (e.g. wss://staging.example.com). Leave blank to use "
+        "the default.</p>"
         "<label for=rurl>Relay URL</label>"
         "<input type=url id=rurl name=rurl placeholder=\"wss://...\" "
+        "pattern='wss?://.+' "
         " autocomplete=off autocorrect=off autocapitalize=off spellcheck=false>"
         "</details>"
+#else
+        // Open-source / public-flasher builds: the relay URL is
+        // REQUIRED. There's no compile-time default to fall back to,
+        // so the duck literally can't open sessions until the user
+        // supplies one. We surface the field prominently (not in a
+        // details block) and link to the deploy runbook so a user
+        // who doesn't have a relay yet has a clear path forward.
+        "<h2>Relay</h2>"
+        "<p class=sub>Where the duck connects for voice + printer "
+        "data. You'll need a relay running on your own infrastructure "
+        "— a 5-minute setup using <a href='https://github.com/ideo/Rubber-Duck/blob/main/bambu/DEPLOY.md' "
+        "target='_blank'>this runbook</a>. After you deploy it, paste "
+        "your <code>wss://&lt;your-app&gt;.fly.dev</code> URL here.</p>"
+        "<label for=rurl>Relay URL</label>"
+        "<input type=url id=rurl name=rurl required "
+        "placeholder=\"wss://your-app.fly.dev\" "
+        "pattern='wss?://.+' "
+        " autocomplete=off autocorrect=off autocapitalize=off spellcheck=false>"
+#endif
         "<button type=submit>Set up</button>"
         "</form>"
         // Factory Reset — separate form posting to /factory_reset.
@@ -437,12 +464,16 @@ static void render_collect_wifi(httpd_req_t *req) {
         // duck to someone else, or moving it between Bambu accounts
         // cleanly. Inline confirm prompt because the action is
         // irreversible — single accidental tap shouldn't wipe.
-        "<form method=POST action=/factory_reset style='margin-top:2em'"
-        " onsubmit='return confirm(\"Wipe this duck completely? "
-        "Bambu account, WiFi, and all settings will be cleared. "
-        "Cannot be undone.\")'>"
+        "<form method=POST action=/factory_reset style='margin-top:2em'>"
+        "<p class=sub style='color:#900;margin-bottom:.4em'>"
+        "Wipes WiFi + Bambu account + all settings. Cannot be undone.</p>"
+        "<label for=frconfirm class=sub>Type RESET to confirm</label>"
+        "<input type=text id=frconfirm name=confirm required "
+        "pattern='[Rr][Ee][Ss][Ee][Tt]' "
+        "autocomplete=off autocorrect=off autocapitalize=characters "
+        "spellcheck=false placeholder='RESET'>"
         "<button type=submit style='background:#fee;color:#900;"
-        "border:1px solid #c66;font-weight:400'>"
+        "border:1px solid #c66;font-weight:400;margin-top:.4em'>"
         "Factory Reset</button>"
         "</form>";
     httpd_resp_send_chunk(req, tail_pre, sizeof(tail_pre) - 1);
@@ -591,12 +622,16 @@ static void render_pick_printers(httpd_req_t *req) {
         // first-run sign-in form. Same red styling + confirm dialog
         // as the version on render_form so the action looks
         // consistent and irreversible across pages.
-        "<form method=POST action=/factory_reset style='margin-top:2em'"
-        " onsubmit='return confirm(\"Wipe this duck completely? "
-        "Bambu account, WiFi, and all settings will be cleared. "
-        "Cannot be undone.\")'>"
+        "<form method=POST action=/factory_reset style='margin-top:2em'>"
+        "<p class=sub style='color:#900;margin-bottom:.4em'>"
+        "Wipes WiFi + Bambu account + all settings. Cannot be undone.</p>"
+        "<label for=frconfirm class=sub>Type RESET to confirm</label>"
+        "<input type=text id=frconfirm name=confirm required "
+        "pattern='[Rr][Ee][Ss][Ee][Tt]' "
+        "autocomplete=off autocorrect=off autocapitalize=characters "
+        "spellcheck=false placeholder='RESET'>"
         "<button type=submit style='background:#fee;color:#900;"
-        "border:1px solid #c66;font-weight:400'>"
+        "border:1px solid #c66;font-weight:400;margin-top:.4em'>"
         "Factory Reset</button>"
         "</form>", -1);
     httpd_resp_send_chunk(req, html_tail, sizeof(html_tail) - 1);
@@ -697,14 +732,39 @@ static esp_err_t save_handler(httpd_req_t *req) {
     // ws message (set_eleven_creds) after the bambu_login round-trip.
     form_get(body, "ekey", s_eleven_key, sizeof(s_eleven_key));
     form_get(body, "eagent", s_eleven_agent, sizeof(s_eleven_agent));
-    // Relay URL override — collected for forward-compat, currently
-    // unused at runtime (see static decl comment above).
+    // Relay URL — required on public builds (no compile-time default),
+    // optional override on turnkey builds (compile-time default exists).
+    // Persisted to NVS so subsequent sessions read it via relay_url_load
+    // in agent.c. The save validator rejects anything that isn't ws://
+    // or wss:// — typo'd URLs would otherwise produce cryptic WS errors
+    // far from the input site.
     form_get(body, "rurl", s_relay_url, sizeof(s_relay_url));
     if (s_relay_url[0]) {
-        ESP_LOGI(TAG, "captive portal collected relay URL override: %s "
-                      "(NOT YET ACTIVE — requires runtime URL plumbing)",
-                 s_relay_url);
+        esp_err_t err = relay_url_save(s_relay_url);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "relay URL saved to NVS: %s", s_relay_url);
+        } else {
+            ESP_LOGW(TAG, "relay URL save failed (%s): %s — sessions "
+                          "will fall back to compile-time default if "
+                          "any, otherwise refuse to start",
+                     esp_err_to_name(err), s_relay_url);
+        }
     }
+#ifndef BAMBU_DUCK_TURNKEY
+    // Public build hard-requires a URL. The form's `required` attribute
+    // covers the typical browser case, but defend server-side too in
+    // case the user's browser bypassed it (some captive-portal
+    // browsers don't honor `required` on iOS).
+    if (!s_relay_url[0] && !relay_url_has()) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req,
+            "Relay URL is required on this build. Deploy a relay first "
+            "(see bambu/DEPLOY.md) then come back and paste its "
+            "wss:// URL into the form.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+#endif
     // user_id is auto-resolved via /preference on the relay side now —
     // /preference proved reliable across testing. If Bambu ever breaks
     // /preference we fall back to relay-side env BAMBU_USER_ID, OR add
@@ -956,14 +1016,29 @@ static void factory_reset_worker(void *arg) {
 }
 
 static esp_err_t factory_reset_handler(httpd_req_t *req) {
-    // Drain body — POST, no fields, but httpd needs us to consume.
-    char buf[64];
-    int remaining = req->content_len;
-    while (remaining > 0) {
-        int n = httpd_req_recv(req, buf, remaining < (int)sizeof(buf)
-                                          ? remaining : (int)sizeof(buf));
-        if (n <= 0) break;
-        remaining -= n;
+    // Read body — expect a `confirm` field containing "reset" (any
+    // case). The form uses an HTML pattern attribute for client-side
+    // validation, but a stray POST from a misconfigured proxy /
+    // browser-prefetch / mistyped URL could otherwise wipe a duck.
+    // Server-side check makes the wipe deliberate.
+    char body[128] = {0};
+    int len = req->content_len < (int)sizeof(body) - 1
+                ? req->content_len : (int)sizeof(body) - 1;
+    if (len > 0) {
+        int got = httpd_req_recv(req, body, len);
+        if (got > 0) body[got] = '\0';
+    }
+    char confirm[16] = {0};
+    form_get(body, "confirm", confirm, sizeof(confirm));
+    bool ok = (strcasecmp(confirm, "reset") == 0);
+    if (!ok) {
+        ESP_LOGW(TAG, "/factory_reset: rejected — confirm field did not "
+                      "contain 'reset' (got %d chars)",
+                 (int)strlen(confirm));
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_send(req, "Type RESET in the confirmation field.",
+                         HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     // Show a confirmation page that survives the imminent reboot —

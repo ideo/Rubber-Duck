@@ -1,0 +1,113 @@
+# Build all three Bambu Duck firmware variants and attach them as
+# merged single-file binaries to a GitHub Release. The static web
+# flasher (docs/flash/index.html) references these via the "latest"
+# release URL pattern, so each successful release auto-updates what
+# anyone visiting the flasher page will install.
+#
+# Trigger: push of a tag matching `bambu-v*` (e.g., bambu-v1.0.0).
+# Hand-trigger: workflow_dispatch from the Actions tab.
+name: Bambu Duck firmware release
+
+on:
+  push:
+    tags:
+      - 'bambu-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create releases / upload assets
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ducky
+            cmake_flags: ''
+            asset_name: bambu-duck-ducky.bin
+            label: Ducky PCB
+          - variant: xiao
+            cmake_flags: '-DDUCK_VARIANT=XIAO'
+            asset_name: bambu-duck-xiao.bin
+            label: XIAO Seeed S3
+          # NOTE: the BAMBU_DUCK_TURNKEY variant is deliberately NOT
+          # built or released here. Turnkey firmware connects to a
+          # specific relay where the operator supplies shared
+          # ElevenLabs creds via env-var secrets — flashing it
+          # publicly would let strangers piggyback on our compute +
+          # voice quota. Internal IDEO builds are produced locally
+          # via `make flash-turnkey` and never published. The build
+          # flag remains in the firmware source so anyone running
+          # their own relay can produce their own turnkey image.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware (${{ matrix.label }})
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.4
+          target: esp32s3
+          path: bambu/firmware
+          # Pass through the per-variant cmake flags. Builds output to
+          # the default `build/` directory which we collect below.
+          command: |
+            idf.py ${{ matrix.cmake_flags }} build
+            python -m esptool --chip esp32s3 merge_bin \
+              -o ${{ matrix.asset_name }} \
+              --flash_mode dio --flash_size 8MB --flash_freq 80m \
+              0x0    build/bootloader/bootloader.bin \
+              0x8000 build/partition_table/partition-table.bin \
+              0x10000 build/bambu_duck.bin
+
+      - name: Upload merged binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: bambu/firmware/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/bambu-v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all variant binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifact dir layout
+        # download-artifact@v4 nests under per-name dirs; flatten so
+        # release-action's `files:` glob finds them in one pass.
+        run: |
+          mkdir -p release
+          find dist -name '*.bin' -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Bambu Duck firmware ${{ github.ref_name }}
+          files: release/*.bin
+          generate_release_notes: true
+          body: |
+            Pre-built firmware binaries for the three Bambu Duck variants.
+
+            **Flash from a browser:** https://ideo.github.io/Rubber-Duck/flash/
+            (Chrome or Edge — uses WebSerial, no install needed.)
+
+            **Flash from the command line** (any of these):
+            ```
+            python -m esptool --chip esp32s3 -p /dev/cu.usbmodem101 \
+              write_flash 0x0 bambu-duck-ducky.bin
+            ```
+
+            Variants:
+            - `bambu-duck-ducky.bin` — custom WROOM-1 PCB (default)
+            - `bambu-duck-xiao.bin` — XIAO Seeed S3 + cobbled parts
+            - `bambu-duck-turnkey.bin` — ducky PCB, captive portal hides
+              ElevenLabs fields (relay supplies shared voice creds)

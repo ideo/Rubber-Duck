@@ -128,14 +128,36 @@
 // edge is a bespoke proxy without the Cloudflare-style record-size
 // quirks, so the bundle attach + default IN_CONTENT_LEN works.)
 //
-// Override at compile time to point at a different deployment:
-//   idf.py -DRELAY_BASE_URL='\"wss://<your-fly-app>.fly.dev\"' build
-#ifndef RELAY_BASE_URL
+// Relay URL.
+//
+// Open-source / public-flasher builds (default): NO compile-time
+// default. Captive portal collects the URL during onboarding and
+// persists it in NVS. The chip refuses to open sessions if the URL
+// isn't set. This keeps strangers' Bambu access_tokens off our
+// community infrastructure — they have to point at a relay they
+// own (see bambu/DEPLOY.md for a 5-min Fly setup).
+//
+// Turnkey builds (BAMBU_DUCK_TURNKEY=1): bake a compile-time URL
+// since the operator (us) supplies the relay + shared ElevenLabs
+// creds. Override at build time with both flags on the idf.py line:
+//   -DBAMBU_DUCK_TURNKEY=1 -DRELAY_BASE_URL='"wss://<your-app>.fly.dev"'
+//
+// The runtime override (NVS-persisted) ALWAYS wins over the
+// compile-time default — so even on a turnkey build, a user typing
+// a different URL in the captive portal will redirect that chip.
+#if defined(BAMBU_DUCK_TURNKEY) && !defined(RELAY_BASE_URL)
 #define RELAY_BASE_URL "wss://duck-duck-print.fly.dev"
 #endif
 
+// Compile-time-baked endpoints. Only defined when RELAY_BASE_URL is —
+// i.e. on turnkey or builds with an explicit -DRELAY_BASE_URL flag.
+// agent.c falls back to runtime NVS lookup (relay_url_get / similar)
+// when these aren't defined, so public binaries refuse sessions
+// until the captive portal collects a relay URL.
+#ifdef RELAY_BASE_URL
 #define RELAY_DUCK_URL    RELAY_BASE_URL "/ws/duck"
 #define RELAY_NOTIFY_URL  RELAY_BASE_URL "/ws/notify"
+#endif
 
 // Back-compat — older code uses RELAY_WS_URL.
 #ifndef RELAY_WS_URL

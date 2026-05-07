@@ -1,0 +1,16 @@
+{
+  "name": "Bambu Duck — Ducky PCB",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "https://github.com/ideo/Rubber-Duck/releases/latest/download/bambu-duck-ducky.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

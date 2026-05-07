@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>🦆 Bambu Duck — Flash from your browser</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🦆%3C/text%3E%3C/svg%3E">
+  <!-- ESP Web Tools — Espressif's hosted WebSerial flasher. The
+       <esp-web-install-button> custom element handles chip detection,
+       erase, write, and verify entirely in the browser. -->
+  <script
+    type="module"
+    src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">
+  </script>
+  <style>
+    :root {
+      --fg:    #1a1a1a;
+      --sub:   #666;
+      --line:  #e5e5e5;
+      --accent: #f5b800;     /* duck yellow */
+      --bg:    #fafafa;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                     "Segoe UI", Roboto, sans-serif;
+      color: var(--fg);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    main { max-width: 640px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+    h1 { font-size: 1.8rem; margin: 0 0 .3em; letter-spacing: -.01em; }
+    h2 { font-size: 1.05rem; margin: 2.2em 0 .5em; letter-spacing: 0; }
+    p, li { color: #2a2a2a; }
+    .sub { color: var(--sub); }
+    code, kbd {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: .9em;
+      background: #efefef;
+      padding: 0 .25em;
+      border-radius: 3px;
+    }
+    .hero {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      margin-bottom: 1.4rem;
+    }
+    .hero .icon { font-size: 3rem; line-height: 1; }
+    .hero p { margin: 0; }
+    .variant {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.2rem 1.4rem;
+      margin: 1rem 0;
+      background: white;
+    }
+    .variant h3 { margin: 0 0 .25em; font-size: 1.05rem; }
+    .variant .meta { color: var(--sub); font-size: .92rem; margin: 0 0 .9rem; }
+    .variant esp-web-install-button {
+      --esp-tools-button-color: #1a1a1a;
+      --esp-tools-button-text-color: white;
+      --esp-tools-button-border-radius: 8px;
+    }
+    .browser-warn {
+      padding: .9rem 1.1rem;
+      border: 1px solid #ffd6a8;
+      border-radius: 8px;
+      background: #fff7e9;
+      margin: 1.5rem 0;
+      font-size: .95rem;
+    }
+    .browser-warn strong { color: #b14a00; }
+    details { margin: 1.6rem 0; }
+    details summary {
+      cursor: pointer;
+      color: var(--sub);
+      font-size: .95rem;
+    }
+    details > *:not(summary) { margin-left: .25rem; }
+    footer {
+      color: var(--sub);
+      font-size: .9rem;
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--line);
+    }
+    a { color: #1a5fbf; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<main>
+
+<div class="hero">
+  <div class="icon">🦆</div>
+  <div>
+    <h1>Flash a Bambu Duck</h1>
+    <p class="sub">Plug your duck into this computer over USB. Click the
+    button for your build. No software to install.</p>
+  </div>
+</div>
+
+<div class="browser-warn">
+  <strong>Chrome or Edge required.</strong> Safari and Firefox don't
+  support the WebSerial API yet, and mobile browsers can't talk to USB
+  serial devices at all. If you can't see the buttons below, you're on
+  an unsupported browser.
+</div>
+
+<h2>Step 1 — Deploy a relay (one-time, ~5 min)</h2>
+<p>The duck talks to a small server you run yourself. It bridges
+WebSocket conversation audio between the chip and ElevenLabs, and
+holds the per-printer MQTT subscription. <strong>The duck won't
+connect to anyone's relay but yours</strong> — these public binaries
+have no built-in default URL, on purpose. Your Bambu account
+credentials and ElevenLabs API key live on infrastructure you
+operate.</p>
+
+<p>The runbook is written so Claude Code can drive most of it for
+you. Clone the repo, drop into <code>bambu/</code>, run
+<code>claude</code>, and ask <em>"deploy a bambu duck for me"</em>:</p>
+
+<pre style="background:#1a1a1a;color:#e8e8e8;padding:1rem 1.2rem;border-radius:8px;overflow-x:auto;font-size:.85em;line-height:1.4">git clone https://github.com/ideo/Rubber-Duck.git
+cd Rubber-Duck/bambu
+claude</pre>
+
+<p class="sub">You'll need
+<a href="https://fly.io/docs/getting-started/installing-flyctl/">flyctl</a>
++ a Fly account (free tier covers it),
+<a href="https://elevenlabs.io">an ElevenLabs API key</a>, and a
+<a href="https://bambulab.com">Bambu account</a>. The
+<a href="https://github.com/ideo/Rubber-Duck/blob/main/bambu/DEPLOY.md">DEPLOY.md
+runbook</a> walks Claude through every step.</p>
+
+<p>When the runbook hands you back, you'll have a URL like
+<code>wss://&lt;your-app&gt;.fly.dev</code>. Keep it handy — the duck's
+captive portal asks for it during onboarding (Step 3).</p>
+
+<h2>Step 2 — Pick a build + flash</h2>
+
+<div class="variant">
+  <h3>Ducky PCB</h3>
+  <p class="meta">Custom WROOM-1 board with full-duplex I2S. Strong PCB
+  antenna, no audio quirks. Use this if you have the standard ducky
+  hardware. Captive portal asks for your own ElevenLabs API key.</p>
+  <esp-web-install-button manifest="manifests/ducky.json">
+  </esp-web-install-button>
+</div>
+
+<div class="variant">
+  <h3>XIAO Seeed S3</h3>
+  <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic / amp /
+  servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
+  absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
+  <esp-web-install-button manifest="manifests/xiao.json">
+  </esp-web-install-button>
+</div>
+
+
+<h2>Step 3 — Onboard the duck</h2>
+<p>After the flash succeeds:</p>
+<ol>
+  <li>Power-cycle the duck. It'll boot and play "press my button to start setup."</li>
+  <li>Press the back button. The duck creates a WiFi network called
+      <code>DuckDuckDuck-XXXX</code>.</li>
+  <li>Join that network from your phone. The captive portal pops
+      automatically (or browse to <code>192.168.4.1</code>).</li>
+  <li>Fill in: home WiFi, Bambu account, and the
+      <code>wss://...fly.dev</code> URL from Step 1.</li>
+  <li>Hit Save. The duck connects to your relay, walks you through
+      printer selection, and you're done.</li>
+</ol>
+
+<details>
+  <summary>What if the button doesn't see my duck?</summary>
+  <ul>
+    <li>USB cable must carry data, not just power. The cheap cables
+        that come with phones often only do power.</li>
+    <li>Some boards need <kbd>BOOT</kbd> held while connecting to enter
+        download mode. Hold <kbd>BOOT</kbd>, plug in, click the button,
+        release after the prompt appears.</li>
+    <li>If macOS shows a "Allow" dialog, grant access.</li>
+    <li>If your duck's already onboarded and you just want to wipe it
+        for handing off to someone else, you don't need this — long-press
+        the back button → Captive portal → "Factory Reset" handles it.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>What does flashing actually do?</summary>
+  <p>It copies new firmware into the chip's flash memory. The duck's
+  WiFi credentials, Bambu account binding, and other settings live in
+  a separate NVS partition — those stay intact across normal flashes.
+  If you want a true factory reset (wipe NVS too), the captive portal
+  has a "Factory Reset" button or you can use a full <code>idf.py
+  erase-flash</code> from a development environment.</p>
+</details>
+
+<details>
+  <summary>I want to run my own relay (not use yours)</summary>
+  <p>By default the firmware connects to a community relay we host
+  at <code>duck-duck-print.fly.dev</code>. If you'd rather run your
+  own — keeping your Bambu account binding entirely on your own
+  infrastructure, or because you want to control the ElevenLabs voice
+  yourself — there's a runbook for that:
+  <a href="https://github.com/ideo/Rubber-Duck/blob/main/bambu/DEPLOY.md">bambu/DEPLOY.md</a>.</p>
+  <p>It's written for Claude Code as the executor. Clone the repo, run
+  <code>claude</code> inside <code>bambu/</code>, and ask "deploy a
+  bambu duck for me." Claude walks through Fly app creation, secret
+  generation, ElevenLabs agent creation, and hands off to you for the
+  chip step. Takes about five minutes. After that, when you flash a
+  duck via this page and onboard it, expand the captive portal's
+  <strong>Advanced — relay URL</strong> field and paste
+  <code>wss://&lt;your-app&gt;.fly.dev</code>. The duck connects to
+  your relay instead of ours.</p>
+</details>
+
+<details>
+  <summary>Source code, hardware, license</summary>
+  <p>This page lives in the
+  <a href="https://github.com/ideo/Rubber-Duck">ideo/Rubber-Duck</a>
+  repo under <code>docs/flash/</code>. Firmware sources are in
+  <code>bambu/firmware/</code>. Software is MIT-licensed; hardware
+  designs are CERN-OHL-P-2.0.</p>
+</details>
+
+<footer>
+  Made with <a href="https://esphome.github.io/esp-web-tools/">ESP Web
+  Tools</a>. The Bambu Duck product lives at
+  <a href="https://github.com/ideo/Rubber-Duck/tree/main/bambu">github.com/ideo/Rubber-Duck/bambu</a>.
+</footer>
+
+</main>
+</body>
+</html>
