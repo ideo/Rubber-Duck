@@ -167,7 +167,8 @@ voice) but they're built around different hosts:
 | **License/repo** | Same repo, MIT software / CERN-OHL-P-2.0 hardware | Same repo, same licenses |
 
 If you're here for the **Mac/Claude Code duck**, keep reading.
-If you're looking for **the 3D-printer companion that needs no computer**, head to [`bambu/`](bambu/) and start with [`bambu/README.md`](bambu/README.md).
+
+If you're looking for **the 3D-printer companion that needs no computer**: head to [`bambu/`](bambu/) and start with [`bambu/README.md`](bambu/README.md), or skip straight to **[the in-browser flasher](https://ideo.github.io/Rubber-Duck/flash/)** if you already have a duck in hand.
 
 ### Hardware (Optional)
 

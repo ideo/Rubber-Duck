@@ -1,5 +1,9 @@
 # Bambu Duck
 
+> **🦆 Flash a duck from your browser:**
+> [ideo.github.io/Rubber-Duck/flash](https://ideo.github.io/Rubber-Duck/flash/)
+> (Chrome / Edge — uses WebSerial, no install needed)
+
 A standalone, conversational rubber duck that lives next to a Bambu 3D
 printer. No Mac, no plugin, no companion app — the duck has a real
 conversation through ElevenLabs Conversational AI, and can query the
