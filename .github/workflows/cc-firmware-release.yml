@@ -69,11 +69,16 @@ jobs:
         # PSRAM=opi for the WROOM-1 (ducky PCB) — XIAO Sense's S3 also
         # has PSRAM enabled in its default partition. PartitionScheme
         # default_8MB to match the 8MB flash on both boards.
+        #
+        # USB manufacturer/product descriptor flags come from each
+        # sketch's build_opt.h — arduino-cli picks that up natively
+        # since v0.21. We don't pass --build-property here because
+        # the spaces in "Duck Duck Duck" don't survive bash quoting
+        # cleanly through to the gcc command line.
         run: |
           arduino-cli compile \
             --fqbn 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=default_8MB,FlashSize=8M,PSRAM=opi' \
             --output-dir build_${{ matrix.variant }} \
-            --build-property 'build.extra_flags=-DUSB_MANUFACTURER="IDEO" -DUSB_PRODUCT="Duck Duck Duck"' \
             ${{ matrix.sketch_dir }}
 
       - name: Merge into single flashable image
