@@ -35,11 +35,19 @@ jobs:
             sketch_file: rubber_duck_s3_ducky.ino
             asset_name: cc-ducky.bin
             label: Claude Code Duck — Ducky PCB
+            # Generic ESP32-S3 board — Config.h uses raw GPIO numbers.
+            fqbn: 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=default_8MB,FlashSize=8M,PSRAM=opi'
           - variant: xiao
             sketch_dir: firmware/rubber_duck_s3
             sketch_file: rubber_duck_s3.ino
             asset_name: cc-xiao.bin
             label: Claude Code Duck — XIAO Seeed S3
+            # Seeed-specific board variant — its pins_arduino.h
+            # defines the D0-D10 pin aliases that the sketch's
+            # Config.h references (BUTTON_PIN=D5, I2S_BCLK=D1, etc.).
+            # Generic esp32s3 doesn't define those, hence the prior
+            # "'D5' not declared in this scope" build break.
+            fqbn: 'esp32:esp32:XIAO_ESP32S3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=default_8MB,FlashSize=8M,PSRAM=opi'
 
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +85,7 @@ jobs:
         # cleanly through to the gcc command line.
         run: |
           arduino-cli compile \
-            --fqbn 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=default_8MB,FlashSize=8M,PSRAM=opi' \
+            --fqbn '${{ matrix.fqbn }}' \
             --output-dir build_${{ matrix.variant }} \
             ${{ matrix.sketch_dir }}
 
