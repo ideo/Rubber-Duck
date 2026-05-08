@@ -45,9 +45,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install arduino-cli
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/bin sh
-          echo "$HOME/bin" >> $GITHUB_PATH
+        # Official action — handles install, PATH, and PATH-on-windows.
+        # Replaces a manual curl|sh pipeline that needed $BINDIR
+        # pre-created and broke on the first run.
+        uses: arduino/setup-arduino-cli@v2
 
       - name: Install ESP32 board package
         run: |
