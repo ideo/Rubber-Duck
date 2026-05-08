@@ -176,44 +176,36 @@
     <!-- ============ CLAUDE CODE DUCK TAB ============ -->
     <div id="panel-cc">
       <p>The Mac companion duck — sits on your desk, watches your
-      Claude Code session, reacts with voice + servo + LED. The widget
-      app does most of the work; this firmware lives on the duck and
-      handles audio, animation, and serial protocol with the widget.</p>
+      Claude Code session, reacts with voice + servo + LED. Pairs
+      with the
+      <a href="https://github.com/ideo/Rubber-Duck/releases">Duck Duck Duck</a>
+      widget app on macOS. This firmware handles audio, animation,
+      and the serial protocol with the widget.</p>
 
-      <div class="browser-warn" style="background:#eef5ff;border-color:#9ec0e8">
-        <strong>Browser flashing for the Claude Code Duck is
-        coming soon.</strong> The Arduino-sketch build pipeline isn't
-        wired into our release workflow yet. For now, flash via the
-        Arduino IDE — see
-        <a href="https://github.com/ideo/Rubber-Duck/tree/main/firmware">firmware/README.md</a>
-        for board selection, library deps, and serial port setup.
-      </div>
-
-      <div class="variant" style="opacity:.65">
+      <div class="variant">
         <div class="img"><img src="img/ducky-pcb.jpg" alt="Ducky PCB"
              onerror="this.style.display='none'"></div>
         <div class="body">
           <h3>Ducky PCB</h3>
           <p class="meta">The official IDEO Duck product PCB — custom
           WROOM-1 board with full-duplex I2S, ChirpSynth audio engine,
-          servo + LED on the standard pinout.</p>
-          <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
-            Flash — coming soon
-          </button>
+          servo + addressable LED ring.</p>
+          <esp-web-install-button manifest="manifests/cc-ducky.json">
+          </esp-web-install-button>
         </div>
       </div>
 
-      <div class="variant" style="opacity:.65">
+      <div class="variant">
         <div class="img"><img src="img/xiao-s3.jpg" alt="XIAO Seeed ESP32-S3"
              onerror="this.style.display='none'"></div>
         <div class="body">
           <h3>XIAO Seeed S3</h3>
           <p class="meta">Standard XIAO Seeed ESP32-S3 + cobbled mic /
           amp / servo. DIY build path for hobbyists who don't want to
-          order the custom PCB.</p>
-          <button disabled style="background:#eee;color:#999;border:1px solid #ddd;border-radius:8px;padding:.6em 1.2em;cursor:not-allowed">
-            Flash — coming soon
-          </button>
+          order the custom PCB. (No NeoPixel ring — that's the one
+          hardware difference from the official PCB.)</p>
+          <esp-web-install-button manifest="manifests/cc-xiao.json">
+          </esp-web-install-button>
         </div>
       </div>
     </div>

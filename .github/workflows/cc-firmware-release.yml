@@ -1,0 +1,143 @@
+# Build Claude Code Duck firmware variants (Ducky PCB + XIAO Seeed S3)
+# and attach them as merged single-file binaries to a GitHub Release.
+# The web flasher (docs/flash/index.html) references the binaries via
+# the "latest release" URL pattern, so each successful release auto-
+# updates what gets installed when a user clicks Flash on the Claude
+# Code Duck tab.
+#
+# Trigger: push of a tag matching `cc-v*` (e.g., cc-v1.0.0). Hand-
+# trigger: workflow_dispatch from the Actions tab.
+#
+# Note: separate from the bambu firmware workflow so each product
+# moves on its own cadence — `cc-v*` tags fire this one, `bambu-v*`
+# tags fire the bambu one. Same .bin upload pattern, different
+# release assets (cc-ducky.bin / cc-xiao.bin).
+name: Claude Code Duck firmware release
+
+on:
+  push:
+    tags:
+      - 'cc-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create releases / upload assets
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ducky
+            sketch_dir: firmware/rubber_duck_s3_ducky
+            sketch_file: rubber_duck_s3_ducky.ino
+            asset_name: cc-ducky.bin
+            label: Claude Code Duck — Ducky PCB
+          - variant: xiao
+            sketch_dir: firmware/rubber_duck_s3
+            sketch_file: rubber_duck_s3.ino
+            asset_name: cc-xiao.bin
+            label: Claude Code Duck — XIAO Seeed S3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/bin sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Install ESP32 board package
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          # Pin to a known-good ESP32 core. Bump deliberately when
+          # validating against a newer arduino-esp32 release.
+          arduino-cli core install esp32:esp32@3.0.7
+
+      - name: Install esptool (for merge_bin)
+        run: pip install esptool
+
+      - name: Compile ${{ matrix.label }}
+        # FQBN: esp32:esp32:esp32s3 with USB CDC on boot so the chip
+        # appears as /dev/cu.usbmodem* without an external UART bridge.
+        # PSRAM=opi for the WROOM-1 (ducky PCB) — XIAO Sense's S3 also
+        # has PSRAM enabled in its default partition. PartitionScheme
+        # default_8MB to match the 8MB flash on both boards.
+        run: |
+          arduino-cli compile \
+            --fqbn 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=default_8MB,FlashSize=8M,PSRAM=opi' \
+            --output-dir build_${{ matrix.variant }} \
+            --build-property 'build.extra_flags=-DUSB_MANUFACTURER="IDEO" -DUSB_PRODUCT="Duck Duck Duck"' \
+            ${{ matrix.sketch_dir }}
+
+      - name: Merge into single flashable image
+        # arduino-cli output: <sketch>.ino.bootloader.bin /
+        # .partitions.bin / .ino.bin. Merge into one offset-0 binary
+        # so the ESP Web Tools manifest can reference a single file.
+        run: |
+          cd build_${{ matrix.variant }}
+          ls -la
+          BOOT=$(ls *.bootloader.bin | head -n1)
+          PART=$(ls *.partitions.bin | head -n1)
+          APP=$(ls *.ino.bin | head -n1)
+          esptool.py --chip esp32s3 merge_bin \
+            -o ../${{ matrix.asset_name }} \
+            --flash_mode dio --flash_size 8MB --flash_freq 80m \
+            0x0     "$BOOT" \
+            0x8000  "$PART" \
+            0x10000 "$APP"
+          cd ..
+          ls -la ${{ matrix.asset_name }}
+
+      - name: Upload merged binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/cc-v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all variant binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifact dir layout
+        run: |
+          mkdir -p release
+          find dist -name '*.bin' -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Claude Code Duck firmware ${{ github.ref_name }}
+          files: release/*.bin
+          generate_release_notes: true
+          body: |
+            Pre-built firmware binaries for the Claude Code Duck (Mac
+            companion that watches your Claude Code session and
+            reacts via voice + servo + LED).
+
+            **Flash from a browser:** https://ideo.github.io/Rubber-Duck/flash/
+            (Chrome / Edge — uses WebSerial, no install needed.)
+
+            **Flash from the command line:**
+            ```
+            python -m esptool --chip esp32s3 -p /dev/cu.usbmodem101 \
+              write_flash 0x0 cc-ducky.bin
+            ```
+
+            Variants:
+            - `cc-ducky.bin` — official IDEO Duck PCB (custom WROOM-1)
+            - `cc-xiao.bin` — DIY build on standard XIAO Seeed ESP32-S3
