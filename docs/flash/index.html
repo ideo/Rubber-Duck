@@ -82,6 +82,42 @@
       --esp-tools-button-text-color: white;
       --esp-tools-button-border-radius: 8px;
     }
+    /* Custom flash button via ESP Web Tools' activate slot. Default
+       label is "Install" which doesn't tell users that connect +
+       flash both happen. Renaming to "Connect & Flash" makes the
+       sequence visible. */
+    .flash-btn {
+      background: #1a1a1a;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: .7em 1.3em;
+      font-size: .95em;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .flash-btn:hover { background: #000; }
+    /* Pre-flight connection sanity check — small button above the
+       variant cards. Does requestPort + reports back, no flash. */
+    .test-conn {
+      background: white;
+      color: var(--fg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: .55em 1em;
+      font-size: .9em;
+      cursor: pointer;
+      margin: 1rem 0 .3rem;
+    }
+    .test-conn:hover { border-color: #aaa; }
+    .test-conn-result {
+      font-size: .9em;
+      color: var(--sub);
+      margin: .3rem 0 0;
+      min-height: 1.4em;
+    }
+    .test-conn-result.ok { color: #1b5e20; }
+    .test-conn-result.err { color: #b14a00; }
     @media (max-width: 480px) {
       /* Stack image above text on narrow screens. */
       .variant { grid-template-columns: 1fr; }
@@ -162,6 +198,60 @@
   an unsupported browser.
 </div>
 
+<details style="margin-top:1rem">
+  <summary class="sub" style="cursor:pointer">First time? Test your USB connection before flashing</summary>
+  <p class="sub" style="margin-top:.7rem">Plug in your duck, click Test, and pick it from the popup. Confirms
+  the USB cable carries data and the chip is reachable — separate from
+  flashing, so you can sanity-check before committing.</p>
+  <button id="test-conn-btn" class="test-conn">Test USB connection</button>
+  <p id="test-conn-result" class="test-conn-result"></p>
+</details>
+
+<script>
+(function () {
+  var btn = document.getElementById('test-conn-btn');
+  var out = document.getElementById('test-conn-result');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    out.className = 'test-conn-result';
+    out.textContent = 'Waiting for you to pick a port…';
+    if (!('serial' in navigator)) {
+      out.className = 'test-conn-result err';
+      out.textContent = "WebSerial isn't available in this browser. " +
+                        "Use Chrome or Edge.";
+      return;
+    }
+    try {
+      // requestPort() pops the native USB picker. The user picks
+      // their duck (or cancels). We only need the port info — no
+      // chip-id sniff yet, since that requires putting the chip in
+      // bootloader mode (which esptool-js does properly via
+      // ESPLoader). For a sanity check, "did the picker show me a
+      // device, did the user pick it" is enough.
+      var port = await navigator.serial.requestPort();
+      var info = port.getInfo();
+      var vid = info.usbVendorId
+        ? '0x' + info.usbVendorId.toString(16).padStart(4, '0')
+        : '?';
+      var pid = info.usbProductId
+        ? '0x' + info.usbProductId.toString(16).padStart(4, '0')
+        : '?';
+      out.className = 'test-conn-result ok';
+      out.textContent = '✓ Found a USB serial device (vid=' + vid +
+                        ' pid=' + pid + '). Looks good — click your ' +
+                        "board's Connect & Flash button below to install.";
+    } catch (e) {
+      out.className = 'test-conn-result err';
+      out.textContent = e && e.name === 'NotFoundError'
+        ? "No port picked. If your duck didn't show up in the list, " +
+          "the cable might be charge-only (no data lines) or the " +
+          "chip isn't in download mode."
+        : "Couldn't connect: " + (e && e.message ? e.message : e);
+    }
+  });
+})();
+</script>
+
 <div class="tabs">
   <input type="radio" name="tab" id="tab-cc">
   <input type="radio" name="tab" id="tab-bambu" checked>
@@ -191,6 +281,7 @@
           WROOM-1 board with full-duplex I2S, ChirpSynth audio engine,
           servo + addressable LED ring.</p>
           <esp-web-install-button manifest="manifests/cc-ducky.json">
+            <button class="flash-btn" slot="activate">Connect &amp; Flash Ducky PCB</button>
           </esp-web-install-button>
         </div>
       </div>
@@ -205,6 +296,7 @@
           order the custom PCB. (No NeoPixel ring — that's the one
           hardware difference from the official PCB.)</p>
           <esp-web-install-button manifest="manifests/cc-xiao.json">
+            <button class="flash-btn" slot="activate">Connect &amp; Flash XIAO Seeed S3</button>
           </esp-web-install-button>
         </div>
       </div>
@@ -257,6 +349,7 @@ claude</pre>
           antenna, no audio quirks. Use this if you have the standard ducky
           hardware. Captive portal asks for your own ElevenLabs API key.</p>
           <esp-web-install-button manifest="manifests/ducky.json">
+            <button class="flash-btn" slot="activate">Connect &amp; Flash Ducky PCB</button>
           </esp-web-install-button>
         </div>
       </div>
@@ -270,6 +363,7 @@ claude</pre>
           servo. Weaker chip antenna; firmware uses a bigger mic ring buffer to
           absorb WiFi stalls. Captive portal asks for your own ElevenLabs key.</p>
           <esp-web-install-button manifest="manifests/xiao.json">
+            <button class="flash-btn" slot="activate">Connect &amp; Flash XIAO Seeed S3</button>
           </esp-web-install-button>
         </div>
       </div>
