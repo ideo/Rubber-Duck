@@ -71,6 +71,19 @@ jobs:
       - name: Install esptool (for merge_bin)
         run: pip install esptool
 
+      - name: Stamp firmware version into build_opt.h
+        # The tag name (cc-v0.1.4 / "manual" for workflow_dispatch) goes
+        # into the USB serial-number descriptor so the web flasher can
+        # read it back via WebUSB and tell the user which build is on
+        # their duck — and whether it's behind latest. No spaces in tag
+        # names, so safe to append as a -D flag without the quoting
+        # problems that bit USB_PRODUCT.
+        run: |
+          VERSION="${{ github.ref_name }}"
+          echo "-DUSB_SERIAL=\\\"$VERSION\\\"" >> ${{ matrix.sketch_dir }}/build_opt.h
+          echo "build_opt.h after stamping:"
+          cat ${{ matrix.sketch_dir }}/build_opt.h
+
       - name: Compile ${{ matrix.label }}
         # FQBN: esp32:esp32:esp32s3 with USB CDC on boot so the chip
         # appears as /dev/cu.usbmodem* without an external UART bridge.
@@ -78,11 +91,12 @@ jobs:
         # has PSRAM enabled in its default partition. PartitionScheme
         # default_8MB to match the 8MB flash on both boards.
         #
-        # USB manufacturer/product descriptor flags come from each
-        # sketch's build_opt.h — arduino-cli picks that up natively
-        # since v0.21. We don't pass --build-property here because
-        # the spaces in "Duck Duck Duck" don't survive bash quoting
-        # cleanly through to the gcc command line.
+        # USB manufacturer/product/serial descriptor flags come from
+        # each sketch's build_opt.h — arduino-cli picks that up natively
+        # since v0.21. We don't pass --build-property here because the
+        # spaces in "Claude Code Duck" don't survive bash quoting
+        # cleanly through to the gcc command line; the previous step
+        # appends USB_SERIAL there for the same reason.
         run: |
           arduino-cli compile \
             --fqbn '${{ matrix.fqbn }}' \

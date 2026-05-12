@@ -191,19 +191,28 @@
   </div>
 </div>
 
-<div class="browser-warn">
+<!-- Only shown if WebSerial / WebUSB aren't actually available — hidden
+     by default, surfaced by the inline script below when needed.
+     Avoids the "Chrome warning while you're already in Chrome" eye-roll. -->
+<div class="browser-warn" id="browser-warn" hidden>
   <strong>Chrome or Edge required.</strong> Safari and Firefox don't
-  support the WebSerial API yet, and mobile browsers can't talk to USB
-  serial devices at all. If you can't see the buttons below, you're on
-  an unsupported browser.
+  support the WebSerial / WebUSB APIs that the flasher needs, and mobile
+  browsers can't talk to USB serial devices at all.
 </div>
+<script>
+  // Inline + early so the warning shows immediately on unsupported
+  // browsers, before the user wonders why the buttons below do nothing.
+  if (!('serial' in navigator) || !('usb' in navigator)) {
+    document.getElementById('browser-warn').hidden = false;
+  }
+</script>
 
 <details style="margin-top:1rem">
-  <summary class="sub" style="cursor:pointer">First time? Test your USB connection before flashing</summary>
-  <p class="sub" style="margin-top:.7rem">Plug in your duck, click Test, and pick it from the popup. Confirms
-  the USB cable carries data and the chip is reachable — separate from
-  flashing, so you can sanity-check before committing.</p>
-  <button id="test-conn-btn" class="test-conn">Test USB connection</button>
+  <summary class="sub" style="cursor:pointer">Already have a duck plugged in? Identify it before flashing</summary>
+  <p class="sub" style="margin-top:.7rem">Reads the chip's USB descriptors so you can tell what's already on
+  it — Claude Code Duck, Bambu Duck, or unflashed — and which firmware
+  version. Separate from flashing; safe to run any time.</p>
+  <button id="test-conn-btn" class="test-conn">Identify connected duck</button>
   <p id="test-conn-result" class="test-conn-result"></p>
 </details>
 
@@ -212,41 +221,101 @@
   var btn = document.getElementById('test-conn-btn');
   var out = document.getElementById('test-conn-result');
   if (!btn) return;
+
+  // VID interpretation. ESP32-S3 native USB-CDC = Espressif's
+  // 0x303A. Common USB-UART bridge chips (CP210x / CH340 / FTDI)
+  // show up on cobbled boards via an external bridge — those are
+  // "probably not a duck" since both our supported variants use
+  // the S3's native USB. Any other VID = unknown device.
+  function interpretVid(vid) {
+    if (vid === 0x303A) return { kind: 'esp', label: 'Espressif ESP32 chip' };
+    if (vid === 0x10C4) return { kind: 'bridge', label: 'CP210x USB-UART bridge' };
+    if (vid === 0x1A86) return { kind: 'bridge', label: 'CH340 USB-UART bridge' };
+    if (vid === 0x0403) return { kind: 'bridge', label: 'FTDI USB-UART bridge' };
+    return { kind: 'other', label: 'unknown vendor' };
+  }
+
+  // WebUSB descriptor strings get set by each firmware's build:
+  //   Claude Code Duck → manufacturer="IDEO", product="Claude Code Duck",
+  //                       serial=<git tag, e.g. "cc-v0.1.4">
+  //   Bambu Duck       → ROM defaults ("Espressif" / "USB JTAG/serial
+  //                       debug unit") because that firmware uses ROM
+  //                       USB Serial/JTAG, not TinyUSB. We can't tell
+  //                       Bambu firmware from a blank chip via descriptors
+  //                       alone — flag that case explicitly.
+  //   Unflashed S3     → Same Espressif ROM defaults as Bambu.
+  function describe(device) {
+    var mfr = device.manufacturerName || '';
+    var prod = device.productName || '';
+    var ser = device.serialNumber || '';
+    var vid = device.vendorId;
+    var hex = '0x' + vid.toString(16).padStart(4, '0');
+    var info = interpretVid(vid);
+
+    if (mfr === 'IDEO' && prod === 'Claude Code Duck') {
+      return {
+        ok: true,
+        msg: '✓ Claude Code Duck' + (ser ? ' (' + ser + ')' : '') +
+             '. You\'re on the right tab.'
+      };
+    }
+    if (mfr === 'IDEO') {
+      // Some other IDEO firmware — probably an older build.
+      return {
+        ok: true,
+        msg: '✓ IDEO duck — "' + prod + '"' + (ser ? ' (' + ser + ')' : '') +
+             '. Older build; reflashing will pick up the latest.'
+      };
+    }
+    if (info.kind === 'esp') {
+      // Espressif default descriptors. Could be Bambu firmware or
+      // a brand-new chip — we can't tell from USB alone.
+      return {
+        ok: true,
+        msg: '✓ ESP32-S3 chip detected (' + hex + '). Could be Bambu Duck ' +
+             'firmware or an unflashed chip — USB descriptors are the same. ' +
+             'If it\'s a Bambu Duck, switch tabs.'
+      };
+    }
+    if (info.kind === 'bridge') {
+      return {
+        ok: false,
+        msg: '⚠ ' + info.label + ' (' + hex + '). Probably not a duck — ' +
+             'our supported boards use the ESP32-S3\'s native USB.'
+      };
+    }
+    return {
+      ok: false,
+      msg: '? Unrecognized device: ' + (mfr || 'no manufacturer') +
+           ' / ' + (prod || 'no product') + ' (' + hex + '). ' +
+           'Not sure what this is.'
+    };
+  }
+
   btn.addEventListener('click', async function () {
     out.className = 'test-conn-result';
-    out.textContent = 'Waiting for you to pick a port…';
-    if (!('serial' in navigator)) {
+    out.textContent = 'Waiting for you to pick a device…';
+    if (!('usb' in navigator)) {
       out.className = 'test-conn-result err';
-      out.textContent = "WebSerial isn't available in this browser. " +
+      out.textContent = "WebUSB isn't available in this browser. " +
                         "Use Chrome or Edge.";
       return;
     }
     try {
-      // requestPort() pops the native USB picker. The user picks
-      // their duck (or cancels). We only need the port info — no
-      // chip-id sniff yet, since that requires putting the chip in
-      // bootloader mode (which esptool-js does properly via
-      // ESPLoader). For a sanity check, "did the picker show me a
-      // device, did the user pick it" is enough.
-      var port = await navigator.serial.requestPort();
-      var info = port.getInfo();
-      var vid = info.usbVendorId
-        ? '0x' + info.usbVendorId.toString(16).padStart(4, '0')
-        : '?';
-      var pid = info.usbProductId
-        ? '0x' + info.usbProductId.toString(16).padStart(4, '0')
-        : '?';
-      out.className = 'test-conn-result ok';
-      out.textContent = '✓ Found a USB serial device (vid=' + vid +
-                        ' pid=' + pid + '). Looks good — click your ' +
-                        "board's Connect & Flash button below to install.";
+      // No filter — let the user pick anything plugged in. Filtering
+      // to Espressif's VID would hide cases where someone has a
+      // CP210x board and is wondering why it doesn't work; better to
+      // surface "that's a UART bridge, not a duck."
+      var device = await navigator.usb.requestDevice({ filters: [] });
+      var result = describe(device);
+      out.className = 'test-conn-result ' + (result.ok ? 'ok' : 'err');
+      out.textContent = result.msg;
     } catch (e) {
       out.className = 'test-conn-result err';
       out.textContent = e && e.name === 'NotFoundError'
-        ? "No port picked. If your duck didn't show up in the list, " +
-          "the cable might be charge-only (no data lines) or the " +
-          "chip isn't in download mode."
-        : "Couldn't connect: " + (e && e.message ? e.message : e);
+        ? "No device picked. If your duck didn't show up, the cable " +
+          "might be charge-only or the chip isn't in run mode."
+        : "Couldn't read device: " + (e && e.message ? e.message : e);
     }
   });
 })();
