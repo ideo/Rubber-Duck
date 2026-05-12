@@ -1,0 +1,38 @@
+{
+  "name": "duck-duck-duck-codex",
+  "version": "1",
+  "description": "Duck Duck Duck companion hooks for Codex sessions. Requires the Duck Duck Duck app.",
+  "author": {
+    "name": "Daniel Deruntz",
+    "url": "https://github.com/ideo"
+  },
+  "homepage": "https://github.com/ideo/Rubber-Duck",
+  "repository": "https://github.com/ideo/Rubber-Duck",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "hooks",
+    "rubber-duck",
+    "voice-permissions"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Duck Duck Duck for Codex",
+    "shortDescription": "Connects Codex sessions to the Duck Duck Duck app.",
+    "longDescription": "Adds Codex hooks for prompt scoring, response scoring, session health, and voice-assisted permission decisions through the Duck Duck Duck app.",
+    "developerName": "IDEO",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Hooks"
+    ],
+    "websiteURL": "https://github.com/ideo/Rubber-Duck",
+    "privacyPolicyURL": "https://github.com/ideo/Rubber-Duck",
+    "termsOfServiceURL": "https://github.com/ideo/Rubber-Duck",
+    "defaultPrompt": [
+      "Check whether Duck Duck Duck is connected.",
+      "Use Duck Duck Duck voice approval for commands.",
+      "Score this Codex session with Duck Duck Duck."
+    ]
+  }
+}

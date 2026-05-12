@@ -1,0 +1,20 @@
+{
+  "name": "duck-duck-duck",
+  "interface": {
+    "displayName": "Duck Duck Duck"
+  },
+  "plugins": [
+    {
+      "name": "duck-duck-duck-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/duck-duck-duck-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
