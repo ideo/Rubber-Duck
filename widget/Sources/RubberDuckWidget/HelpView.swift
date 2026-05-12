@@ -151,7 +151,7 @@ struct HelpView: View {
 
                 **Intelligence** — Pick the eval provider. Apple Foundation Model is free \
                 and fully private (runs on your Mac), but can be slow on M1/M2 Macs. \
-                Claude Haiku and Gemini are faster and sharper but need API keys \
+                Claude Haiku, Gemini, and ChatGPT-5.2 are faster and sharper but need API keys \
                 and send data to third-party servers.
 
                 **Getting an API key:**
@@ -161,6 +161,8 @@ struct HelpView: View {
                 coding costs pennies.
                 • **Gemini** — Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey), \
                 sign in with Google, and create an API key. Gemini Flash has a generous free tier.
+                • **ChatGPT-5.2** — Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys), \
+                sign in, and create an API key. Copy it into Preferences → Intelligence.
 
                 **Behavior** — Mode selection, voice picker, volume slider, and \
                 microphone settings. See which mic is active, check permission status, \
@@ -177,7 +179,7 @@ struct HelpView: View {
                 • Permission prompts are summarized ("Run git. Allow?") not raw tool names. \
                 Your hands stay free.
                 • **Eval slow?** On M1/M2 Macs, Foundation Model can take 30-60 seconds. \
-                Switch to Claude Haiku or Gemini in Preferences → Intelligence for instant results.
+                Switch to Claude Haiku, Gemini, or ChatGPT-5.2 in Preferences → Intelligence for instant results.
                 • Right-click the duck for quick settings.
                 • Hear a familiar theme song? Claude is compacting context. He's thinking.
                 • Ducks have weird hole-shaped ears. Now you know.
@@ -198,8 +200,8 @@ struct HelpView: View {
                 **Apple Foundation Model** — All scoring runs on your Mac. Your prompts, \
                 Claude's responses, and all audio stay on the device. Nothing is sent anywhere.
 
-                **Claude Haiku / Gemini** — Your prompts and Claude's responses are sent \
-                to Anthropic or Google for scoring. Subject to their usage and privacy terms. \
+                **Claude Haiku / Gemini / ChatGPT-5.2** — Your prompts and Claude's responses are sent \
+                to Anthropic, Google, or OpenAI for scoring. Subject to their usage and privacy terms. \
                 See links in Preferences → Intelligence when a cloud provider is selected.
 
                 **Audio** — Microphone input and text-to-speech are always local. \

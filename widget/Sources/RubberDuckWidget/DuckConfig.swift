@@ -84,6 +84,16 @@ enum DuckConfig {
         case foundation  // On-device Foundation Models (free, Apple Silicon only)
         case anthropic   // Anthropic API (requires API key)
         case gemini      // Google Gemini API (requires API key)
+        case openai      // OpenAI API (requires API key)
+
+        var displayName: String {
+            switch self {
+            case .foundation: return "Foundation Models (on-device)"
+            case .anthropic: return "Claude Haiku (Anthropic API)"
+            case .gemini: return "Gemini (Google API)"
+            case .openai: return "ChatGPT-5.2 (OpenAI API)"
+            }
+        }
     }
 
     /// Current eval provider. Defaults to `.foundation` (free, no API key needed).
@@ -191,7 +201,11 @@ enum DuckConfig {
 
     /// Save an API key to a file in Application Support.
     private static func saveKey(_ key: String, keychainAccount: String, label: String) {
-        let filenames: [String: String] = ["Anthropic": "api_key", "Gemini": "gemini_api_key"]
+        let filenames: [String: String] = [
+            "Anthropic": "api_key",
+            "Gemini": "gemini_api_key",
+            "OpenAI": "openai_api_key",
+        ]
         guard let filename = filenames[label] else { return }
         let keyFile = storageDir.appendingPathComponent(filename)
         do {
@@ -206,7 +220,11 @@ enum DuckConfig {
 
     /// Remove an API key file.
     private static func removeKey(keychainAccount: String, label: String) {
-        let filenames: [String: String] = ["Anthropic": "api_key", "Gemini": "gemini_api_key"]
+        let filenames: [String: String] = [
+            "Anthropic": "api_key",
+            "Gemini": "gemini_api_key",
+            "OpenAI": "openai_api_key",
+        ]
         guard let filename = filenames[label] else { return }
         let keyFile = storageDir.appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: keyFile)
@@ -303,6 +321,33 @@ enum DuckConfig {
             message: "1. Go to aistudio.google.com and sign in with Google\n2. Click Get API Key → Create API Key\n3. Copy the key and paste it below\n\nNo credit card needed. Gemini Flash has a free tier.",
             placeholder: "AIza...",
             save: saveGeminiAPIKey
+        )
+    }
+
+    // MARK: - OpenAI API
+
+    static var openAIAPIKey: String = {
+        resolveKey(envVar: "OPENAI_API_KEY", filename: "openai_api_key", keychainAccount: "openai_api_key") ?? ""
+    }()
+
+    static func saveOpenAIAPIKey(_ key: String) {
+        saveKey(key, keychainAccount: "openai_api_key", label: "OpenAI")
+        openAIAPIKey = key
+    }
+
+    static func removeOpenAIAPIKey() {
+        removeKey(keychainAccount: "openai_api_key", label: "OpenAI")
+        openAIAPIKey = ""
+    }
+
+    @MainActor
+    static func ensureOpenAIAPIKey() -> Bool {
+        ensureKey(
+            currentKey: openAIAPIKey,
+            title: "OpenAI API Key",
+            message: "1. Go to platform.openai.com/api-keys and sign in\n2. Create an API key\n3. Copy the key and paste it below\n\nGPT-5.2 is OpenAI's frontier model for professional work.",
+            placeholder: "sk-...",
+            save: saveOpenAIAPIKey
         )
     }
 

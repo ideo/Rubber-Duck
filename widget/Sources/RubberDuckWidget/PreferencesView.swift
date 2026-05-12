@@ -72,7 +72,7 @@ struct PreferencesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 560, height: 480)
     }
 }
 
@@ -84,10 +84,13 @@ private struct IntelligencePane: View {
     @State private var evalProvider = DuckConfig.evalProvider
     @State private var anthropicKey = DuckConfig.anthropicAPIKey
     @State private var geminiKey = DuckConfig.geminiAPIKey
+    @State private var openAIKey = DuckConfig.openAIAPIKey
     @State private var hasAnthropicKey = !DuckConfig.anthropicAPIKey.isEmpty
     @State private var hasGeminiKey = !DuckConfig.geminiAPIKey.isEmpty
+    @State private var hasOpenAIKey = !DuckConfig.openAIAPIKey.isEmpty
     @State private var editingAnthropicKey = false
     @State private var editingGeminiKey = false
+    @State private var editingOpenAIKey = false
 
     var body: some View {
         Form {
@@ -106,6 +109,10 @@ private struct IntelligencePane: View {
                             title: "Gemini",
                             subtitle: "Google API, alternative cloud scoring")
 
+                providerRow(.openai, icon: "wand.and.stars",
+                            title: "ChatGPT-5.2",
+                            subtitle: "OpenAI API, frontier model scoring")
+
                 if evalProvider != .foundation {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Your chats with Claude will be evaluated by third-party LLMs and are subject to their usage and privacy terms.")
@@ -117,6 +124,9 @@ private struct IntelligencePane: View {
                                     .font(.caption)
                             } else if evalProvider == .gemini {
                                 Link("Google Gemini API Terms", destination: URL(string: "https://ai.google.dev/gemini-api/terms")!)
+                                    .font(.caption)
+                            } else if evalProvider == .openai {
+                                Link("OpenAI API Terms", destination: URL(string: "https://openai.com/policies/row-terms-of-use/")!)
                                     .font(.caption)
                             }
                         }
@@ -157,14 +167,31 @@ private struct IntelligencePane: View {
                               editingGeminiKey = false
                           })
 
-                if hasAnthropicKey || hasGeminiKey {
+                apiKeyRow(label: "OpenAI",
+                          hasKey: hasOpenAIKey,
+                          isEditing: $editingOpenAIKey,
+                          key: $openAIKey,
+                          onSave: {
+                              DuckConfig.saveOpenAIAPIKey(openAIKey)
+                              hasOpenAIKey = true
+                              editingOpenAIKey = false
+                          },
+                          onClear: {
+                              DuckConfig.removeOpenAIAPIKey()
+                              openAIKey = ""
+                              hasOpenAIKey = false
+                              editingOpenAIKey = false
+                          })
+
+                if hasAnthropicKey || hasGeminiKey || hasOpenAIKey {
                     HStack {
                         Spacer()
                         Button(role: .destructive) {
                             DuckConfig.removeAPIKey()
                             DuckConfig.removeGeminiAPIKey()
-                            anthropicKey = ""; geminiKey = ""
-                            hasAnthropicKey = false; hasGeminiKey = false
+                            DuckConfig.removeOpenAIAPIKey()
+                            anthropicKey = ""; geminiKey = ""; openAIKey = ""
+                            hasAnthropicKey = false; hasGeminiKey = false; hasOpenAIKey = false
                             evalProvider = .foundation
                             DuckConfig.evalProvider = .foundation
                         } label: {
@@ -186,6 +213,8 @@ private struct IntelligencePane: View {
                 guard DuckConfig.ensureAPIKey() else { return }
             } else if provider == .gemini {
                 guard DuckConfig.ensureGeminiAPIKey() else { return }
+            } else if provider == .openai {
+                guard DuckConfig.ensureOpenAIAPIKey() else { return }
             }
             evalProvider = provider
             DuckConfig.evalProvider = provider

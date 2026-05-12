@@ -52,14 +52,24 @@ struct SetupChecklistView: View {
 
     /// Whether the user already has an API key for a cloud provider but hasn't switched.
     private var hasExistingKey: Bool {
-        !DuckConfig.anthropicAPIKey.isEmpty || !DuckConfig.geminiAPIKey.isEmpty
+        !DuckConfig.anthropicAPIKey.isEmpty || !DuckConfig.geminiAPIKey.isEmpty || !DuckConfig.openAIAPIKey.isEmpty
     }
 
     /// Human-readable name of the provider they already have a key for.
     private var existingKeyProvider: String {
         if !DuckConfig.anthropicAPIKey.isEmpty { return "a Claude Haiku key" }
         if !DuckConfig.geminiAPIKey.isEmpty { return "a Gemini key" }
+        if !DuckConfig.openAIAPIKey.isEmpty { return "an OpenAI key" }
         return ""
+    }
+
+    private var currentCloudProviderName: String {
+        switch DuckConfig.evalProvider {
+        case .anthropic: return "Claude Haiku"
+        case .gemini: return "Gemini Flash"
+        case .openai: return "ChatGPT-5.2"
+        case .foundation: return "Apple Foundation Model"
+        }
     }
 
     private var allDone: Bool {
@@ -149,7 +159,7 @@ struct SetupChecklistView: View {
                             .font(.headline)
                         if hasOptimalEval {
                             // Already using cloud — done
-                            Text("Using \(DuckConfig.evalProvider == .anthropic ? "Claude Haiku" : "Gemini Flash") for scoring.")
+                            Text("Using \(currentCloudProviderName) for scoring.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         } else if hasExistingKey {
@@ -169,12 +179,17 @@ struct SetupChecklistView: View {
                             Text("On-device scoring is designed for M3+ and runs slowly on this Mac. Add a cloud API key for instant reactions.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                            HStack(spacing: 8) {
-                                Button("Get Free Gemini Key") {
-                                    NSWorkspace.shared.open(URL(string: "https://aistudio.google.com/apikey")!)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Button("Get Free Gemini Key") {
+                                        NSWorkspace.shared.open(URL(string: "https://aistudio.google.com/apikey")!)
+                                    }
+                                    Button("Get Claude Haiku Key") {
+                                        NSWorkspace.shared.open(URL(string: "https://console.anthropic.com/settings/keys")!)
+                                    }
                                 }
-                                Button("Get Claude Haiku Key") {
-                                    NSWorkspace.shared.open(URL(string: "https://console.anthropic.com/settings/keys")!)
+                                Button("Get OpenAI Key") {
+                                    NSWorkspace.shared.open(URL(string: "https://platform.openai.com/api-keys")!)
                                 }
                             }
                             .padding(.top, 4)

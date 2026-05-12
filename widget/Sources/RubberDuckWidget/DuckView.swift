@@ -185,6 +185,15 @@ private struct DuckContextMenu: View {
                     systemImage: "sparkle"
                 )
             }
+            Button {
+                guard DuckConfig.ensureOpenAIAPIKey() else { return }
+                DuckConfig.evalProvider = .openai
+            } label: {
+                Label(
+                    DuckConfig.evalProvider == .openai ? "✓ ChatGPT-5.2" : "ChatGPT-5.2",
+                    systemImage: "wand.and.stars"
+                )
+            }
         } label: {
             Label("Intelligence", systemImage: "brain.fill")
         }
@@ -635,4 +644,3 @@ private struct VoiceCommandBubbleView: View {
             .padding(8)
     }
 }
-

@@ -2,7 +2,7 @@
 //
 // Runs inside the widget app on port 3333. Hook scripts POST eval payloads
 // and permission requests. Dispatches to LocalEvaluator (Foundation Models)
-// or ClaudeEvaluator (Anthropic API) based on DuckConfig.evalProvider.
+// or a cloud evaluator based on DuckConfig.evalProvider.
 //
 // Routes:
 //   POST /evaluate    — receive hook payload, evaluate via Claude, broadcast + deliver locally
@@ -28,6 +28,7 @@ class DuckServer: ObservableObject {
 
     let claudeEvaluator: ClaudeEvaluator
     let geminiEvaluator: GeminiEvaluator
+    let openAIEvaluator: OpenAIEvaluator
     let localEvaluator: LocalEvaluator
     let permissionGate: PermissionGate
     let broadcaster: WebSocketBroadcaster
@@ -46,6 +47,7 @@ class DuckServer: ObservableObject {
         self.port = port
         self.claudeEvaluator = ClaudeEvaluator()
         self.geminiEvaluator = GeminiEvaluator()
+        self.openAIEvaluator = OpenAIEvaluator()
         self.localEvaluator = LocalEvaluator()
         self.foundationModelsAvailable = LocalEvaluator.isAvailable
         self.foundationModelsStatus = LocalEvaluator.availabilityStatus
@@ -86,6 +88,7 @@ class DuckServer: ObservableObject {
         // Capture service references for route handler closures
         let claudeEvaluator = self.claudeEvaluator
         let geminiEvaluator = self.geminiEvaluator
+        let openAIEvaluator = self.openAIEvaluator
         let localEvaluator = self.localEvaluator
         let permissionGate = self.permissionGate
         let broadcaster = self.broadcaster
@@ -142,9 +145,20 @@ class DuckServer: ObservableObject {
                                                                 userContext: userContext,
                                                                 claudeContext: claudeContext,
                                                                 wildcardEnabled: wildcardOn)
+                case .openai:
+                    scores = try await openAIEvaluator.evaluate(text: text, source: source,
+                                                                userContext: userContext,
+                                                                claudeContext: claudeContext,
+                                                                wildcardEnabled: wildcardOn)
                 }
             } catch {
-                let providerName = provider == .anthropic ? "Haiku" : provider == .gemini ? "Gemini" : "Foundation"
+                let providerName: String
+                switch provider {
+                case .foundation: providerName = "Foundation"
+                case .anthropic: providerName = "Haiku"
+                case .gemini: providerName = "Gemini"
+                case .openai: providerName = "GPT-5.2"
+                }
                 let errStr = "\(error)".lowercased()
                 DuckLog.log("[server] Eval error (\(providerName)): \(error)")
 
@@ -764,4 +778,3 @@ private func parseAskUserQuestion(_ toolInput: Any) -> String {
         .joined(separator: ". ")
     return "\(question) Options: \(numbered)."
 }
-

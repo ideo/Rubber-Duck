@@ -267,7 +267,7 @@ struct RubberDuckWidgetApp: App {
                 // First button or close — proceed with foundation provider, eval will fail gracefully
             case .deviceNotEligible, .available:
                 // Hardware can't run it — need an API key
-                if DuckConfig.anthropicAPIKey.isEmpty && DuckConfig.geminiAPIKey.isEmpty {
+                if DuckConfig.anthropicAPIKey.isEmpty && DuckConfig.geminiAPIKey.isEmpty && DuckConfig.openAIAPIKey.isEmpty {
                     DuckConfig.evalProvider = .anthropic
                     if !DuckConfig.ensureAPIKey() {
                         NSApp.terminate(nil)

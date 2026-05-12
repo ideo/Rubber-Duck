@@ -192,6 +192,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         case .foundation: providerLabel = "Foundation"
         case .anthropic: providerLabel = "Haiku"
         case .gemini: providerLabel = "Gemini"
+        case .openai: providerLabel = "GPT-5.2"
         }
         let intellItem = NSMenuItem(title: "Intelligence: \(providerLabel)", action: nil, keyEquivalent: "")
         intellItem.image = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: "Intelligence")
@@ -219,6 +220,13 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         geminiItem.subtitle = "Google API — requires key"
         geminiItem.state = currentProvider == .gemini ? .on : .off
         intellMenu.addItem(geminiItem)
+
+        let openAIItem = NSMenuItem(title: "ChatGPT-5.2", action: #selector(setProviderOpenAI), keyEquivalent: "")
+        openAIItem.target = self
+        openAIItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: "OpenAI")
+        openAIItem.subtitle = "OpenAI API — requires key"
+        openAIItem.state = currentProvider == .openai ? .on : .off
+        intellMenu.addItem(openAIItem)
 
         intellItem.submenu = intellMenu
         menu.addItem(intellItem)
@@ -502,9 +510,15 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         DuckConfig.evalProvider = .gemini
     }
 
+    @objc private func setProviderOpenAI() {
+        guard DuckConfig.ensureOpenAIAPIKey() else { return }
+        DuckConfig.evalProvider = .openai
+    }
+
     @objc private func removeAPIKey() {
         DuckConfig.removeAPIKey()
         DuckConfig.removeGeminiAPIKey()
+        DuckConfig.removeOpenAIAPIKey()
         DuckConfig.evalProvider = .foundation
     }
 

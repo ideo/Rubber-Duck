@@ -65,6 +65,12 @@ actor DuckHelpService {
                 Only the transcribed text is sent to Gemini (Google API) for scoring. \
                 No audio leaves your machine. Text goes to Google's servers for AI processing.
                 """
+        case .openai:
+            privacyLine = """
+                Privacy: Audio is transcribed locally on your Mac, never sent anywhere. \
+                Only the transcribed text is sent to ChatGPT-5.2 (OpenAI API) for scoring. \
+                No audio leaves your machine. Text goes to OpenAI's servers for AI processing.
+                """
         }
 
         return """
@@ -80,11 +86,12 @@ actor DuckHelpService {
         Voices: 25 Mac voices across four categories, Wildcard lets AI pick from 10, or Silent for speech bubble only. \
         Brain: Apple Foundation Models on-device by default, free, private. \
         Important: on-device scoring is designed for M3 and newer Apple Silicon. On M1 and M2 Macs it's slow — 30 to 60 seconds per eval. On M3+ it's fast, under a second. \
-        If someone says eval is slow, tell them to switch to Claude Haiku or Gemini in Preferences, Intelligence tab. \
+        If someone says eval is slow, tell them to switch to Claude Haiku, Gemini, or ChatGPT-5.2 in Preferences, Intelligence tab. \
         To get a Claude API key: go to console.anthropic.com, create an account, API Keys, Create Key. Haiku is very cheap, pennies per day. \
         To get a Gemini API key: go to aistudio.google.com/apikey, sign in with Google, create key. Gemini Flash has a free tier. \
-        Optional Haiku or Gemini for sharper and faster scoring, needs API key. \
-        You are currently using \(provider == .foundation ? "Foundation Models (on-device)" : provider == .anthropic ? "Claude Haiku (Anthropic API)" : "Gemini (Google API)") for scoring. \
+        To get an OpenAI API key: go to platform.openai.com/api-keys, sign in, create key. \
+        Optional Haiku, Gemini, or ChatGPT-5.2 for sharper and faster scoring, needs API key. \
+        You are currently using \(provider.displayName) for scoring. \
         Install Claude from claude.com/download. Minimum version 1.1.9669. \
         First-time Claude CLI users on Mac: Claude needs git, which requires Xcode Command Line Tools. \
         If prompted, install them, then run "sudo xcodebuild -license accept" in Terminal to accept the license. \
