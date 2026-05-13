@@ -94,6 +94,11 @@ jobs:
           name: Bambu Duck firmware ${{ github.ref_name }}
           files: release/*.bin
           generate_release_notes: true
+          # Don't let firmware steal "Latest" — the widget app's
+          # QR codes / download links point at releases/latest and
+          # would 404 against a firmware release. See parallel note
+          # in cc-firmware-release.yml.
+          make_latest: 'false'
           body: |
             Pre-built firmware binaries for the three Bambu Duck variants.
 
@@ -111,3 +116,46 @@ jobs:
             - `bambu-duck-xiao.bin` — XIAO Seeed S3 + cobbled parts
             - `bambu-duck-turnkey.bin` — ducky PCB, captive portal hides
               ElevenLabs fields (relay supplies shared voice creds)
+
+  # Mirror the freshly-built binaries into docs/flash/firmware/ on main
+  # so the GitHub Pages flasher fetches them same-origin. The
+  # `releases/latest/download/<asset>` URL 302-redirects to
+  # objects.githubusercontent.com, which doesn't reliably send CORS
+  # headers — ESP Web Tools fetch() then fails mid-flash after chip
+  # detection already succeeded. Same-origin sidesteps CORS entirely.
+  # See docs/flash/firmware/README.md for the full rationale.
+  publish-to-pages:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/bambu-v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main (not the tag)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all variant binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Stage binaries in docs/flash/firmware/
+        run: |
+          mkdir -p docs/flash/firmware
+          find dist -name 'bambu-duck-*.bin' -exec cp {} docs/flash/firmware/ \;
+          ls -la docs/flash/firmware/
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/flash/firmware/bambu-duck-*.bin
+          if git diff --staged --quiet; then
+            echo "No binary changes vs main — skipping commit."
+            exit 0
+          fi
+          git commit -m "Publish Bambu Duck firmware ${{ github.ref_name }} [skip ci]"
+          git push origin main

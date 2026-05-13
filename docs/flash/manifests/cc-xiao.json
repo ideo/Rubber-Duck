@@ -7,7 +7,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/ideo/Rubber-Duck/releases/latest/download/cc-xiao.bin",
+          "path": "../firmware/cc-xiao.bin",
           "offset": 0
         }
       ]

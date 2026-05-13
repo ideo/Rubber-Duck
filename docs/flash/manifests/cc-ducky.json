@@ -7,7 +7,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/ideo/Rubber-Duck/releases/latest/download/cc-ducky.bin",
+          "path": "../firmware/cc-ducky.bin",
           "offset": 0
         }
       ]

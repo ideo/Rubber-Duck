@@ -152,6 +152,14 @@ jobs:
           name: Claude Code Duck firmware ${{ github.ref_name }}
           files: release/*.bin
           generate_release_notes: true
+          # Don't promote firmware tags to "Latest." The widget app
+          # (v*) releases share this Releases page and their QR codes
+          # / download links point at releases/latest — letting
+          # firmware tags steal that pointer makes the app's
+          # /releases/latest/download/<asset> 404. Firmware lives in
+          # its own tag namespace (cc-v* / bambu-v*); keep it
+          # explicitly off the Latest throne.
+          make_latest: 'false'
           body: |
             Pre-built firmware binaries for the Claude Code Duck (Mac
             companion that watches your Claude Code session and
@@ -169,3 +177,51 @@ jobs:
             Variants:
             - `cc-ducky.bin` — official IDEO Duck PCB (custom WROOM-1)
             - `cc-xiao.bin` — DIY build on standard XIAO Seeed ESP32-S3
+
+  # Mirror the freshly-built binaries into docs/flash/firmware/ on main
+  # so the GitHub Pages flasher can fetch them same-origin. The
+  # `releases/latest/download/<asset>` URL 302-redirects to
+  # objects.githubusercontent.com, which doesn't reliably send CORS
+  # headers — ESP Web Tools fetch() then fails mid-flash after chip
+  # detection already succeeded. Same-origin sidesteps the entire CORS
+  # path. See docs/flash/firmware/README.md for the full rationale.
+  publish-to-pages:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/cc-v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main (not the tag)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # Default GITHUB_TOKEN with contents:write is enough to push
+          # back to main here; no PAT needed.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all variant binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Stage binaries in docs/flash/firmware/
+        run: |
+          mkdir -p docs/flash/firmware
+          find dist -name 'cc-*.bin' -exec cp {} docs/flash/firmware/ \;
+          ls -la docs/flash/firmware/
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/flash/firmware/cc-*.bin
+          # If the binaries are byte-identical to what's on main (e.g.
+          # re-running a tag manually), there's nothing to commit and
+          # we exit cleanly without trying to push an empty commit.
+          if git diff --staged --quiet; then
+            echo "No binary changes vs main — skipping commit."
+            exit 0
+          fi
+          git commit -m "Publish Claude Code Duck firmware ${{ github.ref_name }} [skip ci]"
+          git push origin main

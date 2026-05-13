@@ -7,7 +7,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/ideo/Rubber-Duck/releases/latest/download/bambu-duck-xiao.bin",
+          "path": "../firmware/bambu-duck-xiao.bin",
           "offset": 0
         }
       ]
