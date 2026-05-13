@@ -39,11 +39,15 @@ actor PermissionClassifier {
     }
 
     /// Classify a transcript into a permission decision.
-    /// Returns nil if confidence is too low or the model is unavailable.
+    /// Returns nil if confidence is too low, the model is unavailable, or
+    /// the transcript is empty/whitespace (defense in depth — see #54: the
+    /// on-device model was returning confidence=100 picks on empty input,
+    /// auto-approving permissions the user never spoke).
     func classify(
         transcript: String,
         optionLabels: [String]
     ) async -> PermissionVoiceGate.Decision? {
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let optionsDesc: String
         if optionLabels.isEmpty {
             optionsDesc = "No extra options. Only allow or deny."

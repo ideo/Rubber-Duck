@@ -774,14 +774,22 @@ class SpeechService: ObservableObject {
     }
 
     /// Tail-end nudge: spoken once after an active permission prompt resolves
-    /// IF concurrent permissions silently passed through to Claude's terminal
-    /// UI during the active window. Lets the user know more requests are
-    /// waiting elsewhere without the duck trying to voice-gate them itself.
+    /// IF concurrent permissions silently passed through during the active
+    /// window. Lets the user know more requests are pending without the duck
+    /// trying to voice-gate them itself. Phrased to be surface-agnostic — the
+    /// user might be in a terminal, Claude Desktop, Codex Desktop, an IDE,
+    /// etc. — so we don't say "terminal".
     /// Uses critical lane so it queues right after the current prompt's TTS
     /// rather than getting dropped.
     func notifyMorePermissionsWaiting() {
+        let phrases = [
+            "More permissions to approve.",
+            "More permissions to check.",
+            "Other permissions need your attention.",
+            "More permission requests waiting.",
+        ]
         scheduleSpeech(
-            "More waiting in terminal.",
+            phrases.randomElement() ?? phrases[0],
             kind: .system,
             lane: .critical,
             policy: .fifo,
@@ -906,6 +914,12 @@ class SpeechService: ObservableObject {
     // MARK: - Transcript Processing
 
     private func processTranscript(_ transcript: String, isFinal: Bool) {
+        // Empty / whitespace transcripts are not user input — ignore them.
+        // Specifically, never let an empty string reach PermissionClassifier;
+        // it can hallucinate a high-confidence option pick from nothing,
+        // auto-approving "always allow" rules the user never spoke (issue #54).
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
         // Permission mode takes priority — but ignore transcripts while TTS is
         // playing to prevent the mic from picking up the duck's own speech and
         // accidentally approving permissions.
