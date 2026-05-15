@@ -54,7 +54,11 @@ class MelodyEngine {
     // MARK: - Constants
 
     private let baseMIDI: Float = 53.0
-    private let melodyVolume: Float = 0.60
+    private let melodyVolume: Float = 0.20
+    /// Boost applied to serial PCM before clamping. Was 2.5 (which clipped
+    /// every peak at melodyVolume ≥ 0.40, making volume changes inaudible).
+    /// 1.5 leaves headroom so reductions in melodyVolume actually take effect.
+    private let serialBoost: Float = 1.5
     private let bpm: Double = 90.0
     private var beatDuration: Double { 60.0 / bpm }
     private var sampleDuration: Double = 0.58
@@ -384,9 +388,9 @@ class MelodyEngine {
             let s1 = (idx0 + 1) < samples.count ? samples[idx0 + 1] : s0
             let interpolated = s0 + frac * (s1 - s0)
 
-            // Scale by melody volume
-            // Match TTS volume levels (SerialTTSEngine uses 2.5× boost)
-            let scaled = interpolated * 2.5 * melodyVolume
+            // Scale by melody volume. serialBoost provides headroom so the
+            // signal isn't pre-clipped before melodyVolume can affect it.
+            let scaled = interpolated * serialBoost * melodyVolume
             let clamped = max(-1.0, min(1.0, scaled))
             output.append(Int16(clamped * 32767.0))
         }

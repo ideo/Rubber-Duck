@@ -126,6 +126,12 @@ class SpeechService: ObservableObject {
     /// Whether Wildcard mode is active (AI picks voice per utterance).
     var isWildcardMode: Bool { ttsVoice == DuckVoices.wildcardSayName }
 
+    /// Fires immediately before any utterance hits the playback backend.
+    /// Used by DuckCoordinator to stop the Jeopardy melody when TTS arrives,
+    /// so the two audio paths don't blend over the same serial/output bus.
+    /// Latest TTS always wins — melody yields, doesn't resume.
+    var onSpeechWillStart: (@MainActor () -> Void)?
+
     /// Set voice on the active TTS engine for one utterance, without persisting to UserDefaults.
     /// Used by Wildcard mode to swap voices per-eval.
     func setVoiceTransient(_ sayName: String) {
@@ -647,6 +653,12 @@ class SpeechService: ObservableObject {
         activeSpeech = speech
         currentUtterance = speech.text
         isSpeaking = true
+
+        // Yield the audio bus: if the Jeopardy melody is humming on the same
+        // output (serial frames to ESP32, or AVAudioEngine to local speakers),
+        // stop it now so the two streams don't blend. Fires for every TTS
+        // path — reactions, permissions, scripts, manual.
+        onSpeechWillStart?()
 
         let systemMuted = audioPath == .local && AudioDeviceDiscovery.isSystemOutputMuted()
         if isSilent || systemMuted {
