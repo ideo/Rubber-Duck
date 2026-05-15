@@ -127,6 +127,11 @@ class DuckCoordinator: ObservableObject {
         case .walkieTalkie:
             textToSpeak = isUserEval ? "" : evalService.summary
         }
+        // Track whether the upcoming utterance is a shy ack — if so, we'll
+        // bypass wildcard voice selection (slow/musical voices butcher
+        // ultra-short text like "ah" or "ooh" into silence).
+        var isShyAck = false
+
         // Shy energy speech shaping. Full reactions get a `shyReactionMinInterval`
         // gap; extreme reactions (loud signal) bypass the gap; middle reactions
         // inside the gap become a soft ack with its own shorter sub-gap.
@@ -158,11 +163,27 @@ class DuckCoordinator: ObservableObject {
                 }
                 lastShyAckAt = now
                 textToSpeak = shyAcks.randomElement() ?? "hmm"
+                isShyAck = true
                 DuckLog.log("[shy] ack: \(textToSpeak) (|sentiment|=\(String(format: "%.2f", magnitude)))")
             }
         }
 
         if !textToSpeak.isEmpty {
+            // Shy acks always use the reliable default voice — wildcard's slow
+            // musical voices (Bells, Pipe Organ, Trinoids) butcher 2-3 char
+            // tokens like "ah" or "ooh" into silence.
+            if isShyAck {
+                speechService.setVoiceTransient(DuckVoices.wildcardDefault.sayName)
+                speechService.scheduleSpeech(
+                    textToSpeak,
+                    kind: .reaction,
+                    lane: .ambient,
+                    policy: .dropIfBusy,
+                    interruptibility: .freelyInterruptible
+                )
+                return
+            }
+
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
             if speechService.isWildcardMode {
                 let voiceKey = evalService.scores?.voice
