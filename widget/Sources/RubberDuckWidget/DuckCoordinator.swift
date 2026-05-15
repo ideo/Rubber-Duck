@@ -39,7 +39,10 @@ class DuckCoordinator: ObservableObject {
     private let shyReactionMinInterval: TimeInterval = 60
     private let shyAckMinInterval: TimeInterval = 20
     private let shyExtremeThreshold: Double = 0.5
-    private let shyAcks = ["hmm", "ah", "oh", "huh", "uh huh", "ooh"]
+    // Mix of non-verbal hums and short verbal acknowledgments. Dropped "uh huh"
+    // because the synth phrases it as two soft blips that fade after the chirp.
+    // Dropped "mm" / "mmhmm" because macOS voices spell them letter-by-letter.
+    private let shyAcks = ["hmm", "ah", "oh", "huh", "ooh", "i see", "sure", "ok", "why not", "interesting"]
     private var lastShyReactionAt: Date?
     private var lastShyAckAt: Date?
 
