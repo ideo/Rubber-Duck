@@ -292,6 +292,8 @@ private struct BehaviorPane: View {
     @EnvironmentObject var coordinator: DuckCoordinator
 
     @State private var selectedMode: DuckMode = DuckConfig.duckMode
+    @State private var selectedEnergy: DuckEnergy = DuckConfig.energy
+    @State private var micEnabled: Bool = DuckConfig.micEnabled
     @State private var selectedVoice: String = UserDefaults.standard.string(forKey: "duck_tts_voice") ?? DuckVoices.wildcardSayName
     @State private var volume: Float = DuckConfig.volume
     @State private var selectedMic: String = ""
@@ -332,6 +334,62 @@ private struct BehaviorPane: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                }
+            }
+
+            // --- Energy ---
+            Section("Energy") {
+                ForEach(DuckEnergy.allCases, id: \.rawValue) { level in
+                    Button {
+                        selectedEnergy = level
+                        coordinator.setEnergy(level)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: level.iconName)
+                                .font(.title3)
+                                .frame(width: 24)
+                                .foregroundStyle(selectedEnergy == level ? accent : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(level.label)
+                                    .fontWeight(selectedEnergy == level ? .semibold : .regular)
+                                    .foregroundStyle(.primary)
+                                Text(level.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            Spacer()
+                            if selectedEnergy == level {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(accent)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // --- Mic ---
+            Section("Microphone") {
+                Toggle(isOn: Binding(
+                    get: { micEnabled },
+                    set: { newValue in
+                        micEnabled = newValue
+                        coordinator.setMicEnabled(newValue)
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable microphone")
+                        Text(micEnabled
+                             ? "Approve permissions and talk to ducky by voice."
+                             : "Mic off — approve permissions by clicking the duck.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
             }
 

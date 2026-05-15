@@ -70,21 +70,35 @@ private struct DuckContextMenu: View {
             Divider()
         }
 
-        // Mode selector — hover tooltip surfaces the full description,
-        // matching what's shown inline in the status bar menu + Settings.
+        // Energy selector — controls reaction chattiness (and post-v0.10
+        // motion taper). The Mode picker (Companion / Walkie-Talkie) lives
+        // in the status bar menu only — Walkie-Talkie is a power-user thing.
         Menu {
-            ForEach(DuckMode.allCases, id: \.rawValue) { mode in
+            ForEach(DuckEnergy.allCases, id: \.rawValue) { level in
                 Button {
-                    coordinator.setMode(mode)
+                    coordinator.setEnergy(level)
                 } label: {
-                    let active = coordinator.mode == mode
-                    Label(active ? "✓ \(mode.label)" : mode.label, systemImage: mode.iconName)
+                    let active = coordinator.energy == level
+                    Label(active ? "✓ \(level.label)" : level.label, systemImage: level.iconName)
                 }
-                .help(mode.subtitle)
+                .help(level.subtitle)
             }
         } label: {
-            Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)
+            Label("Energy: \(coordinator.energy.label)", systemImage: coordinator.energy.iconName)
         }
+
+        // Mic on/off — independent toggle. Off = click-to-approve permissions.
+        Button {
+            coordinator.setMicEnabled(!coordinator.micEnabled)
+        } label: {
+            Label(
+                coordinator.micEnabled ? "✓ Mic On" : "Mic Off",
+                systemImage: coordinator.micEnabled ? "microphone.fill" : "microphone.slash.fill"
+            )
+        }
+        .help(coordinator.micEnabled
+              ? "Approve permissions and talk to ducky by voice."
+              : "Mic off — approve permissions by clicking the duck.")
 
         // Voice picker
         Menu {

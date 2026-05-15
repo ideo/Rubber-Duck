@@ -133,8 +133,6 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         modeItem.image = NSImage(systemSymbolName: currentMode.iconName, accessibilityDescription: currentMode.label)
         let modeMenu = NSMenu()
 
-        // Mode picker: just Companion vs Walkie-Talkie. Energy + Mic are
-        // surfaced as separate menu items below (Step 3).
         let modeActions: [(DuckMode, Selector)] = [
             (.companion, #selector(setModeCompanion)),
             (.walkieTalkie, #selector(setModeWalkieTalkie)),
@@ -150,6 +148,42 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
+
+        // --- Energy submenu (Normal / Shy / Zen) ---
+        // Governs reaction chattiness today and motion taper post-v0.10.
+        let currentEnergy = coordinator.energy
+        let energyItem = NSMenuItem(title: "Energy: \(currentEnergy.label)", action: nil, keyEquivalent: "")
+        energyItem.image = NSImage(systemSymbolName: currentEnergy.iconName, accessibilityDescription: currentEnergy.label)
+        let energyMenu = NSMenu()
+
+        let energyActions: [(DuckEnergy, Selector)] = [
+            (.normal, #selector(setEnergyNormal)),
+            (.shy, #selector(setEnergyShy)),
+            (.zen, #selector(setEnergyZen)),
+        ]
+        for (level, action) in energyActions {
+            let item = NSMenuItem(title: level.label, action: action, keyEquivalent: "")
+            item.target = self
+            item.state = currentEnergy == level ? .on : .off
+            item.image = NSImage(systemSymbolName: level.iconName, accessibilityDescription: level.label)
+            item.subtitle = level.subtitle
+            energyMenu.addItem(item)
+        }
+        energyItem.submenu = energyMenu
+        menu.addItem(energyItem)
+
+        // --- Mic toggle ---
+        let micItem = NSMenuItem(title: "Mic", action: #selector(toggleMicEnabled), keyEquivalent: "")
+        micItem.target = self
+        micItem.image = NSImage(
+            systemSymbolName: coordinator.micEnabled ? "microphone.fill" : "microphone.slash.fill",
+            accessibilityDescription: "Mic"
+        )
+        micItem.state = coordinator.micEnabled ? .on : .off
+        micItem.subtitle = coordinator.micEnabled
+            ? "Approve permissions and talk to ducky by voice."
+            : "Mic off — approve permissions by clicking the duck."
+        menu.addItem(micItem)
 
         // --- Voice submenu ---
         let isWildcard = speechService.isWildcardMode
@@ -486,6 +520,22 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func setModeWalkieTalkie() {
         coordinator.setMode(.walkieTalkie)
+    }
+
+    @objc private func setEnergyNormal() {
+        coordinator.setEnergy(.normal)
+    }
+
+    @objc private func setEnergyShy() {
+        coordinator.setEnergy(.shy)
+    }
+
+    @objc private func setEnergyZen() {
+        coordinator.setEnergy(.zen)
+    }
+
+    @objc private func toggleMicEnabled() {
+        coordinator.setMicEnabled(!coordinator.micEnabled)
     }
 
     @objc private func setProviderFoundation() {
