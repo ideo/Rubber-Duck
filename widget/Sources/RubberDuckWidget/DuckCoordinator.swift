@@ -75,10 +75,14 @@ class DuckCoordinator: ObservableObject {
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
         // Permissions-only mode: ignore evals entirely
-        // Zen energy = permissions-only behavior: ignore evals, just keep
-        // the permission LED in sync.
+        // Zen energy = permissions-only behavior: ignore evals entirely.
+        // Only nudge the permission LED to "resolved" when there's no
+        // active permission — otherwise we'd clobber a real pending alert
+        // every time a user prompt or claude eval lands.
         if energy == .zen {
-            serialManager.sendCommand("P,0")
+            if !evalService.permissionPending {
+                serialManager.sendCommand("P,0")
+            }
             return
         }
 
