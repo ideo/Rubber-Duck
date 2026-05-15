@@ -371,8 +371,10 @@ private struct BehaviorPane: View {
                 }
             }
 
-            // --- Mic ---
-            Section("Microphone") {
+            // --- Voice Control ---
+            // "Voice Control" rather than "Microphone" — users read "Mic off"
+            // as muting their own mic, not telling ducky to stop listening.
+            Section("Voice Control") {
                 Toggle(isOn: Binding(
                     get: { micEnabled },
                     set: { newValue in
@@ -381,10 +383,10 @@ private struct BehaviorPane: View {
                     }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Enable microphone")
+                        Text("Let ducky listen")
                         Text(micEnabled
-                             ? "Approve permissions and talk to ducky by voice."
-                             : "Mic off — approve permissions by clicking the duck.")
+                             ? "On — approve permissions and talk to ducky by voice."
+                             : "Off — approve permissions by clicking the duck.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

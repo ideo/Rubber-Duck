@@ -247,7 +247,7 @@ class DuckCoordinator: ObservableObject {
         speechService.listenMode = DuckConfig.listenMode
 
         speechService.scheduleSpeech(
-            enabled ? "Mic on" : "Mic off",
+            enabled ? "Voice control on" : "Voice control off",
             kind: .system,
             lane: .manual,
             policy: .latestWins,

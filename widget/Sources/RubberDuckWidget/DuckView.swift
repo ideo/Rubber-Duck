@@ -87,18 +87,20 @@ private struct DuckContextMenu: View {
             Label("Energy: \(coordinator.energy.label)", systemImage: coordinator.energy.iconName)
         }
 
-        // Mic on/off — independent toggle. Off = click-to-approve permissions.
+        // Voice Control on/off — independent toggle. Off = click-to-approve.
+        // Named "Voice Control" rather than "Mic" because users read "Mic off"
+        // as "I muted my mic" rather than "ducky should stop listening to me."
         Button {
             coordinator.setMicEnabled(!coordinator.micEnabled)
         } label: {
             Label(
-                coordinator.micEnabled ? "✓ Mic On" : "Mic Off",
+                coordinator.micEnabled ? "✓ Voice Control" : "Voice Control",
                 systemImage: coordinator.micEnabled ? "microphone.fill" : "microphone.slash.fill"
             )
         }
         .help(coordinator.micEnabled
-              ? "Approve permissions and talk to ducky by voice."
-              : "Mic off — approve permissions by clicking the duck.")
+              ? "On — approve permissions and talk to ducky by voice."
+              : "Off — approve permissions by clicking the duck.")
 
         // Voice picker
         Menu {

@@ -172,17 +172,19 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         energyItem.submenu = energyMenu
         menu.addItem(energyItem)
 
-        // --- Mic toggle ---
-        let micItem = NSMenuItem(title: "Mic", action: #selector(toggleMicEnabled), keyEquivalent: "")
+        // --- Voice Control toggle ---
+        // Named "Voice Control" rather than "Mic" because users read "Mic off"
+        // as "I muted my mic" rather than "ducky should stop listening to me."
+        let micItem = NSMenuItem(title: "Voice Control", action: #selector(toggleMicEnabled), keyEquivalent: "")
         micItem.target = self
         micItem.image = NSImage(
             systemSymbolName: coordinator.micEnabled ? "microphone.fill" : "microphone.slash.fill",
-            accessibilityDescription: "Mic"
+            accessibilityDescription: "Voice Control"
         )
         micItem.state = coordinator.micEnabled ? .on : .off
         micItem.subtitle = coordinator.micEnabled
             ? "Approve permissions and talk to ducky by voice."
-            : "Mic off — approve permissions by clicking the duck."
+            : "Off — approve permissions by clicking the duck."
         menu.addItem(micItem)
 
         // --- Voice submenu ---
