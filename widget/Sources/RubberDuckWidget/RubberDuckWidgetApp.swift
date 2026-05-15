@@ -441,6 +441,19 @@ struct RubberDuckWidgetApp: App {
 
         updateChecker.startPeriodicChecks()
 
+        // Firmware updater — separate cadence and signal from the app
+        // updater. Watches the plugged-in duck's reported firmware
+        // version (from the DUCK,...,<firmware_ver> handshake) against
+        // docs/flash/firmware/cc-latest.json on Pages. Surfaces in the
+        // status menu if the duck is behind; hands off to the web
+        // flasher on click. Quiet by design — no TTS callback wired
+        // because firmware drift isn't urgent enough to interrupt.
+        let firmwareUpdater = FirmwareUpdater()
+        firmwareUpdater.bind(to: serial.serialTransport)
+        statusBarManager?.firmwareUpdater = firmwareUpdater
+        AppDelegate.firmwareUpdater = firmwareUpdater
+        firmwareUpdater.startPeriodicChecks()
+
         // Wire lifecycle hooks from DuckServer → coordinator
         let transport = server.localTransport
         transport.onSpeak = { [weak speech] text in
@@ -545,6 +558,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     static var openWindow: ((String) -> Void)?
     /// Update checker — accessible from About pane for force-check on appear.
     static var updateChecker: UpdateChecker?
+    /// Firmware updater — accessible from About pane (or future
+    /// firmware-row in Settings) for force-check on appear.
+    static var firmwareUpdater: FirmwareUpdater?
 
     // NOTE: applicationDidResignActive removed — it was stealing focus from
     // Settings/Help windows, preventing sidebar clicks. Glass saturation is

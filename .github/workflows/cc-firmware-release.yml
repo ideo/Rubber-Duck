@@ -72,15 +72,25 @@ jobs:
         run: pip install esptool
 
       - name: Stamp firmware version into build_opt.h
-        # The tag name (cc-v0.1.4 / "manual" for workflow_dispatch) goes
-        # into the USB serial-number descriptor so the web flasher can
-        # read it back via WebUSB and tell the user which build is on
-        # their duck — and whether it's behind latest. No spaces in tag
-        # names, so safe to append as a -D flag without the quoting
-        # problems that bit USB_PRODUCT.
+        # The tag name (cc-v0.1.4 / "manual" for workflow_dispatch) is
+        # stamped into TWO places via build_opt.h flags:
+        #
+        #   USB_SERIAL      — read by the web flasher via WebUSB so it
+        #                     can show "Claude Code Duck (cc-v0.1.4)"
+        #                     on the page when a duck is plugged in.
+        #   FIRMWARE_VERSION — emitted in the chip's DUCK identity reply
+        #                     over the existing widget-serial protocol,
+        #                     so the desktop widget's FirmwareUpdater
+        #                     can compare to docs/flash/firmware/
+        #                     cc-latest.json and surface "Duck firmware
+        #                     update available" in the menu.
+        #
+        # No spaces in tag names so neither needs the bash-quoting
+        # gymnastics that USB_PRODUCT (which has spaces) avoids.
         run: |
           VERSION="${{ github.ref_name }}"
           echo "-DUSB_SERIAL=\\\"$VERSION\\\"" >> ${{ matrix.sketch_dir }}/build_opt.h
+          echo "-DFIRMWARE_VERSION=\\\"$VERSION\\\"" >> ${{ matrix.sketch_dir }}/build_opt.h
           echo "build_opt.h after stamping:"
           cat ${{ matrix.sketch_dir }}/build_opt.h
 

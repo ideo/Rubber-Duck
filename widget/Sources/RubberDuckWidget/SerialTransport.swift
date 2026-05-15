@@ -22,6 +22,23 @@ class SerialTransport: DeviceTransport {
     /// Board identity from handshake (e.g. "ESP32S3", "TEENSY40"). Nil until identified.
     private(set) var connectedBoard: String?
 
+    /// Hardware variant tag from handshake — "DUCKY_PCB" or "XIAO" on the
+    /// Claude Code Duck, or nil on older firmware that doesn't emit it.
+    /// Determines which firmware binary the updater would flash if it
+    /// were to flash.
+    private(set) var connectedVariant: String?
+
+    /// Firmware version reported by the duck — e.g. "cc-v0.1.4" on a
+    /// CI-built binary, nil on local-dev builds (no FIRMWARE_VERSION
+    /// flag was passed at compile time) or pre-versioning firmware.
+    /// FirmwareUpdater compares this to the version field in
+    /// cc-latest.json on the Pages-hosted manifest.
+    private(set) var connectedFirmwareVersion: String?
+
+    /// Fires once when a fresh handshake yields identity fields — lets
+    /// FirmwareUpdater notice "a duck plugged in" without polling.
+    var onIdentity: (() -> Void)?
+
     /// Thread-safe access to fileDescriptor and inAudioMode.
     /// These are written on the main thread but read from the audio streaming
     /// and serial read threads. Same pattern as TTSGate.
@@ -437,12 +454,23 @@ class SerialTransport: DeviceTransport {
         }
     }
 
-    /// Parse "DUCK,ESP32S3,1.0" identity response.
+    /// Parse "DUCK,<chip>,<protocol_ver>,<variant>[,<firmware_ver>]" identity response.
+    ///
+    /// Backward-compatible: 3-field replies still work (legacy Teensy
+    /// builds), 4-field replies fill in variant, 5-field replies (CI-
+    /// stamped Arduino builds, post-cc-v0.1.4) fill in firmware version
+    /// too. Missing fields stay nil, and FirmwareUpdater treats nil
+    /// version as "can't tell — no prompt."
     private func parseIdentity(_ line: String) {
         let parts = line.split(separator: ",")
         guard parts.count >= 3, parts[0] == "DUCK" else { return }
         connectedBoard = String(parts[1])
-        let version = String(parts[2])
-        print("[serial] Identified: \(connectedBoard!) v\(version)")
+        let protocolVersion = String(parts[2])
+        connectedVariant = parts.count >= 4 ? String(parts[3]) : nil
+        connectedFirmwareVersion = parts.count >= 5 ? String(parts[4]) : nil
+        let variantLog = connectedVariant.map { " [\($0)]" } ?? ""
+        let fwLog = connectedFirmwareVersion.map { " fw=\($0)" } ?? ""
+        print("[serial] Identified: \(connectedBoard!) proto=\(protocolVersion)\(variantLog)\(fwLog)")
+        onIdentity?()
     }
 }

@@ -137,8 +137,21 @@ void parseTextMessage(char *msg) {
   }
 
   // --- Identity (handshake) ---
+  // Format: DUCK,<chip>,<protocol_ver>,<variant>[,<firmware_ver>]
+  // The 5th field (firmware version) only appears when the sketch was
+  // compiled with -DFIRMWARE_VERSION="..." — CI does this from the git
+  // tag (e.g. "cc-v0.1.4"). Local dev builds without the flag still
+  // reply with the legacy 4-field form, which the widget treats as
+  // "version unknown" (no update prompt). Comma-prefixed so the widget
+  // can find it as the 5th split index without confusing older builds
+  // that send only 4 fields.
   if (source == 'I') {
-    Serial.println("DUCK,ESP32S3,1.0,DUCKY_PCB");
+    Serial.print("DUCK,ESP32S3,1.0,DUCKY_PCB");
+#ifdef FIRMWARE_VERSION
+    Serial.print(",");
+    Serial.print(FIRMWARE_VERSION);
+#endif
+    Serial.println();
     if (!widgetConnected) {
       widgetConnected = true;
       deferredConnected = true;

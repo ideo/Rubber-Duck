@@ -147,14 +147,23 @@ void parseTextMessage(char *msg) {
   }
 
   // --- Identity (handshake) ---
+  // Format: DUCK,<chip>,<protocol_ver>,<variant>[,<firmware_ver>]
+  // FIRMWARE_VERSION only appears when -DFIRMWARE_VERSION="..." was
+  // passed at compile time (CI does this from the git tag). See the
+  // parallel block in rubber_duck_s3_ducky/SerialProtocol.ino.
   if (source == 'I') {
     #if defined(CONFIG_IDF_TARGET_ESP32S3)
-      Serial.println("DUCK,ESP32S3,1.0,XIAO");
+      Serial.print("DUCK,ESP32S3,1.0,XIAO");
     #elif defined(CONFIG_IDF_TARGET_ESP32C3)
-      Serial.println("DUCK,ESP32C3,1.0,XIAO");
+      Serial.print("DUCK,ESP32C3,1.0,XIAO");
     #else
-      Serial.println("DUCK,ESP32,1.0,XIAO");
+      Serial.print("DUCK,ESP32,1.0,XIAO");
     #endif
+#ifdef FIRMWARE_VERSION
+    Serial.print(",");
+    Serial.print(FIRMWARE_VERSION);
+#endif
+    Serial.println();
     // Play "Connected" on first handshake (or reconnect)
     if (!widgetConnected) {
       widgetConnected = true;

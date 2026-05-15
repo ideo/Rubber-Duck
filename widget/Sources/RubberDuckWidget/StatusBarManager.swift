@@ -15,6 +15,7 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
     private let serialManager: SerialManager
     private let duckServer: DuckServer
     var updateChecker: UpdateChecker?
+    var firmwareUpdater: FirmwareUpdater?
 
     init(speechService: SpeechService, coordinator: DuckCoordinator,
          serialManager: SerialManager, duckServer: DuckServer) {
@@ -114,6 +115,27 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
             if checker.isUpdateAvailable || checker.isPluginStale {
                 menu.addItem(.separator())
             }
+        }
+
+        // Duck firmware update — surfaces separately from the app/plugin
+        // updates because it's a different artifact (the .bin on the
+        // chip, not the .dmg on the Mac). Same visual rhythm so users
+        // already trained on "update available" notices recognize the
+        // pattern. Phase 1 hands off to the web flasher; phase 2 will
+        // add an in-app one-click flow that drives espflash directly.
+        if let updater = firmwareUpdater, updater.isFirmwareUpdateAvailable,
+           let manifest = updater.latestManifest {
+            let current = updater.connectedFirmwareVersion ?? "older"
+            let firmwareItem = NSMenuItem(
+                title: "Duck Firmware Update: \(manifest.version)",
+                action: #selector(openFirmwareFlasher),
+                keyEquivalent: ""
+            )
+            firmwareItem.target = self
+            firmwareItem.image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "Firmware")
+            firmwareItem.subtitle = "Running \(current) — open flasher to update"
+            menu.addItem(firmwareItem)
+            menu.addItem(.separator())
         }
 
         // --- Volume slider ---
@@ -466,6 +488,16 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func updatePlugin() {
         PluginInstaller.install()
+    }
+
+    /// Hand off to the web flasher for firmware reflash. Phase 1: this
+    /// is the only path. Phase 2 will swap in an in-app sheet that
+    /// runs espflash against the connected duck without leaving the
+    /// widget; the web URL stays as the advanced/recovery fallback.
+    @objc private func openFirmwareFlasher() {
+        if let url = URL(string: FirmwareUpdater.webFlasherURL) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func installClaudeCLI() {
