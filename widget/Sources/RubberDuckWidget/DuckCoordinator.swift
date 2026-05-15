@@ -30,11 +30,18 @@ class DuckCoordinator: ObservableObject {
     // Max thinking duration before auto-clearing (session crash safety net)
     private let thinkingTimeoutSeconds: Double = 120
 
-    // Shy-energy rate limiter: minimum seconds between reaction utterances.
-    // Permissions are unaffected — they always fire. Tuned conservatively so
-    // shy mode noticeably tapers without going silent.
-    private let shyReactionMinInterval: TimeInterval = 90
+    // Shy energy speech shaping. Three knobs:
+    //  - Full reactions: at most one per `shyReactionMinInterval` seconds.
+    //  - Extreme reactions (|sentiment| > threshold) bypass the gap.
+    //  - Middle reactions inside the gap become a soft non-verbal ack, with
+    //    their own shorter sub-gap so the acks don't carpet-bomb either.
+    // Permission alerts go through a separate speech path and are unaffected.
+    private let shyReactionMinInterval: TimeInterval = 60
+    private let shyAckMinInterval: TimeInterval = 20
+    private let shyExtremeThreshold: Double = 0.5
+    private let shyAcks = ["hmm", "ah", "oh", "huh", "uh huh", "ooh"]
     private var lastShyReactionAt: Date?
+    private var lastShyAckAt: Date?
 
     init(evalService: EvalService, speechService: SpeechService, serialManager: SerialManager) {
         self.evalService = evalService
@@ -112,24 +119,47 @@ class DuckCoordinator: ObservableObject {
         // Speak based on current mode (Zen energy already exited early above).
         // Walkie-Talkie: only speak Claude's output, not the user's (you know
         // what you said). Companion: speak gut-reaction text.
-        let textToSpeak: String
+        // `var` because shy energy may swap the text for a soft ack.
+        var textToSpeak: String
         switch mode {
         case .companion:
             textToSpeak = evalService.reaction
         case .walkieTalkie:
             textToSpeak = isUserEval ? "" : evalService.summary
         }
-        // Shy energy: throttle reactions to one every `shyReactionMinInterval`
-        // seconds. Permission alerts go through a separate path and are not
-        // affected. Zen is already handled by the early return above.
+        // Shy energy speech shaping. Full reactions get a `shyReactionMinInterval`
+        // gap; extreme reactions (loud signal) bypass the gap; middle reactions
+        // inside the gap become a soft ack with its own shorter sub-gap.
+        // Permission alerts use a different path — unaffected. Zen already
+        // returned above.
         if !textToSpeak.isEmpty && energy == .shy {
             let now = Date()
-            if let last = lastShyReactionAt,
-               now.timeIntervalSince(last) < shyReactionMinInterval {
-                DuckLog.log("[shy] throttled reaction (\(Int(now.timeIntervalSince(last)))s < \(Int(shyReactionMinInterval))s)")
-                return
+            let magnitude = abs(evalService.scores?.sentiment ?? 0)
+            let isExtreme = magnitude > shyExtremeThreshold
+            let inFullGap: Bool = {
+                guard let last = lastShyReactionAt else { return false }
+                return now.timeIntervalSince(last) < shyReactionMinInterval
+            }()
+
+            if isExtreme || !inFullGap {
+                // Full reaction speaks. Reset the gap timer.
+                lastShyReactionAt = now
+                DuckLog.log("[shy] full reaction (extreme=\(isExtreme), |sentiment|=\(String(format: "%.2f", magnitude)))")
+            } else {
+                // Middle reaction inside the gap — substitute a soft ack
+                // unless we're also inside the ack sub-gap.
+                let inAckGap: Bool = {
+                    guard let last = lastShyAckAt else { return false }
+                    return now.timeIntervalSince(last) < shyAckMinInterval
+                }()
+                if inAckGap {
+                    DuckLog.log("[shy] dropped middle reaction (ack sub-gap)")
+                    return
+                }
+                lastShyAckAt = now
+                textToSpeak = shyAcks.randomElement() ?? "hmm"
+                DuckLog.log("[shy] ack: \(textToSpeak) (|sentiment|=\(String(format: "%.2f", magnitude)))")
             }
-            lastShyReactionAt = now
         }
 
         if !textToSpeak.isEmpty {
