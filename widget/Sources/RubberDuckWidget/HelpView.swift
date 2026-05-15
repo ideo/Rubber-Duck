@@ -55,23 +55,25 @@ struct HelpView: View {
                 See the Intelligence section below for how to get one.
                 """)
 
-                section("Modes", """
-                **Permissions Only** — Silent watchdog. He only speaks up when Claude \
-                needs permission to do something. Listens for "yes", "no", or "always allow" — that's it. \
-                The strong, silent type.
+                section("Mode, Energy, Voice Control", """
+                Three settings, mix and match:
 
-                **Companion** — The full experience. Opinions, permissions, voice control. \
-                Listens for the wake word "ducky" so you can talk to him. \
-                The ride-or-die supporter of your dreams, or a duck with nothing but \
-                sharp wisecracks. Depends on the day.
+                **Companion Mode** — Ducky floats on your desktop, reacts to your work, \
+                and alerts you to permission requests. The default.
 
-                **Companion (No Mic)** — Same opinions, no listening. No microphone access \
-                at all. For when you want to be judged but not heard.
+                **Walkie-Talkie Mode (Experimental)** — Voice-driven Claude CLI in a \
+                tmux session. Power-user mode. Auto-launches a Terminal window.
 
-                **Relay** — Say "ducky" followed by a command and it goes straight into \
-                Claude Code. Hands-free coding. Requires tmux — see Experimental below.
+                **Energy** — How chatty he is:
+                • **Normal** — Comments and reactions all day.
+                • **Shy** — Tapered reactions; soft acks ("hmm", "ooh", "i see") fill the gaps.
+                • **Zen** — Permission alerts only. No commentary.
 
-                Switch modes from the right-click menu, menu bar icon, or \
+                **Voice Control** — On or off. On lets you approve permissions by saying \
+                "yes"/"no" and talk to ducky with "ducky [question]". Off makes it \
+                click-to-approve and silences the mic entirely.
+
+                Switch any of these from the right-click menu, menu bar icon, or \
                 Preferences → Behavior tab.
                 """)
 
@@ -88,11 +90,11 @@ struct HelpView: View {
                 Yes, he can hear you. He uses your Mac's mic to listen for \
                 voice commands — all processed locally on your Mac. Nothing leaves the device.
 
-                **What he listens for depends on the mode:**
-                • Companion: the wake word "ducky", then your question or command
-                • Relay: "ducky" followed by commands for Claude Code
-                • Permissions Only: "yes", "no", or "always allow" when Claude asks permission
-                • No Mic: nothing. Mic is completely off.
+                **What he listens for depends on Voice Control + Energy:**
+                • Voice Control off → nothing. Mic is completely off.
+                • Voice Control on, Energy = Normal/Shy → wake word "ducky", then your question
+                • Voice Control on, Energy = Zen → only "yes"/"no"/"always allow" for permissions
+                • Walkie-Talkie Mode → "ducky" followed by commands for Claude Code
 
                 **Microphone selection:** Open Preferences → Behavior → Microphone \
                 to see which device is active and pick a different one. When a hardware \
@@ -216,9 +218,9 @@ struct HelpView: View {
                 section("Experimental Features", """
                 These push beyond what the App Store sandbox allows. Proceed with enthusiasm.
 
-                **Relay Mode** — Voice commands piped into Claude Code via tmux. \
+                **Walkie-Talkie Mode** — Voice commands piped into Claude Code via tmux. \
                 Don't know what tmux is? That's okay. You can still have a duck. \
-                Requires `brew install tmux` and launching Claude from the duck's menu.
+                Requires `brew install tmux` — auto-launches when you pick the mode.
 
                 **Gemini CLI** — He can watch Gemini sessions too. Scoring works, \
                 permission relay doesn't — you'll approve those yourself. \
