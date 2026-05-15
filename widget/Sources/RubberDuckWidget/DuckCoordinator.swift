@@ -11,6 +11,8 @@ class DuckCoordinator: ObservableObject {
     @Published var expression = DuckExpression()
     @Published var showReaction = false
     @Published var mode: DuckMode = DuckConfig.duckMode
+    @Published var energy: DuckEnergy = DuckConfig.energy
+    @Published var micEnabled: Bool = DuckConfig.micEnabled
     @Published var isThinking = false
 
     // Update notifications — set by UpdateChecker callbacks
@@ -33,8 +35,18 @@ class DuckCoordinator: ObservableObject {
         self.speechService = speechService
         self.serialManager = serialManager
 
-        // Restore mic behavior for persisted mode
-        speechService.listenMode = mode.requiredListenMode
+        // Restore mic behavior from persisted (mode + energy + mic) triple.
+        // Listen mode is fully derived — see DuckConfig.listenMode.
+        speechService.listenMode = DuckConfig.listenMode
+
+        // Yield the Jeopardy melody whenever ANY TTS is about to play —
+        // permission prompts, reactions, mode announcements, scripts, etc.
+        // Without this, melody frames and TTS frames interleave on the
+        // serial audio bus (and mix at the OS output on the local path),
+        // producing garbled audio. Melody stays stopped; /compact restarts it.
+        speechService.onSpeechWillStart = { [weak self] in
+            self?.melodyEngine.stop()
+        }
     }
 
     // MARK: - Event Handlers
@@ -47,7 +59,9 @@ class DuckCoordinator: ObservableObject {
         // Thinking state: user eval means Claude is about to work;
         // Claude eval means Claude is done.
         // Permissions-only mode: ignore evals entirely
-        if mode == .permissionsOnly {
+        // Zen energy = permissions-only behavior: ignore evals, just keep
+        // the permission LED in sync.
+        if energy == .zen {
             serialManager.sendCommand("P,0")
             return
         }
@@ -89,16 +103,15 @@ class DuckCoordinator: ObservableObject {
             serialManager.sendScores(scores, source: evalService.source)
         }
 
-        // Speak based on current mode (permissionsOnly exits early above)
-        // Relay mode: only speak Claude's output, not the user's (you know what you said)
+        // Speak based on current mode (Zen energy already exited early above).
+        // Walkie-Talkie: only speak Claude's output, not the user's (you know
+        // what you said). Companion: speak gut-reaction text.
         let textToSpeak: String
         switch mode {
-        case .companion, .companionNoMic:
+        case .companion:
             textToSpeak = evalService.reaction
-        case .relay:
+        case .walkieTalkie:
             textToSpeak = isUserEval ? "" : evalService.summary
-        case .permissionsOnly:
-            textToSpeak = ""  // unreachable — early return above; kept for exhaustive switch
         }
         if !textToSpeak.isEmpty {
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
@@ -148,27 +161,66 @@ class DuckCoordinator: ObservableObject {
         }
     }
 
-    /// Set a specific mode. Mic behavior is baked in — no separate toggle.
+    /// Set a specific mode. Mode is just companion vs walkie-talkie; mic and
+    /// chattiness live in the Energy + Mic toggles.
     func setMode(_ newMode: DuckMode) {
         guard newMode != mode else { return }
         mode = newMode
         DuckConfig.duckMode = newMode
 
-        // Auto-set mic based on mode
-        speechService.listenMode = newMode.requiredListenMode
-
-        // Reset face to neutral in non-reaction modes
-        if !newMode.speaksReactions {
-            withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
-                expression = DuckExpression()
-            }
-        }
+        // Mic behavior is governed by mic+energy, not mode — refresh in case
+        // anything implicit changed.
+        speechService.listenMode = DuckConfig.listenMode
 
         // Clear any thinking state when switching modes
         clearThinking()
 
         speechService.scheduleSpeech(
             mode.spokenLabel,
+            kind: .system,
+            lane: .manual,
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
+    }
+
+    /// Set the energy level (Normal / Shy / Zen). Resets expression to
+    /// neutral when transitioning to Zen since reactions stop firing.
+    func setEnergy(_ newEnergy: DuckEnergy) {
+        guard newEnergy != energy else { return }
+        energy = newEnergy
+        DuckConfig.energy = newEnergy
+
+        // Listen mode depends on energy (Zen → permissions-only listen).
+        speechService.listenMode = DuckConfig.listenMode
+
+        if newEnergy == .zen {
+            withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
+                expression = DuckExpression()
+            }
+        }
+
+        clearThinking()
+
+        speechService.scheduleSpeech(
+            newEnergy.spokenLabel,
+            kind: .system,
+            lane: .manual,
+            policy: .latestWins,
+            interruptibility: .freelyInterruptible
+        )
+    }
+
+    /// Toggle the mic on/off. When off, permissions become click-only
+    /// and STT does not run.
+    func setMicEnabled(_ enabled: Bool) {
+        guard enabled != micEnabled else { return }
+        micEnabled = enabled
+        DuckConfig.micEnabled = enabled
+        speechService.listenMode = DuckConfig.listenMode
+
+        speechService.scheduleSpeech(
+            enabled ? "Mic on" : "Mic off",
             kind: .system,
             lane: .manual,
             policy: .latestWins,
@@ -273,9 +325,9 @@ class DuckCoordinator: ObservableObject {
 
     // MARK: - Expression
 
-    /// In permissions-only mode, reset to neutral. Otherwise rebuild from scores.
+    /// In Zen energy (permissions-only behavior), reset to neutral. Otherwise rebuild from scores.
     private func resetOrUpdateExpression() {
-        if mode == .permissionsOnly {
+        if energy == .zen {
             withAnimation(.spring(response: DuckTheme.springResponse, dampingFraction: DuckTheme.springDamping)) {
                 expression = DuckExpression()
             }

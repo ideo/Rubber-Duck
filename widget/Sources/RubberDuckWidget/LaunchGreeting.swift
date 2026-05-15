@@ -14,18 +14,21 @@ enum LaunchGreeting {
         return dir.appendingPathComponent("last-launch")
     }()
 
-    /// Pick a launch greeting based on time of day, recency, and mode.
-    static func pick(mode: DuckMode = .companion) -> String {
+    /// Pick a launch greeting based on time of day, recency, and (mode, energy).
+    /// - Zen energy → passive watchdog tone (old permissions-only flavor).
+    /// - Companion (non-zen) → opinionated peer flavor.
+    /// - Walkie-Talkie → terse walkie-talkie flavor.
+    static func pick(mode: DuckMode = .companion, energy: DuckEnergy = .normal) -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         let minutesSince = minutesSinceLastLaunch()
         recordLaunch()
 
-        // Permissions-only: passive, helpful watchdog tone
-        if mode == .permissionsOnly {
+        // Zen (former permissions-only): passive, helpful watchdog tone
+        if mode == .companion && energy == .zen {
             return permissionsGreeting(hour: hour, minutesSince: minutesSince)
         }
 
-        let isCompanion = mode == .companion || mode == .companionNoMic
+        let isCompanion = mode == .companion
 
         // First ever launch — introduce + guide to plugin install
         if minutesSince == nil {
@@ -85,15 +88,15 @@ enum LaunchGreeting {
     }
 
     /// Pick a session-connect greeting (when /health is pinged by a Claude session).
-    static func sessionConnect(mode: DuckMode = .companion) -> String {
-        if mode == .permissionsOnly {
+    static func sessionConnect(mode: DuckMode = .companion, energy: DuckEnergy = .normal) -> String {
+        if mode == .companion && energy == .zen {
             return ["Session connected. I'll keep watch.",
                     "Plugged in. I'll speak up if something needs your attention.",
                     "Session's live. I'm here if you need me.",
                     "Connected. You do your thing, I've got permissions.",
                     "On it. I'll let you know when something comes up."].randomElement() ?? ""
         }
-        let isCompanion = mode == .companion || mode == .companionNoMic
+        let isCompanion = mode == .companion
         return isCompanion
             ? ["Session's up. Let's see what they're made of.",
                "Alright, I'm watching.",

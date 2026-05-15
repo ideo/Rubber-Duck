@@ -351,21 +351,109 @@ enum DuckConfig {
         )
     }
 
-    // MARK: - Duck Mode
+    // MARK: - Duck Mode + Energy + Mic
+    //
+    // v0.10 collapsed the old 4-case DuckMode (companion, permissionsOnly,
+    // companionNoMic, relay) into a 2-case DuckMode (companion, walkieTalkie)
+    // plus an orthogonal DuckEnergy (normal/shy/zen) plus a mic toggle.
+    //
+    // The migration below preserves the legacy `duck_mode` value the first
+    // time we encounter it post-upgrade — translates to the new triple and
+    // writes the new keys, but leaves `duck_mode` in place as a rollback
+    // breadcrumb. After migration runs once, subsequent reads ignore it.
 
-    /// Persisted duck mode. Defaults to `.companion`.
+    private static let migrationFlagKey = "duck_mode_migrated_v010"
+
+    /// One-shot migration: read legacy `duck_mode` → write new keys.
+    /// Idempotent — flagged in UserDefaults so it only runs once per install.
+    private static func migrateLegacyModeIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: migrationFlagKey) else { return }
+        defaults.set(true, forKey: migrationFlagKey)
+
+        // Default new values
+        var mode: DuckMode = .companion
+        var energy: DuckEnergy = .normal
+        var mic = true
+
+        if let legacy = defaults.string(forKey: "duck_mode") {
+            switch legacy {
+            case "companion":
+                mode = .companion; energy = .normal; mic = true
+            case "permissionsOnly":
+                mode = .companion; energy = .zen; mic = true
+            case "companionNoMic":
+                mode = .companion; energy = .normal; mic = false
+            case "relay":
+                mode = .walkieTalkie; energy = .normal; mic = true
+            default:
+                break
+            }
+        }
+
+        defaults.set(mode.rawValue, forKey: "duck_mode_v2")
+        defaults.set(energy.rawValue, forKey: "duck_energy")
+        defaults.set(mic, forKey: "duck_mic_enabled")
+    }
+
+    /// Persisted duck mode. Defaults to `.companion`. Runs migration on
+    /// first access post-upgrade.
     static var duckMode: DuckMode {
         get {
-            if let raw = UserDefaults.standard.string(forKey: "duck_mode"),
+            migrateLegacyModeIfNeeded()
+            if let raw = UserDefaults.standard.string(forKey: "duck_mode_v2"),
                let mode = DuckMode(rawValue: raw) {
                 return mode
             }
             return .companion
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "duck_mode")
+            UserDefaults.standard.set(newValue.rawValue, forKey: "duck_mode_v2")
         }
     }
+
+    /// Persisted energy (talkativeness + motion). Defaults to `.normal`.
+    static var energy: DuckEnergy {
+        get {
+            migrateLegacyModeIfNeeded()
+            if let raw = UserDefaults.standard.string(forKey: "duck_energy"),
+               let e = DuckEnergy(rawValue: raw) {
+                return e
+            }
+            return .normal
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "duck_energy")
+        }
+    }
+
+    /// Whether the mic is enabled. Defaults to `true`.
+    /// Independent of mode and energy — but if false, permissions approval
+    /// becomes click-only and STT does not run.
+    static var micEnabled: Bool {
+        get {
+            migrateLegacyModeIfNeeded()
+            // UserDefaults.bool returns false for missing keys, so check
+            // explicitly via object(forKey:) to honor the `true` default.
+            if let v = UserDefaults.standard.object(forKey: "duck_mic_enabled") as? Bool {
+                return v
+            }
+            return true
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "duck_mic_enabled")
+        }
+    }
+
+    /// The ListenMode that should be active given the current mic + energy.
+    /// Centralized here so callers don't reinvent the rules.
+    static var listenMode: ListenMode {
+        guard micEnabled else { return .off }
+        return energy == .zen ? .permissionsOnly : .active
+    }
+
+    /// Whether reactions/opinions should be spoken. Driven by energy.
+    static var speaksReactions: Bool { energy.speaksReactions }
 
     // MARK: - Serial / Device
 

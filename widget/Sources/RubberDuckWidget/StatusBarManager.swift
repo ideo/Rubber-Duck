@@ -133,11 +133,11 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         modeItem.image = NSImage(systemSymbolName: currentMode.iconName, accessibilityDescription: currentMode.label)
         let modeMenu = NSMenu()
 
+        // Mode picker: just Companion vs Walkie-Talkie. Energy + Mic are
+        // surfaced as separate menu items below (Step 3).
         let modeActions: [(DuckMode, Selector)] = [
-            (.permissionsOnly, #selector(setModePermissions)),
             (.companion, #selector(setModeCompanion)),
-            (.companionNoMic, #selector(setModeCompanionNoMic)),
-            (.relay, #selector(setModeRelay)),
+            (.walkieTalkie, #selector(setModeWalkieTalkie)),
         ]
         for (mode, action) in modeActions {
             let item = NSMenuItem(title: mode.label, action: action, keyEquivalent: "")
@@ -484,16 +484,8 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         coordinator.setMode(.companion)
     }
 
-    @objc private func setModeCompanionNoMic() {
-        coordinator.setMode(.companionNoMic)
-    }
-
-    @objc private func setModeRelay() {
-        coordinator.setMode(.relay)
-    }
-
-    @objc private func setModePermissions() {
-        coordinator.setMode(.permissionsOnly)
+    @objc private func setModeWalkieTalkie() {
+        coordinator.setMode(.walkieTalkie)
     }
 
     @objc private func setProviderFoundation() {

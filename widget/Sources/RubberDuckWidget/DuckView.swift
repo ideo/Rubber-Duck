@@ -70,7 +70,8 @@ private struct DuckContextMenu: View {
             Divider()
         }
 
-        // Mode selector
+        // Mode selector — hover tooltip surfaces the full description,
+        // matching what's shown inline in the status bar menu + Settings.
         Menu {
             ForEach(DuckMode.allCases, id: \.rawValue) { mode in
                 Button {
@@ -79,6 +80,7 @@ private struct DuckContextMenu: View {
                     let active = coordinator.mode == mode
                     Label(active ? "✓ \(mode.label)" : mode.label, systemImage: mode.iconName)
                 }
+                .help(mode.subtitle)
             }
         } label: {
             Label(coordinator.mode.label, systemImage: coordinator.mode.iconName)

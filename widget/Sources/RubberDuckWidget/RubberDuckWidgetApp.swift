@@ -290,8 +290,8 @@ struct RubberDuckWidgetApp: App {
         let helpService = DuckHelpService()
         speech.onVoiceInput = { [weak eval, weak speech, weak coordinator] text in
             guard let speech else { return }
-            // Relay mode → always send to Claude via tmux
-            let isRelay = coordinator?.mode == .relay
+            // Walkie-Talkie mode → always send to Claude via tmux
+            let isRelay = coordinator?.mode == .walkieTalkie
             if isRelay && eval?.isConnected == true {
                 eval?.sendVoiceInput(text)
                 return
@@ -460,8 +460,9 @@ struct RubberDuckWidgetApp: App {
         // TTS greeting when a Claude session connects via /health
         server.onSessionConnect = { [weak speech, weak coordinator] in
             let mode = coordinator?.mode ?? .companion
+            let energy = coordinator?.energy ?? .normal
             speech?.scheduleSpeech(
-                LaunchGreeting.sessionConnect(mode: mode),
+                LaunchGreeting.sessionConnect(mode: mode, energy: energy),
                 kind: .greeting,
                 lane: .ambient,
                 policy: .dropIfBusy,
@@ -482,7 +483,7 @@ struct RubberDuckWidgetApp: App {
                 }
                 speech.applyListenMode()
                 speech.scheduleSpeech(
-                    LaunchGreeting.pick(mode: coordinator.mode),
+                    LaunchGreeting.pick(mode: coordinator.mode, energy: coordinator.energy),
                     kind: .greeting,
                     lane: .ambient,
                     policy: .dropIfBusy,

@@ -320,6 +320,8 @@ private struct BehaviorPane: View {
                                 Text(mode.subtitle)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .multilineTextAlignment(.leading)
                             }
                             Spacer()
                             if selectedMode == mode {

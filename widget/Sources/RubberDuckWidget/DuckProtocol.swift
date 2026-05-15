@@ -39,21 +39,18 @@ enum PermissionStatus: String, Codable {
     case timeout
 }
 
-/// Duck mode — controls reactions, speech, and mic behavior.
-/// Mic is baked into each mode (no separate toggle).
+/// Top-level duck mode. Mutually exclusive — only one runs at a time.
+/// Behavior nuance (chattiness, mic) lives in `DuckEnergy` and the mic toggle,
+/// not here. Selecting `.walkieTalkie` auto-launches the tmux'd CLI session.
 enum DuckMode: String, CaseIterable {
-    case companion        // Opinions + voice permissions + wake word
-    case permissionsOnly  // Voice permissions only, no opinions
-    case companionNoMic   // Opinions + click-only permissions, no mic
-    case relay            // Walkie-talkie with Claude CLI
+    case companion       // Normal floating-duck experience
+    case walkieTalkie    // Experimental: launches CLI in tmux for voice control
 
     /// Human-readable label for menus and TTS.
     var label: String {
         switch self {
         case .companion: return "Companion"
-        case .permissionsOnly: return "Permissions Only"
-        case .companionNoMic: return "Companion (No Mic)"
-        case .relay: return "Relay"
+        case .walkieTalkie: return "Walkie-Talkie (Experimental)"
         }
     }
 
@@ -61,19 +58,19 @@ enum DuckMode: String, CaseIterable {
     var iconName: String {
         switch self {
         case .companion: return "figure.2.left.holdinghands"
-        case .permissionsOnly: return "lock.shield"
-        case .companionNoMic: return "figure.2.left.holdinghands"
-        case .relay: return "flask.fill"
+        case .walkieTalkie: return "flask.fill"
         }
     }
 
-    /// Short subtitle for menu items.
+    /// Full-sentence description for menus, settings, and tooltips.
+    /// Used as NSMenuItem.subtitle, Settings caption text, and right-click
+    /// menu tooltip (.help).
     var subtitle: String {
         switch self {
-        case .companion: return "Opinions, permissions, voice"
-        case .permissionsOnly: return "Permissions, voice, no opinions"
-        case .companionNoMic: return "Opinions, click-only permissions"
-        case .relay: return "Talk to Claude CLI"
+        case .companion:
+            return "Ducky floats on your desktop, reacts to your work, and alerts you to permission requests."
+        case .walkieTalkie:
+            return "Talk to Claude CLI by voice in a tmux session. Walkie-talkie style. Experimental."
         }
     }
 
@@ -81,36 +78,61 @@ enum DuckMode: String, CaseIterable {
     var spokenLabel: String {
         switch self {
         case .companion: return "Companion mode"
-        case .permissionsOnly: return "Permissions only"
-        case .companionNoMic: return "Companion mode, mic off"
-        case .relay: return "Relay mode"
+        case .walkieTalkie: return "Walkie-talkie mode"
+        }
+    }
+}
+
+/// How talkative + active the duck is. One dial governing speech chattiness
+/// today (and motion taper post-v0.10). Independent of mic and mode.
+enum DuckEnergy: String, CaseIterable {
+    case normal   // Full reactions + full motion
+    case shy      // Tapered: less frequent reactions + Bambu motion taper
+    case zen      // Permissions only — no reaction chatter; rare motion
+
+    /// Human-readable label for menus and TTS.
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .shy: return "Shy"
+        case .zen: return "Zen"
         }
     }
 
-    /// Whether this mode uses the microphone.
-    var micEnabled: Bool {
+    /// SF Symbol name.
+    var iconName: String {
         switch self {
-        case .companion, .permissionsOnly, .relay: return true
-        case .companionNoMic: return false
+        case .normal: return "bubble.left.and.bubble.right.fill"
+        case .shy: return "bubble.left"
+        case .zen: return "leaf.fill"
         }
     }
 
-    /// Whether this mode speaks eval reactions.
-    var speaksReactions: Bool {
+    /// Full-sentence description for menus, settings, and tooltips.
+    var subtitle: String {
         switch self {
-        case .companion, .companionNoMic, .relay: return true
-        case .permissionsOnly: return false
+        case .normal:
+            return "Comments and reactions all day. Full motion."
+        case .shy:
+            return "Tapered reactions with restraint. Calmer motion."
+        case .zen:
+            return "Permission alerts only — no reaction chatter. Rare motion."
         }
     }
 
-    /// The listen mode this duck mode requires.
-    var requiredListenMode: ListenMode {
+    /// TTS-friendly label.
+    var spokenLabel: String {
         switch self {
-        case .companion, .relay: return .active
-        case .permissionsOnly: return .permissionsOnly
-        case .companionNoMic: return .off
+        case .normal: return "Normal energy"
+        case .shy: return "Shy"
+        case .zen: return "Zen"
         }
     }
+
+    /// Whether reactions/opinions are spoken at this energy level.
+    /// `.zen` silences them entirely; `.shy` lets them through but the
+    /// chattiness limiter (Step 2) reduces frequency.
+    var speaksReactions: Bool { self != .zen }
 }
 
 // MARK: - Inbound Messages (service → widget via WebSocket)
