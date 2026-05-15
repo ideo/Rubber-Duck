@@ -50,7 +50,15 @@ You (Claude Code) — this session
 ## Safety rules
 
 - **NEVER use `pkill -f`**. The `-f` flag matches the full command line of all processes and can kill system processes like WindowServer, crashing the entire GUI. Use `killall <name>` or `pkill <name>` (without `-f`) instead.
-- **Mac App Store sandbox**: The widget must work under App Sandbox. It may ONLY read/write files inside `~/Library/Application Support/DuckDuckDuck/` (via FileManager container APIs). It must NEVER access `~/.claude/`, `~/Documents/`, `~/Library/Preferences/`, or any path outside its sandbox container. All state (API key, PID, logs, session timestamps) belongs in Application Support. The only way to detect the plugin is via the `/health` HTTP ping — never read Claude's settings files. Network: `localhost:3333` (own server), `api.anthropic.com` (Haiku eval), and `generativelanguage.googleapis.com` (Gemini eval) only.
+- **Mac App Store sandbox**: The widget must work under App Sandbox. It may ONLY read/write files inside `~/Library/Application Support/DuckDuckDuck/` (via FileManager container APIs). It must NEVER access `~/.claude/`, `~/Documents/`, `~/Library/Preferences/`, or any path outside its sandbox container. All state (API key, PID, logs, session timestamps) belongs in Application Support. The only way to detect the plugin is via the `/health` HTTP ping — never read Claude's settings files. Network outbound from the widget is limited to:
+  - `localhost:3333` — own MiniServer
+  - `api.anthropic.com` — Claude eval
+  - `generativelanguage.googleapis.com` — Gemini eval
+  - `api.openai.com` — OpenAI eval
+  - `api.github.com` — widget update check (`UpdateChecker`)
+  - `ideo.github.io` — firmware manifest + web flasher hand-off (`FirmwareUpdater`)
+
+  Browser-handoff URLs via `NSWorkspace.shared.open` are not widget network traffic and are unrestricted.
 
 ## Dev workflow
 
