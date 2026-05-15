@@ -69,53 +69,12 @@ jobs:
           path: bambu/firmware/${{ matrix.asset_name }}
           if-no-files-found: error
 
-  release:
-    needs: build-and-release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/bambu-v')
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download all variant binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Flatten artifact dir layout
-        # download-artifact@v4 nests under per-name dirs; flatten so
-        # release-action's `files:` glob finds them in one pass.
-        run: |
-          mkdir -p release
-          find dist -name '*.bin' -exec cp {} release/ \;
-          ls -la release/
-
-      - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Bambu Duck firmware ${{ github.ref_name }}
-          files: release/*.bin
-          generate_release_notes: true
-          # Don't let firmware steal "Latest" — the widget app's
-          # QR codes / download links point at releases/latest and
-          # would 404 against a firmware release. See parallel note
-          # in cc-firmware-release.yml.
-          make_latest: 'false'
-          body: |
-            Pre-built firmware binaries for the three Bambu Duck variants.
-
-            **Flash from a browser:** https://ideo.github.io/Rubber-Duck/flash/
-            (Chrome or Edge — uses WebSerial, no install needed.)
-
-            **Flash from the command line** (any of these):
-            ```
-            python -m esptool --chip esp32s3 -p /dev/cu.usbmodem101 \
-              write_flash 0x0 bambu-duck-ducky.bin
-            ```
-
-            Variants:
-            - `bambu-duck-ducky.bin` — custom WROOM-1 PCB (default)
-            - `bambu-duck-xiao.bin` — XIAO Seeed S3 + cobbled parts
-            - `bambu-duck-turnkey.bin` — ducky PCB, captive portal hides
-              ElevenLabs fields (relay supplies shared voice creds)
+  # NOTE: We deliberately do NOT create a GitHub Release for firmware
+  # tags anymore. See the parallel comment in cc-firmware-release.yml
+  # — TL;DR: the Releases page is the app's front door; firmware
+  # releases cluttered it. Same-origin binaries in docs/flash/firmware/
+  # serve every flasher fetch; CLI users can grab from
+  # https://github.com/ideo/Rubber-Duck/raw/main/docs/flash/firmware/bambu-duck-<variant>.bin.
 
   # Mirror the freshly-built binaries into docs/flash/firmware/ on main
   # so the GitHub Pages flasher fetches them same-origin. The
@@ -148,11 +107,35 @@ jobs:
           find dist -name 'bambu-duck-*.bin' -exec cp {} docs/flash/firmware/ \;
           ls -la docs/flash/firmware/
 
+      - name: Write latest.json (version manifest)
+        # Tiny JSON manifest the on-device OTA path (esp_https_ota in
+        # the duck's main loop) will fetch to detect staleness. Same
+        # shape as cc-latest.json so the widget code can share parsing
+        # logic between the two products if we ever consolidate.
+        run: |
+          cat > docs/flash/firmware/bambu-latest.json <<EOF
+          {
+            "version": "${{ github.ref_name }}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "variants": {
+              "ducky": {
+                "binary": "bambu-duck-ducky.bin",
+                "url": "https://ideo.github.io/Rubber-Duck/flash/firmware/bambu-duck-ducky.bin"
+              },
+              "xiao": {
+                "binary": "bambu-duck-xiao.bin",
+                "url": "https://ideo.github.io/Rubber-Duck/flash/firmware/bambu-duck-xiao.bin"
+              }
+            }
+          }
+          EOF
+          cat docs/flash/firmware/bambu-latest.json
+
       - name: Commit & push if changed
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/flash/firmware/bambu-duck-*.bin
+          git add docs/flash/firmware/bambu-duck-*.bin docs/flash/firmware/bambu-latest.json
           if git diff --staged --quiet; then
             echo "No binary changes vs main — skipping commit."
             exit 0

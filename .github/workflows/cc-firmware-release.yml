@@ -129,54 +129,14 @@ jobs:
           path: ${{ matrix.asset_name }}
           if-no-files-found: error
 
-  release:
-    needs: build-and-release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/cc-v')
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download all variant binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Flatten artifact dir layout
-        run: |
-          mkdir -p release
-          find dist -name '*.bin' -exec cp {} release/ \;
-          ls -la release/
-
-      - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Claude Code Duck firmware ${{ github.ref_name }}
-          files: release/*.bin
-          generate_release_notes: true
-          # Don't promote firmware tags to "Latest." The widget app
-          # (v*) releases share this Releases page and their QR codes
-          # / download links point at releases/latest — letting
-          # firmware tags steal that pointer makes the app's
-          # /releases/latest/download/<asset> 404. Firmware lives in
-          # its own tag namespace (cc-v* / bambu-v*); keep it
-          # explicitly off the Latest throne.
-          make_latest: 'false'
-          body: |
-            Pre-built firmware binaries for the Claude Code Duck (Mac
-            companion that watches your Claude Code session and
-            reacts via voice + servo + LED).
-
-            **Flash from a browser:** https://ideo.github.io/Rubber-Duck/flash/
-            (Chrome / Edge — uses WebSerial, no install needed.)
-
-            **Flash from the command line:**
-            ```
-            python -m esptool --chip esp32s3 -p /dev/cu.usbmodem101 \
-              write_flash 0x0 cc-ducky.bin
-            ```
-
-            Variants:
-            - `cc-ducky.bin` — official IDEO Duck PCB (custom WROOM-1)
-            - `cc-xiao.bin` — DIY build on standard XIAO Seeed ESP32-S3
+  # NOTE: We deliberately do NOT create a GitHub Release for firmware
+  # tags anymore. The repo's Releases page is the front door for the
+  # widget app (v* tags, with .dmg downloads from QR codes); firmware
+  # releases cluttered it and confused users who only need the app.
+  # The same-origin binaries committed to docs/flash/firmware/ below
+  # serve every flasher fetch. CLI users can grab binaries from
+  # https://github.com/ideo/Rubber-Duck/raw/main/docs/flash/firmware/cc-<variant>.bin
+  # or from a specific commit/tag for a pinned version.
 
   # Mirror the freshly-built binaries into docs/flash/firmware/ on main
   # so the GitHub Pages flasher can fetch them same-origin. The
@@ -211,11 +171,39 @@ jobs:
           find dist -name 'cc-*.bin' -exec cp {} docs/flash/firmware/ \;
           ls -la docs/flash/firmware/
 
+      - name: Write latest.json (version manifest)
+        # Tiny JSON manifest the widget firmware updater (and any
+        # future on-device OTA) fetches to detect staleness. Keyed by
+        # variant since ducky PCB and XIAO carry different .bin files
+        # — version is shared because both ship from the same tag.
+        # Lives next to the binaries so the widget makes one cheap GET
+        # against github.io and compares to its read of the chip's
+        # USB serial-number descriptor (we stamp the tag there at
+        # build time — see the build_opt.h step above).
+        run: |
+          cat > docs/flash/firmware/cc-latest.json <<EOF
+          {
+            "version": "${{ github.ref_name }}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "variants": {
+              "ducky": {
+                "binary": "cc-ducky.bin",
+                "url": "https://ideo.github.io/Rubber-Duck/flash/firmware/cc-ducky.bin"
+              },
+              "xiao": {
+                "binary": "cc-xiao.bin",
+                "url": "https://ideo.github.io/Rubber-Duck/flash/firmware/cc-xiao.bin"
+              }
+            }
+          }
+          EOF
+          cat docs/flash/firmware/cc-latest.json
+
       - name: Commit & push if changed
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/flash/firmware/cc-*.bin
+          git add docs/flash/firmware/cc-*.bin docs/flash/firmware/cc-latest.json
           # If the binaries are byte-identical to what's on main (e.g.
           # re-running a tag manually), there's nothing to commit and
           # we exit cleanly without trying to push an empty commit.
