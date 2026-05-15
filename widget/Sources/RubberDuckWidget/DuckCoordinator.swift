@@ -264,7 +264,11 @@ class DuckCoordinator: ObservableObject {
         // Walkie-Talkie needs a live tmux'd CLI to receive voice input.
         // Auto-launch on mode switch so the user doesn't have to click twice.
         // Existing tmux session is reused (CLISession.launch handles either path).
+        // Also force voice control on — WT without a mic is just an empty terminal.
         if newMode == .walkieTalkie {
+            if !micEnabled {
+                setMicEnabled(true)
+            }
             CLISession.launch()
         }
     }
