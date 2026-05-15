@@ -30,6 +30,12 @@ class DuckCoordinator: ObservableObject {
     // Max thinking duration before auto-clearing (session crash safety net)
     private let thinkingTimeoutSeconds: Double = 120
 
+    // Shy-energy rate limiter: minimum seconds between reaction utterances.
+    // Permissions are unaffected — they always fire. Tuned conservatively so
+    // shy mode noticeably tapers without going silent.
+    private let shyReactionMinInterval: TimeInterval = 90
+    private var lastShyReactionAt: Date?
+
     init(evalService: EvalService, speechService: SpeechService, serialManager: SerialManager) {
         self.evalService = evalService
         self.speechService = speechService
@@ -113,6 +119,19 @@ class DuckCoordinator: ObservableObject {
         case .walkieTalkie:
             textToSpeak = isUserEval ? "" : evalService.summary
         }
+        // Shy energy: throttle reactions to one every `shyReactionMinInterval`
+        // seconds. Permission alerts go through a separate path and are not
+        // affected. Zen is already handled by the early return above.
+        if !textToSpeak.isEmpty && energy == .shy {
+            let now = Date()
+            if let last = lastShyReactionAt,
+               now.timeIntervalSince(last) < shyReactionMinInterval {
+                DuckLog.log("[shy] throttled reaction (\(Int(now.timeIntervalSince(last)))s < \(Int(shyReactionMinInterval))s)")
+                return
+            }
+            lastShyReactionAt = now
+        }
+
         if !textToSpeak.isEmpty {
             // Wildcard mode: AI-picked voice per utterance (fall back to Superstar if no key)
             if speechService.isWildcardMode {
@@ -163,6 +182,7 @@ class DuckCoordinator: ObservableObject {
 
     /// Set a specific mode. Mode is just companion vs walkie-talkie; mic and
     /// chattiness live in the Energy + Mic toggles.
+    /// Switching INTO walkie-talkie auto-launches the tmux'd CLI session.
     func setMode(_ newMode: DuckMode) {
         guard newMode != mode else { return }
         mode = newMode
@@ -182,6 +202,13 @@ class DuckCoordinator: ObservableObject {
             policy: .latestWins,
             interruptibility: .freelyInterruptible
         )
+
+        // Walkie-Talkie needs a live tmux'd CLI to receive voice input.
+        // Auto-launch on mode switch so the user doesn't have to click twice.
+        // Existing tmux session is reused (CLISession.launch handles either path).
+        if newMode == .walkieTalkie {
+            CLISession.launch()
+        }
     }
 
     /// Set the energy level (Normal / Shy / Zen). Resets expression to
