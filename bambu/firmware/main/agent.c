@@ -98,9 +98,20 @@ static void on_binary(const uint8_t *data, size_t len, int payload_offset, int p
     s_agent_speaking = true;
     s_last_audio_ms = esp_timer_get_time() / 1000;
     servo_set_speaking(true);
-    size_t sent = xStreamBufferSend(s_spk_stream, data, len, pdMS_TO_TICKS(50));
+    // CRITICAL: round the send length down to an even byte count when
+    // the buffer can't take all of it. The stream holds raw int16 PCM
+    // (2 bytes per sample); if we drop an odd number of bytes here,
+    // every subsequent sample is misaligned by 1 byte and the spk
+    // task plays high-byte/low-byte pairs as scrambled samples for
+    // the rest of the utterance — i.e. white noise. Aligned drops
+    // sound like a brief silent skip instead. Combined with the 1 MB
+    // buffer above, this should be rare on normal-length replies.
+    size_t free_bytes = xStreamBufferSpacesAvailable(s_spk_stream);
+    size_t to_send = (len <= free_bytes) ? len : (free_bytes & ~(size_t)1);
+    size_t sent = xStreamBufferSend(s_spk_stream, data, to_send, pdMS_TO_TICKS(50));
     if (sent < len) {
-        ESP_LOGW(TAG, "spk stream full, dropped %u bytes", (unsigned)(len - sent));
+        ESP_LOGW(TAG, "spk stream full, dropped %u bytes (aligned)",
+                 (unsigned)(len - sent));
     }
 }
 
@@ -289,9 +300,15 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
 #endif
     if (!s_mic_stream) return ESP_ERR_NO_MEM;
     // ElevenLabs sends agent audio faster than realtime (it pre-buffers
-    // entire utterances). For a 10s sentence ~320KB arrives at once. Spk
-    // task drains at 16kHz playback rate. 512KB ≈ 16s of audio buffered.
-    s_spk_stream = xStreamBufferCreateWithCaps(512 * 1024, 1,
+    // entire utterances). For a 10s sentence ~320KB arrives at once.
+    // Spk task drains at 16kHz playback rate. 1 MB ≈ 32s of audio
+    // buffered — covers long monologues without overflowing. Bumped
+    // from 512KB after we saw white-noise artifacts on really long
+    // replies: the buffer would fill, on_binary would drop part of a
+    // WS frame, and if the drop landed on an odd byte count the
+    // remaining int16 samples were misaligned by 1 byte for the rest
+    // of the utterance. See alignment guard in on_binary.
+    s_spk_stream = xStreamBufferCreateWithCaps(1024 * 1024, 1,
                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_spk_stream) {
         vStreamBufferDelete(s_mic_stream); s_mic_stream = NULL;
