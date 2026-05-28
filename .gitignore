@@ -41,3 +41,15 @@ bambu/relay/tokens.json
 **/sdkconfig
 **/sdkconfig.old
 **/dependencies.lock
+
+# Boy Band — local secrets, large stems, DAW projects, build artifacts
+# (*.wav is already globally ignored on line 9)
+boyband/.env.local
+boyband/voices.local.json
+boyband/**/*.mp3
+boyband/**/*.aif*
+boyband/**/*.logicx
+boyband/**/*.als
+boyband/**/*.rpp*
+boyband/stage/.build/
+boyband/stage/.swiftpm/

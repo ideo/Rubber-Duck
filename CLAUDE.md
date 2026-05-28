@@ -8,6 +8,11 @@ You are running inside the **Rubber Duck** project. A physical rubber duck compa
 - The duck widget (a liquid glass SwiftUI duck floating on the desktop) animates based on those scores and speaks gut reactions out loud.
 - If you are running in a tmux session named "duck", the user can speak voice commands to you by saying "ducky [command]".
 
+## Sibling subtrees with their own context
+
+- `bambu/CLAUDE.md` — the standalone Bambu Duck (ESP32-S3, ElevenLabs ConvAI via Fly.io relay). No runtime overlap with the Mac duck.
+- `boyband/CLAUDE.md` — one-time live performance rig: four Bambu Ducks on stage as a boy band. Reuses Bambu firmware unchanged via a local "fake relay" Stage app. Branch `feature/boy-band`.
+
 ## Hooks active in this project
 
 These fire automatically for your session:

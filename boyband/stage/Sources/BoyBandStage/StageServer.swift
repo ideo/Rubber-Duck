@@ -1,0 +1,393 @@
+// StageServer — Multi-duck WebSocket server (Network.framework + CryptoKit).
+//
+// Forked in spirit from widget/Sources/RubberDuckWidget/MiniServer.swift, but
+// adapted for Boy Band's needs:
+//   - Path-parameterized WebSocket routing: /duck/{id} where id ∈ D1..D4
+//   - Binary frame *sending* (PCM int16 LE) in addition to text
+//   - Per-duck connection registry exposed to callers
+//
+// Wire contract (must match bambu/relay/duck_proxy.py exactly so the
+// Bambu firmware doesn't notice it's talking to Stage):
+//   - Binary frame, Stage → duck: raw int16 LE PCM mono @ 16000 Hz
+//   - Text frame,   Stage → duck: JSON with a "type" field
+//                   ("interruption", "ready", ...)
+//   - Binary frame, duck → Stage: mic PCM (Stage drops this — we use the Mac mic)
+//   - Text frame,   duck → Stage: status / heartbeat — logged, not acted on
+//
+// If you change the format here, you've broken the firmware. Don't.
+
+import Foundation
+import Network
+import CryptoKit
+
+// MARK: - Duck identity
+
+/// Stable identifier for one of the four ducks on stage.
+/// Always D1..D4, left-to-right from the audience's POV.
+enum DuckID: String, CaseIterable, Sendable {
+    case D1, D2, D3, D4
+
+    static func parse(_ s: String) -> DuckID? { DuckID(rawValue: s) }
+}
+
+// MARK: - Connection wrapper
+
+/// A live WebSocket connection from one duck.
+///
+/// Thread-safety: NWConnection's send/receive are safe to call from any
+/// thread; we just wrap and forward. Marked @unchecked Sendable because
+/// NWConnection isn't Sendable in the SDK but is in practice.
+final class DuckConnection: @unchecked Sendable {
+    let id: UUID
+    let duck: DuckID
+    let connection: NWConnection
+    let connectedAt: Date
+
+    init(duck: DuckID, connection: NWConnection) {
+        self.id = UUID()
+        self.duck = duck
+        self.connection = connection
+        self.connectedAt = Date()
+    }
+
+    /// Send a raw PCM (int16 LE) chunk to the duck. Should be ~20ms of
+    /// audio per call to keep cadence matched to the firmware's drain.
+    /// 20ms @ 16kHz mono = 320 samples = 640 bytes.
+    func sendPCM(_ pcm: Data) {
+        let frame = WSFrame.encodeBinary(pcm)
+        connection.send(content: frame, completion: .idempotent)
+    }
+
+    /// Send a JSON control text frame. E.g. {"type":"interruption"}.
+    func sendText(_ text: String) {
+        let frame = WSFrame.encodeText(Data(text.utf8))
+        connection.send(content: frame, completion: .idempotent)
+    }
+
+    /// Send a JSON dict as a control text frame.
+    func sendJSON(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let str = String(data: data, encoding: .utf8) else { return }
+        sendText(str)
+    }
+
+    func close() {
+        connection.cancel()
+    }
+}
+
+// MARK: - WebSocket frame codec
+//
+// Same RFC 6455 framing as widget/MiniServer, plus a binary-encode helper.
+
+enum WSFrame {
+    static func encodeText(_ payload: Data) -> Data {
+        encode(opcode: 0x81, payload: payload)
+    }
+
+    static func encodeBinary(_ payload: Data) -> Data {
+        encode(opcode: 0x82, payload: payload)
+    }
+
+    private static func encode(opcode: UInt8, payload: Data) -> Data {
+        var frame = Data()
+        frame.append(opcode) // FIN + opcode (0x81=text, 0x82=binary)
+        let len = payload.count
+        if len < 126 {
+            frame.append(UInt8(len))
+        } else if len < 65536 {
+            frame.append(126)
+            frame.append(UInt8((len >> 8) & 0xFF))
+            frame.append(UInt8(len & 0xFF))
+        } else {
+            frame.append(127)
+            for i in stride(from: 56, through: 0, by: -8) {
+                frame.append(UInt8((len >> i) & 0xFF))
+            }
+        }
+        frame.append(payload)
+        return frame
+    }
+
+    /// Decode a client→server frame (masked per RFC 6455).
+    static func decode(_ data: Data) -> (opcode: UInt8, payload: Data, consumed: Int)? {
+        guard data.count >= 2 else { return nil }
+        let opcode = data[0] & 0x0F
+        let masked = (data[1] & 0x80) != 0
+        var payloadLen = Int(data[1] & 0x7F)
+        var headerLen = 2
+
+        if payloadLen == 126 {
+            guard data.count >= 4 else { return nil }
+            payloadLen = Int(data[2]) << 8 | Int(data[3])
+            headerLen = 4
+        } else if payloadLen == 127 {
+            guard data.count >= 10 else { return nil }
+            payloadLen = 0
+            for i in 0..<8 { payloadLen = (payloadLen << 8) | Int(data[2 + i]) }
+            headerLen = 10
+        }
+
+        let maskLen = masked ? 4 : 0
+        let totalHeader = headerLen + maskLen
+        let totalFrame = totalHeader + payloadLen
+        guard data.count >= totalFrame else { return nil }
+
+        var payload = Data(data[totalHeader..<totalFrame])
+        if masked {
+            let mask = [data[headerLen], data[headerLen + 1],
+                        data[headerLen + 2], data[headerLen + 3]]
+            for i in 0..<payload.count { payload[i] ^= mask[i % 4] }
+        }
+        return (opcode, payload, totalFrame)
+    }
+}
+
+// MARK: - Stage server
+
+/// Callbacks for the lifecycle of a single duck's connection.
+struct StageCallbacks: Sendable {
+    var onConnect:    (@Sendable (DuckConnection) -> Void)?
+    var onDisconnect: (@Sendable (DuckConnection) -> Void)?
+    /// Inbound text from the duck. Status/heartbeat — typically just log.
+    var onText:       (@Sendable (DuckConnection, String) -> Void)?
+    /// Inbound binary from the duck (mic PCM). Stage drops this on the floor
+    /// in normal operation; callback is provided so a debug build can capture
+    /// it if needed.
+    var onBinary:     (@Sendable (DuckConnection, Data) -> Void)?
+}
+
+final class StageServer: @unchecked Sendable {
+    let port: UInt16
+    private var listener: NWListener?
+    private let queue = DispatchQueue(label: "boyband.stage.server")
+    private var callbacks: StageCallbacks
+    private let lock = NSLock()
+    private var ducks: [DuckID: DuckConnection] = [:]
+
+    init(port: UInt16 = 3334, callbacks: StageCallbacks = StageCallbacks()) {
+        self.port = port
+        self.callbacks = callbacks
+    }
+
+    func start() throws {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        l.stateUpdateHandler = { state in
+            if case .failed(let err) = state {
+                fputs("[stage-server] listener failed: \(err)\n", stderr)
+            }
+        }
+        listener = l
+        l.start(queue: queue)
+    }
+
+    func stop() {
+        lock.lock()
+        let snapshot = Array(ducks.values)
+        ducks.removeAll()
+        lock.unlock()
+        for d in snapshot { d.close() }
+        listener?.cancel()
+        listener = nil
+    }
+
+    /// Currently-connected duck IDs.
+    func connectedDucks() -> [DuckID] {
+        lock.lock(); defer { lock.unlock() }
+        return ducks.keys.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    /// Snapshot of active connections (for broadcast loops).
+    func activeConnections() -> [DuckConnection] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(ducks.values)
+    }
+
+    /// Connection for a specific duck, if currently connected.
+    func connection(for duck: DuckID) -> DuckConnection? {
+        lock.lock(); defer { lock.unlock() }
+        return ducks[duck]
+    }
+
+    // MARK: - Accept + handshake
+
+    private func accept(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        readHTTP(connection: connection, buffer: Data())
+    }
+
+    private func readHTTP(connection: NWConnection, buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+            [weak self] data, _, isComplete, _ in
+            guard let self, let data else {
+                connection.cancel(); return
+            }
+            var buf = buffer
+            buf.append(data)
+
+            guard let headerEnd = buf.findCRLFCRLF() else {
+                if !isComplete { self.readHTTP(connection: connection, buffer: buf) }
+                else { connection.cancel() }
+                return
+            }
+
+            let headerStr = String(data: Data(buf[0..<headerEnd]), encoding: .utf8) ?? ""
+            guard let parsed = self.parseHeaders(headerStr) else {
+                connection.cancel(); return
+            }
+
+            // We only speak WebSocket. Everything else gets a polite 404.
+            guard parsed.headers["upgrade"]?.lowercased() == "websocket",
+                  let key = parsed.headers["sec-websocket-key"] else {
+                self.send404(connection)
+                return
+            }
+
+            // Route on path: /duck/{ID}
+            guard let duck = self.duckIDFromPath(parsed.path) else {
+                self.send404(connection)
+                return
+            }
+
+            self.upgradeWebSocket(connection: connection, key: key, duck: duck)
+        }
+    }
+
+    private func duckIDFromPath(_ path: String) -> DuckID? {
+        // Strip query string. Accept "/duck/D1" exactly.
+        let p = path.components(separatedBy: "?").first ?? path
+        let parts = p.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count == 2, parts[0] == "duck" else { return nil }
+        return DuckID.parse(String(parts[1]))
+    }
+
+    private func parseHeaders(_ raw: String) -> (method: String, path: String, headers: [String: String])? {
+        let lines = raw.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first else { return nil }
+        let parts = requestLine.split(separator: " ", maxSplits: 2)
+        guard parts.count >= 2 else { return nil }
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let key = line[line.startIndex..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            headers[key] = value
+        }
+        return (String(parts[0]), String(parts[1]), headers)
+    }
+
+    private func send404(_ connection: NWConnection) {
+        let body = "Stage only accepts WebSocket upgrades on /duck/{D1..D4}\n"
+        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n\(body)"
+        connection.send(content: Data(resp.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private func upgradeWebSocket(connection: NWConnection, key: String, duck: DuckID) {
+        let accept = wsAcceptKey(key)
+        let handshake = "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: \(accept)\r\n\r\n"
+
+        connection.send(content: Data(handshake.utf8), completion: .contentProcessed { [weak self] _ in
+            guard let self else { return }
+            let duckConn = DuckConnection(duck: duck, connection: connection)
+
+            // Replace any existing connection for this duck — a reconnect
+            // means the firmware has dropped the old one.
+            self.lock.lock()
+            let previous = self.ducks[duck]
+            self.ducks[duck] = duckConn
+            self.lock.unlock()
+            if let previous {
+                self.callbacks.onDisconnect?(previous)
+                previous.close()
+            }
+
+            self.callbacks.onConnect?(duckConn)
+            self.readWSFrames(duck: duckConn, buffer: Data())
+        })
+    }
+
+    private func readWSFrames(duck: DuckConnection, buffer: Data) {
+        duck.connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+            [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            guard error == nil, let data else {
+                self.handleDisconnect(duck)
+                return
+            }
+
+            var buf = buffer
+            buf.append(data)
+
+            while let frame = WSFrame.decode(buf) {
+                buf = Data(buf.dropFirst(frame.consumed))
+
+                switch frame.opcode {
+                case 0x1: // Text
+                    if let s = String(data: frame.payload, encoding: .utf8) {
+                        self.callbacks.onText?(duck, s)
+                    }
+                case 0x2: // Binary (duck mic) — typically dropped
+                    self.callbacks.onBinary?(duck, frame.payload)
+                case 0x8: // Close
+                    duck.connection.send(content: Data([0x88, 0x00]),
+                                         completion: .contentProcessed { _ in
+                        duck.connection.cancel()
+                    })
+                    self.handleDisconnect(duck)
+                    return
+                case 0x9: // Ping → Pong (echo payload)
+                    var pong = Data([0x8A])
+                    let p = frame.payload
+                    if p.count < 126 { pong.append(UInt8(p.count)) }
+                    pong.append(p)
+                    duck.connection.send(content: pong, completion: .idempotent)
+                default:
+                    break
+                }
+            }
+
+            if !isComplete {
+                self.readWSFrames(duck: duck, buffer: buf)
+            } else {
+                self.handleDisconnect(duck)
+            }
+        }
+    }
+
+    private func handleDisconnect(_ duck: DuckConnection) {
+        lock.lock()
+        // Only remove if this is still the registered connection for this
+        // duck — a stale callback shouldn't wipe out a fresh reconnect.
+        if ducks[duck.duck]?.id == duck.id { ducks.removeValue(forKey: duck.duck) }
+        lock.unlock()
+        callbacks.onDisconnect?(duck)
+    }
+
+    /// Compute Sec-WebSocket-Accept per RFC 6455.
+    private func wsAcceptKey(_ clientKey: String) -> String {
+        let magic = clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        let hash = Insecure.SHA1.hash(data: Data(magic.utf8))
+        return Data(hash).base64EncodedString()
+    }
+}
+
+// MARK: - Data helpers
+
+private extension Data {
+    func findCRLFCRLF() -> Int? {
+        guard count >= 4 else { return nil }
+        for i in 0..<(count - 3) {
+            if self[i] == 0x0D && self[i+1] == 0x0A &&
+               self[i+2] == 0x0D && self[i+3] == 0x0A { return i }
+        }
+        return nil
+    }
+}
