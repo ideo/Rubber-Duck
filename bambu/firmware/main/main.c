@@ -62,9 +62,12 @@ void app_main(void) {
     // purpose: light sleep with WiFi adds wake-from-beacon complexity
     // and has historically caused stability issues; DFS alone gets
     // most of the win without that risk.
+    // TEMP DEBUG: pinning min=max=160 to test whether DFS is causing
+    // audio choppiness. If clean, real fix is esp_pm_lock around the
+    // speaker drain task. Restore min=80 once that's in place.
     esp_pm_config_t pm = {
         .max_freq_mhz = 160,
-        .min_freq_mhz = 80,
+        .min_freq_mhz = 160,
         .light_sleep_enable = false,
     };
     esp_err_t pm_err = esp_pm_configure(&pm);
