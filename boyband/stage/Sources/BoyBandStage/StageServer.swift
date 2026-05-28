@@ -164,9 +164,16 @@ final class StageServer: @unchecked Sendable {
     private var callbacks: StageCallbacks
     private let lock = NSLock()
     private var ducks: [DuckID: DuckConnection] = [:]
+    /// MAC → slot map used to route real firmware (which hits /ws/duck
+    /// and identifies via X-Duck-Id). nil = production path disabled;
+    /// only /duck/{ID} works (test/dev mode).
+    private let duckMap: DuckMap?
 
-    init(port: UInt16 = 3334, callbacks: StageCallbacks = StageCallbacks()) {
+    init(port: UInt16 = 3334,
+         duckMap: DuckMap? = nil,
+         callbacks: StageCallbacks = StageCallbacks()) {
         self.port = port
+        self.duckMap = duckMap
         self.callbacks = callbacks
     }
 
@@ -246,22 +253,61 @@ final class StageServer: @unchecked Sendable {
                 return
             }
 
-            // Route on path: /duck/{ID}
-            guard let duck = self.duckIDFromPath(parsed.path) else {
+            // Resolve to a slot. Two accepted paths:
+            //   /duck/{ID}  → test/dev shortcut, slot from path
+            //   /ws/duck    → production (real firmware), slot from X-Duck-Id
+            switch self.resolveSlot(path: parsed.path, headers: parsed.headers) {
+            case .ok(let duck):
+                self.upgradeWebSocket(connection: connection, key: key, duck: duck)
+            case .unmappedMAC(let mac):
+                fputs("[stage-server] reject MAC=\(mac) — not in duck-map " +
+                      "(add it to duck-map.local.json and restart)\n", stderr)
+                self.sendError(connection, status: 403,
+                               body: "MAC \(mac) not in duck-map\n")
+            case .missingMAC:
+                fputs("[stage-server] reject /ws/duck — missing X-Duck-Id header\n", stderr)
+                self.sendError(connection, status: 400,
+                               body: "X-Duck-Id header required on /ws/duck\n")
+            case .productionDisabled:
+                fputs("[stage-server] reject /ws/duck — server started with --no-duck-map\n", stderr)
+                self.sendError(connection, status: 503,
+                               body: "/ws/duck disabled (no duck-map loaded)\n")
+            case .notFound:
                 self.send404(connection)
-                return
             }
-
-            self.upgradeWebSocket(connection: connection, key: key, duck: duck)
         }
     }
 
-    private func duckIDFromPath(_ path: String) -> DuckID? {
-        // Strip query string. Accept "/duck/D1" exactly.
+    private enum SlotResolution {
+        case ok(DuckID)
+        case unmappedMAC(String)
+        case missingMAC
+        case productionDisabled
+        case notFound
+    }
+
+    /// Apply both routing rules. See boyband/docs/duck-id-mapping.md.
+    private func resolveSlot(path: String, headers: [String: String]) -> SlotResolution {
+        // Strip query string for path matching.
         let p = path.components(separatedBy: "?").first ?? path
-        let parts = p.split(separator: "/", omittingEmptySubsequences: true)
-        guard parts.count == 2, parts[0] == "duck" else { return nil }
-        return DuckID.parse(String(parts[1]))
+        let parts = p.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+
+        // Test/dev path: /duck/{D1..D4}
+        if parts.count == 2, parts[0] == "duck", let duck = DuckID.parse(parts[1]) {
+            return .ok(duck)
+        }
+
+        // Production path: /ws/duck (what real firmware sends)
+        if parts == ["ws", "duck"] {
+            guard let map = duckMap else { return .productionDisabled }
+            guard let mac = headers["x-duck-id"], !mac.isEmpty else { return .missingMAC }
+            if let duck = map.lookup(mac: mac) {
+                return .ok(duck)
+            }
+            return .unmappedMAC(mac.uppercased())
+        }
+
+        return .notFound
     }
 
     private func parseHeaders(_ raw: String) -> (method: String, path: String, headers: [String: String])? {
@@ -280,8 +326,23 @@ final class StageServer: @unchecked Sendable {
     }
 
     private func send404(_ connection: NWConnection) {
-        let body = "Stage only accepts WebSocket upgrades on /duck/{D1..D4}\n"
-        let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n\(body)"
+        sendError(connection, status: 404,
+                  body: "Stage accepts WebSocket upgrades on /ws/duck (with " +
+                        "X-Duck-Id header) or /duck/{D1..D4} (test path).\n")
+    }
+
+    private func sendError(_ connection: NWConnection, status: Int, body: String) {
+        let statusText: String
+        switch status {
+        case 400: statusText = "Bad Request"
+        case 403: statusText = "Forbidden"
+        case 404: statusText = "Not Found"
+        case 503: statusText = "Service Unavailable"
+        default:  statusText = "Error"
+        }
+        let resp = "HTTP/1.1 \(status) \(statusText)\r\n" +
+                   "Content-Length: \(body.utf8.count)\r\n" +
+                   "Connection: close\r\n\r\n\(body)"
         connection.send(content: Data(resp.utf8), completion: .contentProcessed { _ in
             connection.cancel()
         })

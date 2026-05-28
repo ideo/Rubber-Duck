@@ -1,0 +1,7 @@
+{
+  "_comment_format": "Chip MAC (uppercase hex, no separators) → boy band slot. See boyband/docs/duck-id-mapping.md for how to find each duck's MAC and the venue workflow. Copy this to duck-map.local.json (gitignored) and fill in your actual hardware. Keys are case-insensitive; Stage uppercases on lookup. The leading _comment_* keys are silently ignored by Stage (any value that isn't a valid DuckID is skipped with a stderr warning).",
+  "A0B7657ECC10": "D1",
+  "A0B7657ECCE4": "D2",
+  "A0B7657FA38C": "D3",
+  "A0B7657FB504": "D4"
+}

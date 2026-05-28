@@ -27,6 +27,10 @@ Usage examples:
     # Test the Stage running on another Mac (e.g. the show laptop)
     python3 fake-duck.py --server ws://stage.local:3334
 
+    # Exercise the production /ws/duck route (uses MAC header instead of
+    # the /duck/{ID} test shortcut). MAC must be in Stage's duck-map.
+    python3 fake-duck.py --mac A0B7657ECC10
+
     # Verify all four slots (one process each, in 4 terminals)
     for d in D1 D2 D3 D4; do
         python3 fake-duck.py --duck $d --out cap-$d.wav --duration 5 &
@@ -64,12 +68,22 @@ def log(msg: str) -> None:
 
 
 async def run(args: argparse.Namespace) -> int:
-    url = f"{args.server.rstrip('/')}/duck/{args.duck}"
-    log(f"connecting to {url}")
+    # Two routes: --mac uses production /ws/duck + X-Duck-Id, else the
+    # /duck/{ID} test shortcut.
+    if args.mac:
+        url = f"{args.server.rstrip('/')}/ws/duck"
+        extra_headers = [("X-Duck-Id", args.mac.upper())]
+        slot_desc = f"MAC={args.mac.upper()}"
+    else:
+        url = f"{args.server.rstrip('/')}/duck/{args.duck}"
+        extra_headers = []
+        slot_desc = args.duck
+    log(f"connecting to {url}  ({slot_desc})")
 
     try:
-        async with websockets.connect(url, max_size=2**24) as ws:
-            log(f"connected as {args.duck}; writing PCM → {args.out}")
+        async with websockets.connect(url, max_size=2**24,
+                                      additional_headers=extra_headers) as ws:
+            log(f"connected as {slot_desc}; writing PCM → {args.out}")
 
             if args.send_ready:
                 await ws.send(json.dumps({"type": "ready"}))
@@ -135,7 +149,11 @@ def main() -> int:
     p.add_argument("--server", default="ws://localhost:3334",
                    help="Stage server base URL (default: ws://localhost:3334)")
     p.add_argument("--duck", default="D1", choices=["D1", "D2", "D3", "D4"],
-                   help="Which duck slot to claim (default: D1)")
+                   help="Which slot via test path /duck/{ID} (default: D1). "
+                        "Ignored if --mac is set.")
+    p.add_argument("--mac", default=None,
+                   help="Use production path /ws/duck with this MAC as the "
+                        "X-Duck-Id header (must be in Stage's duck-map).")
     p.add_argument("--out", default="captured.wav",
                    help="Output WAV file for inbound PCM (default: captured.wav)")
     p.add_argument("--duration", type=float, default=10.0,

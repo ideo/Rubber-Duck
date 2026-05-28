@@ -5,10 +5,28 @@ Living status doc. Update in the same commit as the work it describes.
 ## Where we are
 
 **Week 1 — Stage skeleton verified end-to-end (in software).**
-Branch `feature/boy-band`. Docs scaffolded. Stage CLI builds and
-runs, listens on `ws://0.0.0.0:3334/duck/{D1..D4}`, handshakes
-WebSocket per RFC 6455, sends binary PCM and text JSON, generates a
-per-duck sine for sound check (`--sine` flag).
+**Week 2 — Production routing + Mode 1 skeleton landed.** Branch
+`feature/boy-band`.
+
+Stage CLI builds and runs, accepts WebSocket upgrades on:
+  - `/ws/duck` + `X-Duck-Id: <MAC>` header (real firmware path,
+    routed via `duck-map.local.json`)
+  - `/duck/{D1..D4}` (test/dev shortcut, used by fake-duck.py)
+
+Both paths verified with the test matrix in commit history.
+Rejected connections (unknown MAC, missing header, no map loaded)
+produce clear HTTP responses and helpful stderr lines telling the
+operator what to fix.
+
+**Mode 1 input skeleton** present (`DAWInput.swift`): finds a 4+ch
+CoreAudio input device, taps audio, converts to int16 @ 16 kHz,
+demuxes 4 channels into 4 ducks. CLI flag `--mode1 --input-device
+BlackHole`. **One known limitation**: macOS 26 doesn't expose the
+"set explicit input device" API to Swift, so for now Stage captures
+from whichever device is the system default input. Workflow at the
+venue: set BlackHole 4ch as system default input in System
+Settings → Sound → Input before starting Stage. Full fix is to
+rewrite around AUHAL (~80 lines) — flagged as TODO in the source.
 
 **End-to-end protocol verified** with `boyband/scripts/fake-duck.py`:
 fake duck connects, Stage broadcasts sine, fake duck writes WAV.
@@ -20,22 +38,32 @@ problem is firmware/I2S/speaker, not Stage.
 
 ## Next up
 
-1. **Hardware smoke test.** Point one real Bambu Duck's NVS
-   `relay_url` at `ws://<mac>.local:3334`, reboot it, confirm it
-   connects to `/duck/D1` and plays a steady C4 sine when Stage is
-   run with `--sine`. If the head doesn't wobble, that's a wire
-   format mismatch — re-cross-check with `bambu/relay/duck_proxy.py`.
-2. **Cross-check `docs/stage-protocol.md`** against actual observed
-   frames once a duck is connected. Replace the stub with concrete
-   shapes seen on the wire.
+1. **Hardware smoke test.** Plug in one real Bambu Duck. Find its
+   MAC (see `docs/duck-id-mapping.md` for three ways). Copy
+   `duck-map.example.json` → `duck-map.local.json`, fill in that
+   one MAC as D1. Point the duck's NVS `relay_url` at
+   `ws://<mac>.local:3334`. Reboot. Run `swift run BoyBandStage
+   --sine` from `boyband/stage`. Listen for a C4 tone and watch the
+   head wobble.
+2. **Install BlackHole 4ch + first DAW round-trip** (once #1 works).
+   `brew install blackhole-4ch`; set as system default input;
+   `swift run BoyBandStage --mode1`; play a 4-channel test bounce
+   from Logic.
 3. **Audition voices.** Pick 4 ElevenLabs voice_ids with distinct
    characters that survive over a PA. Record IDs + notes in
    `boyband/voices.json` (file to be created).
-4. **Open question — duck ID mapping.** Right now Stage routes by
-   URL path (`/duck/D1`). The firmware needs to know which ID it
-   is. Either bake it into NVS at provisioning time (preferred), or
-   have Stage assign on first-connect. Decide before Week 2 because
-   multi-duck rehearsal can't start until this is solved.
+4. **Begin orchestrator (Week 3 work)** — Anthropic streaming
+   client + ElevenLabs streaming TTS → Stage's existing per-duck
+   `sendPCM`. Mic + PTT can wait until orchestrator works in a
+   text-input dry-run.
+
+## Resolved decisions
+
+- ~~Duck ID mapping~~. **Resolved 2026-05-28**: MAC → slot via
+  `duck-map.local.json` (gitignored, per-Mac). Stage accepts both
+  `/ws/duck` + X-Duck-Id (production) and `/duck/{ID}` (test). Zero
+  firmware change. Full rationale + workflow in
+  `docs/duck-id-mapping.md`.
 
 ## Open decisions blocking work
 
@@ -57,16 +85,25 @@ problem is firmware/I2S/speaker, not Stage.
 - [x] Sine generator (`--sine [DUCKID]`) for sound check
 - [x] CLI args, signal handling, graceful shutdown
 - [x] `boyband/scripts/fake-duck.py` — pretends to be a duck, captures
-      inbound PCM to WAV, exercises text + binary frame paths
+      inbound PCM to WAV, exercises text + binary frame paths.
+      Updated with `--mac` flag to exercise production /ws/duck route.
 - [x] End-to-end protocol verification (sine round-trip → WAV →
       frequency confirmed)
+- [x] `docs/stage-protocol.md` — upgraded from stub to authoritative
+      contract, cross-checked against duck_proxy.py + agent.c
+- [x] `docs/duck-id-mapping.md` + Stage `/ws/duck` + X-Duck-Id route
+      + `DuckMap` config (resolved the multi-duck rehearsal blocker)
+- [x] `DAWInput.swift` — Mode 1 CoreAudio input skeleton (4ch device
+      discovery, tap, format conversion, demux, per-duck PCM send).
+      One TODO: explicit device selection (works around via system default).
+- [x] `--list-inputs` CLI flag for device discovery
 
 ## Not yet started
 
 - [ ] First real-hardware smoke test (one duck plays sine)
 - [ ] `boyband/voices.json` (voice catalog)
-- [ ] `docs/stage-protocol.md` upgrade from stub to confirmed-on-wire
-- [ ] BlackHole input adapter (Mode 1, Week 2)
+- [ ] BlackHole-installed end-to-end DAW test
+- [ ] AUHAL rewrite of DAWInput (explicit device selection)
 - [ ] Orchestrator client + ElevenLabs TTS streaming (Mode 2, Week 3)
 - [ ] Mic + PTT + interrupt (Week 3-4)
 - [ ] Hotkeys + mode flip + `/health` endpoint (Week 4)
