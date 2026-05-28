@@ -4,13 +4,19 @@ Living status doc. Update in the same commit as the work it describes.
 
 ## Where we are
 
-**Week 1 — Stage skeleton up.** Branch `feature/boy-band`. Docs
-scaffolded. Stage CLI builds and runs, listens on
-`ws://0.0.0.0:3334/duck/{D1..D4}`, handshakes WebSocket per RFC 6455,
-sends binary PCM and text JSON, generates a per-duck sine for sound
-check (`--sine` flag). Verified via smoke test (HTTP 404 path,
-listener bind, signal shutdown). **Not yet verified against a real
-duck on hardware** — first hardware test is the next concrete step.
+**Week 1 — Stage skeleton verified end-to-end (in software).**
+Branch `feature/boy-band`. Docs scaffolded. Stage CLI builds and
+runs, listens on `ws://0.0.0.0:3334/duck/{D1..D4}`, handshakes
+WebSocket per RFC 6455, sends binary PCM and text JSON, generates a
+per-duck sine for sound check (`--sine` flag).
+
+**End-to-end protocol verified** with `boyband/scripts/fake-duck.py`:
+fake duck connects, Stage broadcasts sine, fake duck writes WAV.
+Zero-crossing analysis confirms 329.5 Hz on D2 (expected E4 =
+329.6 Hz) at 0.20 amplitude. Every byte on the wire is correct.
+
+**Hardware not yet tested.** If a real duck fails after this, the
+problem is firmware/I2S/speaker, not Stage.
 
 ## Next up
 
@@ -50,6 +56,10 @@ duck on hardware** — first hardware test is the next concrete step.
 - [x] Multi-duck WebSocket server with binary PCM send
 - [x] Sine generator (`--sine [DUCKID]`) for sound check
 - [x] CLI args, signal handling, graceful shutdown
+- [x] `boyband/scripts/fake-duck.py` — pretends to be a duck, captures
+      inbound PCM to WAV, exercises text + binary frame paths
+- [x] End-to-end protocol verification (sine round-trip → WAV →
+      frequency confirmed)
 
 ## Not yet started
 
