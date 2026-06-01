@@ -329,10 +329,27 @@ When a duck connects successfully:
 > you need the duck to stay connected.** Read it once to capture the boot
 > log / MAC, then leave it alone and use the methods below.
 
+> ⚠️ **Use `netstat`, NOT `lsof`, to check whether ducks are connected.**
+> Stage's listener is dual-stack (`tcp46 *:3334`), and `lsof -iTCP:3334`
+> shows only the LISTEN socket — it does **not** list the IPv4 ducks'
+> ESTABLISHED child sockets. We burned a real detour trusting `lsof`'s
+> "0 connections" while the ducks were in fact connected (their serial
+> said `ws connected to relay`). `netstat -an | grep '\.3334'` shows the
+> true ESTABLISHED connections.
+
 Non-destructive checks:
 
 ```sh
-# Is Stage listening?
+# Which ducks are connected? (THE reliable check — one ESTABLISHED per duck)
+netstat -an | grep '\.3334' | grep ESTABLISHED
+# e.g. 10.5.128.41.3334  10.5.128.51.50023  ESTABLISHED   ← Mallard
+#      10.5.128.41.3334  10.5.128.15.60765  ESTABLISHED   ← Pekin
+
+# Is a duck alive on the network at all? (ping its STA IP from ARP)
+arp -a | grep -i 'dc:b4:d9'        # find duck IPs
+ping -c2 <duck-ip>                 # 0% loss = alive
+
+# Is Stage listening? (lsof is fine for the LISTEN socket specifically)
 lsof -nP -iTCP:3334 | grep LISTEN
 
 # Is a duck actually connected (TCP ESTABLISHED)?
