@@ -55,6 +55,22 @@ Zero-crossing analysis confirms 329.5 Hz on D2 (expected E4 =
 **Hardware not yet tested.** If a real duck fails after this, the
 problem is firmware/I2S/speaker, not Stage.
 
+**🎉 TWO DUCKS CONNECTED SIMULTANEOUSLY (2026-06-01).** Mallard (D1,
+duck_id `dcb4d92961e9`) and Pekin (D2, duck_id `dcb4d9296125`) both
+flashed BOYBAND, both on IDEO-Guest, both holding live Stage
+connections at once. Multi-duck foundation proven on hardware.
+Multi-`--play` routes distinct audio per duck (verified in software
+via two fake-ducks). Have NOT yet played different audio out the two
+physical ducks at once (gated on noise tolerance, not on unknowns).
+
+Two hardware learnings (also in MEMORY.md):
+- **duck_id = SoftAP MAC = base MAC + 1.** esptool reports base MAC;
+  duck-map needs base+1. (Pekin base `…6124` → duck_id `…6125`.)
+- **Copy WiFi creds duck→duck via NVS dump** — no phone/portal:
+  `esptool read_flash 0x9000 0x6000` then `write_flash 0x9000` to the
+  target. Safe (duck_id is efuse-derived, not NVS). Used to give Pekin
+  Mallard's IDEO-Guest creds.
+
 **Real-audio path built (`--play FILE [DUCK] [--loop]`).** New
 `FilePlayer.swift` decodes any audio file (wav/aiff/mp3/m4a),
 resamples once to 16k/mono/int16 via AVAudioConverter, and paces it
