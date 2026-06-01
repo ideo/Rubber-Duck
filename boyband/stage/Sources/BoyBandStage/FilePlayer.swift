@@ -121,13 +121,16 @@ final class FilePlayer: @unchecked Sendable {
         t.schedule(deadline: .now(), repeating: .milliseconds(20))
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            // Send one 20 ms chunk to the duck (if it's connected).
+            // Only advance + send when the duck is actually connected. If it's
+            // mid-reconnect (e.g. right after a Stage restart), HOLD the cursor
+            // so playback starts from where we left off once it's back — we
+            // don't burn through the file streaming into the void.
+            guard let conn = self.server.connection(for: self.duck) else {
+                return  // not connected yet; hold position, try again in 20ms
+            }
             let end = min(self.cursor + kChunkBytes, self.pcm.count)
             if self.cursor < end {
-                let chunk = Data(self.pcm[self.cursor..<end])
-                if let conn = self.server.connection(for: self.duck) {
-                    conn.sendPCM(chunk)
-                }
+                conn.sendPCM(Data(self.pcm[self.cursor..<end]))
                 self.cursor = end
             }
             if self.cursor >= self.pcm.count {

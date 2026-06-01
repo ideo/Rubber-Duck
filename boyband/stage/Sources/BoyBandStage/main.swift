@@ -43,11 +43,11 @@ struct Args {
     var inputDeviceMatch: String = "BlackHole"
     /// If true, just print all input devices and exit.
     var listInputs: Bool = false
-    /// Path to an audio file to stream to one duck (real-audio test).
-    var playFile: String? = nil
-    /// Which duck to play the file to (default D1).
-    var playDuck: DuckID = .D1
-    /// Loop the played file instead of stopping after one pass.
+    /// One or more (file → duck) pairs to stream. Repeatable --play lets
+    /// us drive multiple ducks with DIFFERENT audio simultaneously — the
+    /// core of the multi-duck concept test.
+    var plays: [(path: String, duck: DuckID)] = []
+    /// Loop the played file(s) instead of stopping after one pass.
     var loop: Bool = false
 }
 
@@ -95,12 +95,15 @@ func parseArgs() -> Args {
             guard i < argv.count else {
                 fputs("error: --play requires a file path\n", stderr); exit(2)
             }
-            args.playFile = argv[i]
-            // Optional next arg = target duck.
+            let path = argv[i]
+            // Optional next arg = target duck (default D1). Repeatable:
+            // --play a.wav D1 --play b.wav D2 drives both at once.
+            var duck = DuckID.D1
             if i + 1 < argv.count, let d = DuckID.parse(argv[i + 1]) {
-                args.playDuck = d
+                duck = d
                 i += 1
             }
+            args.plays.append((path: path, duck: duck))
         case "--loop":
             args.loop = true
         case "-h", "--help":
@@ -195,24 +198,9 @@ if args.listInputs {
 
 var sineGen: SineGenerator?  // set after server starts
 var dawInput: DAWInput?      // set if Mode 1 enabled
-var filePlayer: FilePlayer?  // set if --play given
+var filePlayers: [FilePlayer] = []  // one per --play pair
 
-let callbacks = StageCallbacks(
-    onConnect: { conn in
-        log("connect    \(conn.duck.rawValue)  id=\(conn.id.uuidString.prefix(8))")
-    },
-    onDisconnect: { conn in
-        log("disconnect \(conn.duck.rawValue)  id=\(conn.id.uuidString.prefix(8))")
-    },
-    onText: { conn, text in
-        log("text       \(conn.duck.rawValue)  \(text)")
-    },
-    onBinary: { _, _ in
-        // Duck mic frames are dropped — we use the Mac mic in Mode 2.
-    }
-)
-
-// Resolve duck-map.
+// Resolve duck-map FIRST so the connect/disconnect logs can show names.
 let duckMap: DuckMap? = {
     if args.noDuckMap { return nil }
     let path = args.duckMapPath ?? defaultDuckMapPath()
@@ -227,9 +215,33 @@ let duckMap: DuckMap? = {
     }
     let entries = map.allEntries
     log("duck-map    loaded \(path) — \(entries.count) entries")
-    for e in entries { log("  \(e.duck.rawValue) ← \(e.mac)") }
+    for e in entries {
+        let nm = e.name.map { " \"\($0)\"" } ?? ""
+        log("  \(e.duck.rawValue)\(nm) ← \(e.mac)")
+    }
     return map
 }()
+
+// Label a connection as "D2 (Pekin)" when a name is known, else just "D2".
+func label(_ duck: DuckID) -> String {
+    if let n = duckMap?.name(for: duck) { return "\(duck.rawValue) (\(n))" }
+    return duck.rawValue
+}
+
+let callbacks = StageCallbacks(
+    onConnect: { conn in
+        log("connect    \(label(conn.duck))  id=\(conn.id.uuidString.prefix(8))")
+    },
+    onDisconnect: { conn in
+        log("disconnect \(label(conn.duck))  id=\(conn.id.uuidString.prefix(8))")
+    },
+    onText: { conn, text in
+        log("text       \(label(conn.duck))  \(text)")
+    },
+    onBinary: { _, _ in
+        // Duck mic frames are dropped — we use the Mac mic in Mode 2.
+    }
+)
 
 let server = StageServer(port: args.port, duckMap: duckMap, callbacks: callbacks)
 
@@ -281,27 +293,28 @@ if args.mode1 {
     }
 }
 
-if let path = args.playFile {
+if !args.plays.isEmpty {
     if args.sine || args.mode1 {
         fputs("error: --play is mutually exclusive with --sine / --mode1\n", stderr)
         exit(2)
     }
-    let player = FilePlayer(server: server, duck: args.playDuck, loop: args.loop)
-    do {
-        let dur = try player.load(path: path)
-        log(String(format: "play        %@ → %@ (%.1fs, 16k/mono, %@)",
-                   (path as NSString).lastPathComponent, args.playDuck.rawValue,
-                   dur, args.loop ? "looping" : "once"))
-        // Wait for the target duck to be connected before starting, so we
-        // don't waste the first pass streaming into the void.
-        if server.connection(for: args.playDuck) == nil {
-            log("play        waiting for \(args.playDuck.rawValue) to connect…")
+    for play in args.plays {
+        let player = FilePlayer(server: server, duck: play.duck, loop: args.loop)
+        do {
+            let dur = try player.load(path: play.path)
+            log(String(format: "play        %@ → %@ (%.1fs, 16k/mono, %@)",
+                       (play.path as NSString).lastPathComponent, play.duck.rawValue,
+                       dur, args.loop ? "looping" : "once"))
+            // FilePlayer holds its cursor until the target duck connects, so
+            // each pair starts from the top whenever its duck is ready.
+            let id = play.duck.rawValue
+            player.start(onDone: { log("play        \(id) finished") })
+            filePlayers.append(player)
+        } catch {
+            fputs("fatal: --play \(play.path) failed: \(error.localizedDescription)\n",
+                  stderr)
+            exit(1)
         }
-        player.start(onDone: { log("play        finished"); })
-        filePlayer = player
-    } catch {
-        fputs("fatal: --play failed: \(error.localizedDescription)\n", stderr)
-        exit(1)
     }
 }
 
@@ -314,7 +327,7 @@ let shutdown = {
     log("shutting down")
     sineGen?.stop()
     dawInput?.stop()
-    filePlayer?.stop()
+    filePlayers.forEach { $0.stop() }
     server.stop()
     exit(0)
 }
