@@ -1,26 +1,63 @@
 # Audio garble / underrun — debugging status
 
-**Status: UNRESOLVED. Pinned to revisit.** Two ducks (and now even one
-duck) playing a streamed PCM track over WiFi degrade into choppy,
-"slow-with-gaps" audio. This doc is the honest record of what we tried,
-what's ruled out, and what to do next — written so anyone (Devin, Jenna,
-their Claude) can pick it up cold without re-walking the whole maze.
+**Status: CURRENT WORKING FIX FOUND (2026-06-01).** Two ducks can now play
+the 14.6s `dialogue_*` stems and the 22.6s `moby_*` stems cleanly together
+over WebSocket at 160 MHz. This doc keeps the debugging trail, but the
+operational answer is now clear: use strict 20 ms Stage pacing and kick any
+socket that is already backlogged before starting a cue.
 
-> **TL;DR:** The symptom is **underrun** (audio plays slow with gaps),
-> NOT white-noise corruption. We threw a lot of fixes at it (CPU pin,
-> zero-mic, prebuffer, per-duck queues, drop-frames) and **it still
-> chokes — even on a single duck.**
+> **TL;DR:** The symptom was **underrun** (audio plays slow with gaps),
+> plus one distinct white-noise risk from odd-byte PCM fragment alignment.
+> The working combination is:
 >
-> **FRAME SIZE — TESTED, did NOT fix it.** Strong hypothesis: relay sends
-> few large frames, we sent ~50 tiny 640B frames/sec. Changed Stage to
-> **16 KB frames** (~2/sec, matching the relay's `buffer_size=16384`).
-> **Still chokes the same.** So raw WS frame count is NOT the cause
-> either. (Kept the 16KB frame size anyway — it's closer to the proven
-> reference and harmless.)
+> - BOYBAND firmware pinned at **160 MHz**.
+> - Duck-side odd-byte PCM carry guard in `agent.c`.
+> - Stage sends **640 byte / 20 ms** PCM frames with only one frame of lead.
+> - Stage exposes `/health` and `/kick` so a wedged websocket can be closed
+>   and the duck can reconnect before playback.
 >
-> **We are now out of cheap guesses. STOP guessing — instrument both
-> ends (see "MEASURE BOTH ENDS" below). That is the only honest next
-> step.** Parked 2026-06-01.
+> **Important:** the bad socket state is real but transient. In one Mallard
+> solo run, Stage showed `inFlight=250.6KB` and `lastAck=11285.9ms`; audio
+> was choppy. After Stage/connection reset, both ducks played the same style
+> of file cleanly. Treat a backlogged socket as poisoned: kick it and wait for
+> reconnect.
+
+## Current operator controls
+
+Stage now supports these HTTP controls while running:
+
+```sh
+curl http://localhost:3334/health
+curl http://localhost:3334/status
+curl http://localhost:3334/kick/D1
+curl 'http://localhost:3334/kick?duck=D2'
+curl http://localhost:3334/kick      # kicks only currently unhealthy sockets
+curl http://localhost:3334/play
+```
+
+`/play` runs a preflight. If any socket is already unhealthy, Stage closes
+that websocket and returns `409 Conflict` instead of starting playback. The
+BOYBAND firmware reconnects automatically after Stage closes the socket; wait
+for `/health` to show all target ducks as `ok`, then trigger `/play` again.
+
+Current Stage health heuristics:
+
+| Signal | Meaning |
+|---|---|
+| `inFlight >= 64KB` | Stage has audio stuck behind the socket; the duck is already late. |
+| `lastAck >= 1000ms` | The most recent send completion took too long; suspect the socket. |
+
+Use `/kick/D1` or `/kick/D2` manually if a duck sounds choppy even before
+the threshold catches it. Kicking during playback will interrupt that duck;
+the intended use is pre-show/pre-cue recovery.
+
+## Verified clean runs
+
+| Run | Result |
+|---|---|
+| `dialogue_D2.wav` solo on Pekin | Clean; full 468480 bytes received/played. |
+| `dialogue_D1.wav` + `dialogue_D2.wav` together | Clean; both ducks received/played full 468480 bytes. |
+| `moby_D1.wav` + `moby_D2.wav` together | Clean; both ducks received/played full 722560 bytes. |
 
 ## ⭐ Why does this work WORSE than the internet-based Bambu duck?
 
@@ -50,13 +87,12 @@ was defended — it was backwards. **Match the relay: few big frames.**
 - **NOT white noise.** This rules out the byte-misalignment overflow
   path (odd-byte drop in the firmware's `on_binary`). Confirmed by ear
   repeatedly.
-- A **short** track (~14.6s) was mostly OK ("a few good runs, minor
-  dropped frames"). A **longer** track (~22.6s) reliably chokes.
-- Initially looked like it only happened with **two** ducks; **then a
-  single duck choked too.** So it is NOT purely two-duck contention.
-- The WS connection stays **up** throughout (verified via
-  `netstat -an | grep .3334` showing ESTABLISHED the whole run — no
-  disconnects). No `spk stream full` overflow logged on the duck.
+- With 80 ms chunks and/or large lead, short clips stretched into seconds
+  and exposed ~0.5s receive/playback gaps.
+- With strict 20 ms chunks and one-frame lead, the checked-in 14.6s and
+  22.6s two-duck stems play through cleanly.
+- A socket can stay **connected** while behaving badly; the tell is Stage
+  send backlog/latency, not TCP disconnect state.
 
 ## What is DEFINITIVELY ruled out (with evidence)
 
@@ -66,11 +102,10 @@ was defended — it was backwards. **Match the relay: few big frames.**
 | White-noise / byte misalignment / buffer **overflow** | Symptom is underrun (gaps), not white noise. No `spk stream full` logged. |
 | Duck disconnecting mid-play | `netstat` shows ESTABLISHED for the entire run, every time. |
 | Mac CPU / sender flooding | Measured real-time send rate to fake-duck; Mac is not flooding or choking. |
-| DFS dropping CPU to 80 MHz (the bambu-garble-fix theory) | Firmware now **pins CPU at 160 MHz, DFS off** (BOYBAND build) — still chokes. |
-| CPU clock too low (would 240 help?) | No. 160 MHz is ample for one 16kHz mono stream (~32KB/s is trivial). Choke persists at a steady 160 ⇒ not clock-bound. 240 also **browns out** (documented in sdkconfig.defaults) so it's off the table regardless. |
-| Console logging blocking on a full USB-CDC TX buffer | Firmware now **silences all logging** (`esp_log_level_set("*", ESP_LOG_NONE)`) in BOYBAND — still chokes. (Was a real hazard worth removing, just not THE cause.) |
-| Mic task starving the speaker on the shared full-duplex I2S | Firmware now spawns **zero mic/ws-send/mute tasks** in BOYBAND and bumps `spk_task` to priority 7 — still chokes. (Also a real improvement — mic_task at prio 7 *was* above spk_task at 6 — just not THE cause on its own.) |
-| WS frame too small (50 tiny 640B frames/sec vs relay's few large) | Changed Stage to **16 KB frames** (~2/sec). **Still chokes.** Frame count ruled out. |
+| DFS dropping CPU to 80 MHz (the bambu-garble-fix theory) | Firmware pins CPU at 160 MHz, DFS off. A 240 MHz diagnostic did not fix bad delivery, so 160 MHz is the target. |
+| CPU clock too low | 160 MHz is enough for two raw 16kHz mono streams when the socket is healthy. |
+| Mic task starving the speaker on the shared full-duplex I2S | BOYBAND spawns only `spk_task` plus diagnostics; clean two-duck playback confirms mic contention is not required for the symptom. |
+| Stage 80 ms chunks / lead | This was a real cause. D2 received a 0.5s clip over 2317 ms with ~467 ms gaps. Strict 20 ms / 640-byte pacing fixed the measured gap pattern. |
 
 ## What's currently deployed (the firmware + Stage state right now)
 
@@ -83,53 +118,55 @@ was defended — it was backwards. **Match the relay: few big frames.**
   Making it TX-only is a not-yet-done further step.)
 
 **Stage (`boyband/stage`):**
-- FilePlayer **prebuffers** the whole track into the duck's 1 MB buffer
-  (wall-clock pace + 700 KB lead).
-- DuckConnection: per-duck send queue (isolation) + `maxInFlight=1500`
-  backstop (effectively buffer-don't-drop, for pre-recorded playback).
-- Control channel: `/play`, `/stop`, `/status` — no Stage restarts
-  between runs.
+- FilePlayer sends strict **640-byte / 20 ms** PCM frames with one frame
+  of lead and pads the final partial frame with silence.
+- DuckConnection: per-duck send queue (isolation), send counters, and
+  health detection for wedged sockets.
+- Control channel: `/play`, `/stop`, `/status`, `/health`, `/kick`,
+  `/kick/D1`, `/kick/D2`.
 
-**None of it fixed the underrun.**
+## Key diagnosis
 
-## The key unanswered question
+The duck plays exactly what it receives. When playback has audible gaps,
+duck `rx_max_gap_ms` and `spk_max_gap_ms` rise together, and the speaker
+stream stays empty rather than filling. That points to delivery/socket
+timing, not I2S playback stalling.
 
-If a track is **fully prebuffered into the duck's 1 MB local buffer**,
-WiFi delivery should be irrelevant to playback — yet it still underruns.
-That points at the duck's **playback path** (spk_task → I2S) stalling for
-a non-CPU, non-mic reason… **OR** the prebuffer never actually fills
-(data isn't arriving fast/steadily enough even for one duck). **We have
-not measured which.** That is the gap.
+When Stage shows high `inFlight` or `lastAck`, that socket is already bad.
+Close it and let the BOYBAND firmware reconnect before starting the cue.
 
-## What we should have done (and should do next): MEASURE BOTH ENDS
+## Measure both ends
 
-We can instrument both sides simultaneously — we just haven't:
+Both sides are now instrumented:
 
-1. **Mac side:** log bytes-sent-per-second per duck and the NWConnection
-   send-completion timing (are sends actually completing, and at what
-   rate?). Add a counter to `DuckConnection.sendPCM`.
-2. **Duck side:** add a **non-blocking** stat path (NOT the USB console —
-   that blocks; send a tiny WS *text* frame back to Stage, or a UDP stat
-   packet) reporting every ~1s: bytes received, `s_spk_stream` fill level,
-   and an I2S underrun counter (increment when `i2s_channel_write` had to
-   pad/wait or the stream was empty).
-3. Run one track and **compare the two timelines.** This definitively
-   localizes the break: if the duck's received-bytes/s tracks 32KB/s but
-   the spk_stream still empties → playback-path bug. If received-bytes/s
-   sags below 32KB/s → it's delivery (WiFi), even for one duck.
+1. **Mac side:** Stage's `/status` now reports per-duck send counters:
+   queued frames/bytes, completed frames/bytes, in-flight bytes, dropped
+   bytes, and NWConnection completion latency.
+2. **Duck side:** BOYBAND firmware now sends a tiny WS text frame once
+   per second:
+   `{"type":"duck_stats","rx_bps":...,"spk_bps":...,"fill":...}`.
+   Stage logs this through the existing inbound text handler. This avoids
+   USB-console logging, which can block if nobody is draining it.
+3. Run one track and **compare the timelines.**
 
-This is ~30 min of instrumentation and would end the guessing.
+Interpretation:
 
-## Other untried levers (in rough priority)
+| Pattern | Meaning | Next move |
+|---|---|---|
+| Stage completed bytes keep climbing, duck `rx_bps` falls below ~32000, `fill` drains, `empty_waits` climbs | Delivery/WiFi is the bottleneck | Try clean network / hotspot / travel router, then consider Opus or serial |
+| Duck `rx_bps` is healthy or bursty-high, but `fill` still drains and `empty_waits` climbs | Playback path is stalling | Try BOYBAND TX-only I2S, then instrument `audio_spk_write` deeper |
+| Duck `fill` rises near 1 MB and `dropped` increases | We are overflowing the duck buffer | Reduce Stage prebuffer lead or pace closer to real time |
+| Stage `inFlight` and `maxAck` climb while duck `rx_bps` sags | Mac→duck TCP/WiFi backpressure | Network problem, not I2S |
 
-- **TX-only I2S** in BOYBAND (don't init the mic/RX half at all) — removes
-  any residual full-duplex RX-DMA interaction with the speaker TX.
+Use these counters during rehearsals and before show cues; they are now the
+source of truth.
+
+## Backup levers
+
 - **Opus compression** over the wire (~24 kbps vs 256 kbps raw). The duck
   already has an Opus decoder (used for embedded phrases). 10× less data
-  makes WiFi delivery a non-issue and is how the sibling `uram` project
-  reportedly streams. Bigger change (Stage encodes, firmware decodes on
-  the agent path), but likely the most robust real fix if delivery is the
-  problem.
+  would make WiFi delivery much less sensitive. Bigger change: Stage encodes,
+  firmware decodes on the agent path.
 - **Dedicated network** (travel router) instead of congested IDEO-Guest —
   the show plan anyway; cheap to test with a phone hotspot.
 - **Serial / USB-CDC transport** — bypass WiFi entirely (ducks are
@@ -140,10 +177,39 @@ This is ~30 min of instrumentation and would end the guessing.
 
 ## Recommendation
 
-Stop tweaking. Do the **bilateral instrumentation** (§"MEASURE BOTH
-ENDS") first — it will tell us whether this is delivery or playback in
-one run, and every further fix follows from that answer.
+Run show cues with the current 20 ms Stage pacing. Before triggering, check:
+
+```sh
+curl http://localhost:3334/health
+curl http://localhost:3334/status
+```
+
+If a duck reports unhealthy, run `curl http://localhost:3334/kick/D1` (or
+D2), wait for reconnect, then trigger `/play`.
+
+## Four-duck watchouts
+
+Four ducks at raw 16kHz mono int16 is about **128 KB/s** of audio payload
+before WebSocket/TCP/WiFi overhead. That is still small for normal WiFi, but
+it gives less margin on congested guest networks and makes per-duck socket
+health checks more important.
+
+Watch these before any four-duck cue:
+
+- `/health` must show every target duck as `ok`.
+- `/status` should show `inFlight=0/0B` before the trigger.
+- If any duck reports unhealthy or has stale in-flight bytes, kick only that
+  duck and wait for it to reconnect.
+- Keep all ducks on the same 160 MHz BOYBAND firmware image.
+- Use a dedicated router/hotspot for show conditions if possible. IDEO-Guest
+  worked for the two-duck Moby run, but four simultaneous sockets double the
+  current load.
+- Avoid restarting Stage between cues unless you mean to reset every socket.
+  Use `/kick/Dx` for one bad duck.
+
+During playback, a single duck can still have a transient bad socket. If that
+happens, do not expect buffering to recover the current line cleanly; stop or
+finish the cue, kick that duck, wait for reconnect, then rerun.
 
 ---
-*Last updated 2026-06-01. Ducks: Mallard (D1), Pekin (D2). All the
-deployed fixes above are committed on `feature/boy-band`.*
+*Last updated 2026-06-01. Ducks: Mallard (D1), Pekin (D2).*

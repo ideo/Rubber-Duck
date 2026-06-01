@@ -62,6 +62,15 @@ final class DuckConnection: @unchecked Sendable {
     private let maxInFlight = 1500
     /// Diagnostics: how many chunks we've dropped this connection.
     private(set) var dropped = 0
+    private var droppedBytes = 0
+    private var sentFrames = 0
+    private var sentBytes = 0
+    private var completedFrames = 0
+    private var completedBytes = 0
+    private var inFlightBytes = 0
+    private var maxInFlightBytesSeen = 0
+    private var lastCompletionMs = 0.0
+    private var maxCompletionMs = 0.0
 
     init(duck: DuckID, connection: NWConnection) {
         self.id = UUID()
@@ -76,15 +85,60 @@ final class DuckConnection: @unchecked Sendable {
     /// — late audio is useless; a skip beats progressive garble. ~20ms/chunk.
     func sendPCM(_ pcm: Data) {
         let frame = WSFrame.encodeBinary(pcm)
+        let pcmBytes = pcm.count
         sendQueue.async {
             if self.inFlight >= self.maxInFlight {
                 self.dropped += 1
+                self.droppedBytes += pcmBytes
                 return  // drop — don't fight through the backlog
             }
             self.inFlight += 1
+            self.inFlightBytes += pcmBytes
+            self.sentFrames += 1
+            self.sentBytes += pcmBytes
+            self.maxInFlightBytesSeen = max(self.maxInFlightBytesSeen, self.inFlightBytes)
+            let started = DispatchTime.now().uptimeNanoseconds
             self.connection.send(content: frame, completion: .contentProcessed { _ in
-                self.sendQueue.async { self.inFlight -= 1 }
+                let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000.0
+                self.sendQueue.async {
+                    self.inFlight -= 1
+                    self.inFlightBytes -= pcmBytes
+                    self.completedFrames += 1
+                    self.completedBytes += pcmBytes
+                    self.lastCompletionMs = elapsedMs
+                    self.maxCompletionMs = max(self.maxCompletionMs, elapsedMs)
+                }
             })
+        }
+    }
+
+    struct SendStats: Sendable {
+        let sentFrames: Int
+        let sentBytes: Int
+        let completedFrames: Int
+        let completedBytes: Int
+        let inFlightFrames: Int
+        let inFlightBytes: Int
+        let maxInFlightBytesSeen: Int
+        let droppedFrames: Int
+        let droppedBytes: Int
+        let lastCompletionMs: Double
+        let maxCompletionMs: Double
+    }
+
+    func stats() -> SendStats {
+        sendQueue.sync {
+            SendStats(sentFrames: sentFrames,
+                      sentBytes: sentBytes,
+                      completedFrames: completedFrames,
+                      completedBytes: completedBytes,
+                      inFlightFrames: inFlight,
+                      inFlightBytes: inFlightBytes,
+                      maxInFlightBytesSeen: maxInFlightBytesSeen,
+                      droppedFrames: dropped,
+                      droppedBytes: droppedBytes,
+                      lastCompletionMs: lastCompletionMs,
+                      maxCompletionMs: maxCompletionMs)
         }
     }
 
@@ -189,6 +243,8 @@ struct StageCallbacks: Sendable {
 
 final class StageServer: @unchecked Sendable {
     let port: UInt16
+    private static let unhealthyInFlightBytes = 64 * 1024
+    private static let unhealthyLastAckMs = 1000.0
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "boyband.stage.server")
     private var callbacks: StageCallbacks
@@ -241,6 +297,110 @@ final class StageServer: @unchecked Sendable {
         return ducks.keys.sorted { $0.rawValue < $1.rawValue }
     }
 
+    /// Human-readable connection and send counters for `/status`.
+    func statusReport() -> String {
+        lock.lock()
+        let snapshot = ducks.values.sorted { $0.duck.rawValue < $1.duck.rawValue }
+        lock.unlock()
+
+        if snapshot.isEmpty { return "connected: none\n" }
+
+        var lines = ["connected: \(snapshot.map { $0.duck.rawValue }.joined(separator: ","))"]
+        for conn in snapshot {
+            let s = conn.stats()
+            let health = Self.healthIssue(for: s).map { "bad(\($0))" } ?? "ok"
+            lines.append(String(format:
+                "%@: health=%@ sent=%d/%@ completed=%d/%@ inFlight=%d/%@ maxInFlight=%@ dropped=%d/%@ lastAck=%.1fms maxAck=%.1fms",
+                conn.duck.rawValue,
+                health,
+                s.sentFrames, Self.formatBytes(s.sentBytes),
+                s.completedFrames, Self.formatBytes(s.completedBytes),
+                s.inFlightFrames, Self.formatBytes(s.inFlightBytes),
+                Self.formatBytes(s.maxInFlightBytesSeen),
+                s.droppedFrames, Self.formatBytes(s.droppedBytes),
+                s.lastCompletionMs, s.maxCompletionMs))
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Human-readable websocket health. A bad connection should be kicked
+    /// before playback; during playback it means that duck is already late.
+    func healthReport() -> String {
+        lock.lock()
+        let snapshot = ducks.values.sorted { $0.duck.rawValue < $1.duck.rawValue }
+        lock.unlock()
+
+        if snapshot.isEmpty { return "connected: none\n" }
+
+        var lines = ["connected: \(snapshot.map { $0.duck.rawValue }.joined(separator: ","))"]
+        for conn in snapshot {
+            let s = conn.stats()
+            if let issue = Self.healthIssue(for: s) {
+                lines.append("\(conn.duck.rawValue): bad \(issue)")
+            } else {
+                lines.append("\(conn.duck.rawValue): ok")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Kick a single duck's current socket. BOYBAND firmware reconnects
+    /// automatically after Stage closes the websocket.
+    @discardableResult
+    func kick(_ duck: DuckID) -> Bool {
+        lock.lock()
+        let conn = ducks.removeValue(forKey: duck)
+        lock.unlock()
+
+        guard let conn else { return false }
+        conn.close()
+        callbacks.onDisconnect?(conn)
+        return true
+    }
+
+    /// Kick all currently unhealthy sockets. Used as a `/play` preflight:
+    /// if anything is already wedged, fail fast and let ducks reconnect
+    /// before starting a show cue.
+    @discardableResult
+    func kickUnhealthyConnections() -> [DuckID] {
+        lock.lock()
+        let snapshot = ducks.values
+            .filter { Self.healthIssue(for: $0.stats()) != nil }
+            .sorted { $0.duck.rawValue < $1.duck.rawValue }
+        for conn in snapshot {
+            if ducks[conn.duck]?.id == conn.id {
+                ducks.removeValue(forKey: conn.duck)
+            }
+        }
+        lock.unlock()
+
+        for conn in snapshot {
+            conn.close()
+            callbacks.onDisconnect?(conn)
+        }
+        return snapshot.map(\.duck)
+    }
+
+    private static func healthIssue(for s: DuckConnection.SendStats) -> String? {
+        if s.inFlightBytes >= unhealthyInFlightBytes {
+            return "inFlight=\(formatBytes(s.inFlightBytes))"
+        }
+        if s.lastCompletionMs >= unhealthyLastAckMs {
+            return String(format: "lastAck=%.1fms", s.lastCompletionMs)
+        }
+        return nil
+    }
+
+    private static func formatBytes(_ n: Int) -> String {
+        if n >= 1024 * 1024 {
+            return String(format: "%.2fMB", Double(n) / 1_048_576.0)
+        }
+        if n >= 1024 {
+            return String(format: "%.1fKB", Double(n) / 1024.0)
+        }
+        return "\(n)B"
+    }
+
     /// Snapshot of active connections (for broadcast loops).
     func activeConnections() -> [DuckConnection] {
         lock.lock(); defer { lock.unlock() }
@@ -287,6 +447,14 @@ final class StageServer: @unchecked Sendable {
             if parsed.headers["upgrade"]?.lowercased() != "websocket" {
                 switch pathOnly {
                 case "/play":
+                    let kicked = self.kickUnhealthyConnections()
+                    if !kicked.isEmpty {
+                        let names = kicked.map(\.rawValue).joined(separator: ",")
+                        self.sendError(connection, status: 409,
+                                       body: "kicked unhealthy socket(s): \(names)\n" +
+                                             "wait for reconnect, then trigger /play again\n")
+                        return
+                    }
                     self.onControl?("play")
                     self.sendError(connection, status: 200, body: "playing\n")
                     return
@@ -295,11 +463,16 @@ final class StageServer: @unchecked Sendable {
                     self.sendError(connection, status: 200, body: "stopped\n")
                     return
                 case "/status":
-                    let ducks = self.connectedDucks().map { $0.rawValue }.joined(separator: ",")
-                    self.sendError(connection, status: 200,
-                                   body: "connected: \(ducks.isEmpty ? "none" : ducks)\n")
+                    self.sendError(connection, status: 200, body: self.statusReport())
+                    return
+                case "/health":
+                    self.sendError(connection, status: 200, body: self.healthReport())
                     return
                 default:
+                    if pathOnly == "/kick" || pathOnly.hasPrefix("/kick/") {
+                        self.handleKickRequest(connection: connection, path: parsed.path)
+                        return
+                    }
                     self.send404(connection)
                     return
                 }
@@ -381,6 +554,40 @@ final class StageServer: @unchecked Sendable {
         return (String(parts[0]), String(parts[1]), headers)
     }
 
+    private func handleKickRequest(connection: NWConnection, path: String) {
+        if let duck = duckIDFromKickPath(path) {
+            let kicked = kick(duck)
+            let result = kicked ? "kicked \(duck.rawValue)\n" : "\(duck.rawValue) not connected\n"
+            sendError(connection, status: kicked ? 200 : 404, body: result)
+            return
+        }
+
+        let kicked = kickUnhealthyConnections()
+        if kicked.isEmpty {
+            sendError(connection, status: 200, body: "no unhealthy sockets\n")
+        } else {
+            let names = kicked.map(\.rawValue).joined(separator: ",")
+            sendError(connection, status: 200, body: "kicked unhealthy socket(s): \(names)\n")
+        }
+    }
+
+    private func duckIDFromKickPath(_ rawPath: String) -> DuckID? {
+        let pieces = rawPath.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let path = String(pieces.first ?? "")
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        if parts.count == 2, parts[0] == "kick" {
+            return DuckID.parse(parts[1])
+        }
+        guard pieces.count == 2 else { return nil }
+        for item in pieces[1].split(separator: "&") {
+            let kv = item.split(separator: "=", maxSplits: 1).map(String.init)
+            if kv.count == 2, kv[0] == "duck" {
+                return DuckID.parse(kv[1])
+            }
+        }
+        return nil
+    }
+
     private func send404(_ connection: NWConnection) {
         sendError(connection, status: 404,
                   body: "Stage accepts WebSocket upgrades on /ws/duck (with " +
@@ -393,6 +600,7 @@ final class StageServer: @unchecked Sendable {
         case 200: statusText = "OK"
         case 400: statusText = "Bad Request"
         case 403: statusText = "Forbidden"
+        case 409: statusText = "Conflict"
         case 404: statusText = "Not Found"
         case 503: statusText = "Service Unavailable"
         default:  statusText = "Error"
@@ -481,12 +689,16 @@ final class StageServer: @unchecked Sendable {
     }
 
     private func handleDisconnect(_ duck: DuckConnection) {
+        var didRemove = false
         lock.lock()
         // Only remove if this is still the registered connection for this
         // duck — a stale callback shouldn't wipe out a fresh reconnect.
-        if ducks[duck.duck]?.id == duck.id { ducks.removeValue(forKey: duck.duck) }
+        if ducks[duck.duck]?.id == duck.id {
+            ducks.removeValue(forKey: duck.duck)
+            didRemove = true
+        }
         lock.unlock()
-        callbacks.onDisconnect?(duck)
+        if didRemove { callbacks.onDisconnect?(duck) }
     }
 
     /// Compute Sec-WebSocket-Accept per RFC 6455.

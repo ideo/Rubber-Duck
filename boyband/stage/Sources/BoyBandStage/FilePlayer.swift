@@ -25,13 +25,11 @@ import AVFoundation
 import Dispatch
 
 private let kSampleRate: Double = 16000
-// FRAME SIZE — match the Bambu relay (the PROVEN-working reference), which
-// sends FEW LARGE binary frames (whole ElevenLabs chunks, up to ~320KB). We
-// were sending 640-byte (20ms) frames = ~50 WS frames/sec, ~10x the per-frame
-// overhead on the duck's WS event loop → choppy delivery → underrun. 16 KB
-// matches the duck's esp_websocket_client buffer_size (16384) and cuts frame
-// rate to ~2/sec. Must stay even (int16 alignment); 16384 is even.
-private let kChunkBytes = 16384               // 16 KB ≈ 512 ms @ 16 kHz mono
+// FRAME SIZE — send one 20 ms PCM frame per Stage tick. The duck-side gap
+// counters showed 80 ms frames reaching esp_websocket_client in ~500 ms bursts
+// even though the Mac had flushed them immediately; strict real-time pacing
+// avoids pushing a burst into the TCP/WebSocket stack.
+private let kChunkBytes = 640                 // 20 ms @ 16 kHz mono int16
 
 final class FilePlayer: @unchecked Sendable {
     private let server: StageServer
@@ -134,18 +132,9 @@ final class FilePlayer: @unchecked Sendable {
     /// Reset to the top so the next start() replays from the beginning.
     func rewind() { cursor = 0 }
 
-    /// PREBUFFER playback. Pre-recorded audio is not interactive, so the right
-    /// move is to push the whole track into the duck's 1 MB speaker buffer up
-    /// front and let it play out from there — then WiFi jitter/slowness can't
-    /// underrun it ("slow with gaps"). We pace to wall-clock + a large LEAD so
-    /// the duck buffer holds up to ~LEAD seconds ahead; for our ~23s tracks
-    /// that's effectively the entire track buffered. Stays under the firmware's
-    /// 1 MB (no overflow). cursor == bytes sent == file position.
-    ///
-    /// This failed before ONLY because DFS clocked the duck down and it choked
-    /// on the burst-receive; with the CPU pinned (BOYBAND build) it's fine.
-    /// 700 KB ≈ 22 s of lead, just under the 1 MB buffer.
-    private let leadBytes = 700_000
+    /// Keep one frame of lead. Larger leads made short files finish on the Mac
+    /// immediately while the duck received them in visible ~500 ms bursts.
+    private let leadBytes = 640
 
     func start(sharedClock: Bool = false, onDone: (@Sendable () -> Void)? = nil) {
         timer?.cancel()  // re-entrant: drop any prior timer
@@ -156,14 +145,21 @@ final class FilePlayer: @unchecked Sendable {
             guard let self else { return }
             let conn = self.server.connection(for: self.duck)
             if !sharedClock && conn == nil { return }  // hold for single-duck reconnect
-            // Send everything up to (real-time position + big lead). At t=0 this
-            // immediately pushes ~700KB (most/all of the track) into the buffer.
+            // Send everything up to real-time position plus one 20 ms frame.
+            // Keeping this strict avoids wedging the ESP websocket path with
+            // a burst of already-late PCM frames.
             let elapsedS = Double(DispatchTime.now().uptimeNanoseconds
                                   - startTime.uptimeNanoseconds) / 1_000_000_000.0
             let target = Int(elapsedS * 2.0 * kSampleRate) + self.leadBytes
             while self.cursor < self.pcm.count, self.cursor < target {
                 let end = min(self.cursor + kChunkBytes, self.pcm.count)
-                if let conn { conn.sendPCM(Data(self.pcm[self.cursor..<end])) }
+                if let conn {
+                    var chunk = Data(self.pcm[self.cursor..<end])
+                    if end == self.pcm.count && chunk.count < kChunkBytes {
+                        chunk.append(contentsOf: repeatElement(0, count: kChunkBytes - chunk.count))
+                    }
+                    conn.sendPCM(chunk)
+                }
                 self.cursor = end
             }
             if self.cursor >= self.pcm.count {

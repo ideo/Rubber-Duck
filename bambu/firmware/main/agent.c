@@ -41,6 +41,96 @@ static volatile int64_t s_last_audio_ms = 0;
 
 static StreamBufferHandle_t s_spk_stream = NULL;
 static StreamBufferHandle_t s_mic_stream = NULL;
+static uint8_t s_spk_pcm_carry = 0;
+static bool s_spk_has_pcm_carry = false;
+
+typedef struct {
+    uint64_t rx_bytes;
+    uint64_t rx_frames;
+    uint64_t dropped_bytes;
+    uint64_t spk_bytes;
+    uint64_t spk_writes;
+    uint64_t spk_empty_waits;
+    int64_t  first_rx_ms;
+    int64_t  last_rx_ms;
+    int64_t  max_rx_gap_ms;
+    int64_t  first_spk_ms;
+    int64_t  last_spk_ms;
+    int64_t  max_spk_gap_ms;
+    int64_t  max_spk_write_us;
+    int64_t  last_spk_write_us;
+    uint32_t spk_gap_over_80ms;
+    uint32_t stat_send_failures;
+} audio_stat_counters_t;
+
+static audio_stat_counters_t s_audio_stats = {0};
+static portMUX_TYPE s_audio_stats_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static void stats_add_rx(size_t bytes, size_t dropped, int64_t now_ms) {
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    s_audio_stats.rx_bytes += bytes;
+    s_audio_stats.rx_frames++;
+    s_audio_stats.dropped_bytes += dropped;
+    if (s_audio_stats.first_rx_ms == 0) {
+        s_audio_stats.first_rx_ms = now_ms;
+    } else {
+        int64_t gap_ms = now_ms - s_audio_stats.last_rx_ms;
+        if (gap_ms > s_audio_stats.max_rx_gap_ms) {
+            s_audio_stats.max_rx_gap_ms = gap_ms;
+        }
+    }
+    s_audio_stats.last_rx_ms = now_ms;
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+}
+
+static void stats_add_spk_write(size_t bytes, int64_t write_us, int64_t now_ms) {
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    s_audio_stats.spk_bytes += bytes;
+    s_audio_stats.spk_writes++;
+    if (s_audio_stats.first_spk_ms == 0) {
+        s_audio_stats.first_spk_ms = now_ms;
+    } else {
+        int64_t gap_ms = now_ms - s_audio_stats.last_spk_ms;
+        if (gap_ms > s_audio_stats.max_spk_gap_ms) {
+            s_audio_stats.max_spk_gap_ms = gap_ms;
+        }
+        if (gap_ms > 80) {
+            s_audio_stats.spk_gap_over_80ms++;
+        }
+    }
+    s_audio_stats.last_spk_ms = now_ms;
+    s_audio_stats.last_spk_write_us = write_us;
+    if (write_us > s_audio_stats.max_spk_write_us) {
+        s_audio_stats.max_spk_write_us = write_us;
+    }
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+}
+
+static void stats_add_spk_empty_wait(void) {
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    s_audio_stats.spk_empty_waits++;
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+}
+
+static void stats_add_send_failure(void) {
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    s_audio_stats.stat_send_failures++;
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+}
+
+static audio_stat_counters_t stats_snapshot(void) {
+    audio_stat_counters_t out;
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    out = s_audio_stats;
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+    return out;
+}
+
+static void stats_reset(void) {
+    portENTER_CRITICAL(&s_audio_stats_mux);
+    memset(&s_audio_stats, 0, sizeof(s_audio_stats));
+    portEXIT_CRITICAL(&s_audio_stats_mux);
+}
 
 // State accessors for wake.c (tap-to-wake gate).
 bool agent_session_active(void) { return s_session_active; }
@@ -91,27 +181,59 @@ static void on_text(const char *json, size_t len) {
     }
 }
 
+static size_t spk_stream_send_even(const uint8_t *data, size_t len) {
+    if (!s_spk_stream || len == 0) return 0;
+    // Only complete int16 samples may enter the speaker stream.
+    len &= ~(size_t)1;
+    size_t free_bytes = xStreamBufferSpacesAvailable(s_spk_stream) & ~(size_t)1;
+    size_t to_send = (len <= free_bytes) ? len : free_bytes;
+    if (to_send == 0) return 0;
+    return xStreamBufferSend(s_spk_stream, data, to_send, pdMS_TO_TICKS(50));
+}
+
 static void on_binary(const uint8_t *data, size_t len, int payload_offset, int payload_len) {
     // PCM audio chunk from agent. Mark agent_speaking so mic_task zeros out
     // its frames — frames still flow upstream (keeps session alive) but
     // don't carry the speaker's own voice as fake user input.
     s_agent_speaking = true;
-    s_last_audio_ms = esp_timer_get_time() / 1000;
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    s_last_audio_ms = now_ms;
     servo_set_speaking(true);
-    // CRITICAL: round the send length down to an even byte count when
-    // the buffer can't take all of it. The stream holds raw int16 PCM
-    // (2 bytes per sample); if we drop an odd number of bytes here,
-    // every subsequent sample is misaligned by 1 byte and the spk
-    // task plays high-byte/low-byte pairs as scrambled samples for
-    // the rest of the utterance — i.e. white noise. Aligned drops
-    // sound like a brief silent skip instead. Combined with the 1 MB
-    // buffer above, this should be rare on normal-length replies.
-    size_t free_bytes = xStreamBufferSpacesAvailable(s_spk_stream);
-    size_t to_send = (len <= free_bytes) ? len : (free_bytes & ~(size_t)1);
-    size_t sent = xStreamBufferSend(s_spk_stream, data, to_send, pdMS_TO_TICKS(50));
-    if (sent < len) {
+    // CRITICAL: WebSocket receive callbacks can split a single binary
+    // message at arbitrary byte offsets. Raw PCM is int16, so writing an
+    // odd-sized fragment would shift every later sample by one byte and
+    // produce white noise. Carry one dangling byte across callbacks and
+    // only write complete samples to the speaker stream.
+    size_t input_len = len;
+    size_t sent_current = 0;
+
+    if (s_spk_has_pcm_carry) {
+        if (len > 0) {
+            uint8_t sample[2] = { s_spk_pcm_carry, data[0] };
+            if (spk_stream_send_even(sample, sizeof(sample)) == sizeof(sample)) {
+                sent_current += 1;  // The other byte was carried from the previous callback.
+            }
+            data++;
+            len--;
+            s_spk_has_pcm_carry = false;
+        }
+    }
+
+    size_t even_len = len & ~(size_t)1;
+    sent_current += spk_stream_send_even(data, even_len);
+
+    if (len != even_len) {
+        s_spk_pcm_carry = data[even_len];
+        s_spk_has_pcm_carry = true;
+    }
+
+    size_t pending_current = s_spk_has_pcm_carry ? 1 : 0;
+    size_t accounted = sent_current + pending_current;
+    size_t dropped = (accounted < input_len) ? (input_len - accounted) : 0;
+    stats_add_rx(input_len, dropped, now_ms);
+    if (dropped > 0) {
         ESP_LOGW(TAG, "spk stream full, dropped %u bytes (aligned)",
-                 (unsigned)(len - sent));
+                 (unsigned)dropped);
     }
 }
 
@@ -225,7 +347,76 @@ static void spk_task(void *arg) {
         if (n > 0) {
             // Feed envelope to servo for beak movement before playing.
             servo_feed_audio_envelope(buf, n / sizeof(int16_t));
+            int64_t start_us = esp_timer_get_time();
             audio_spk_write(buf, n / sizeof(int16_t));
+            stats_add_spk_write(n, esp_timer_get_time() - start_us, start_us / 1000);
+        } else {
+            stats_add_spk_empty_wait();
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+// ---- BOYBAND diagnostics: send small websocket text stats once per second ----
+
+static void ws_stats_task(void *arg) {
+    uint64_t last_rx = 0;
+    uint64_t last_spk = 0;
+    int64_t last_ms = esp_timer_get_time() / 1000;
+    while (s_session_active) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        int64_t elapsed_ms = now_ms - last_ms;
+        if (elapsed_ms <= 0) elapsed_ms = 1;
+
+        audio_stat_counters_t st = stats_snapshot();
+        size_t fill = s_spk_stream ? xStreamBufferBytesAvailable(s_spk_stream) : 0;
+        size_t free = s_spk_stream ? xStreamBufferSpacesAvailable(s_spk_stream) : 0;
+        uint64_t rx_delta = st.rx_bytes - last_rx;
+        uint64_t spk_delta = st.spk_bytes - last_spk;
+        last_rx = st.rx_bytes;
+        last_spk = st.spk_bytes;
+        last_ms = now_ms;
+
+        int64_t rx_span_ms = (st.first_rx_ms > 0 && st.last_rx_ms >= st.first_rx_ms)
+            ? (st.last_rx_ms - st.first_rx_ms) : 0;
+        int64_t spk_span_ms = (st.first_spk_ms > 0 && st.last_spk_ms >= st.first_spk_ms)
+            ? (st.last_spk_ms - st.first_spk_ms) : 0;
+
+        char body[560];
+        int n = snprintf(body, sizeof(body),
+                         "{\"type\":\"duck_stats\","
+                         "\"rx_bps\":%llu,\"spk_bps\":%llu,"
+                         "\"rx_total\":%llu,\"spk_total\":%llu,"
+                         "\"rx_frames\":%llu,\"dropped\":%llu,"
+                         "\"rx_span_ms\":%lld,\"rx_max_gap_ms\":%lld,"
+                         "\"spk_span_ms\":%lld,\"spk_max_gap_ms\":%lld,"
+                         "\"spk_gap_over_80ms\":%u,"
+                         "\"fill\":%u,\"free\":%u,"
+                         "\"empty_waits\":%llu,\"spk_writes\":%llu,"
+                         "\"last_write_us\":%lld,\"max_write_us\":%lld,"
+                         "\"stat_send_failures\":%u}",
+                         (unsigned long long)((rx_delta * 1000ULL) / (uint64_t)elapsed_ms),
+                         (unsigned long long)((spk_delta * 1000ULL) / (uint64_t)elapsed_ms),
+                         (unsigned long long)st.rx_bytes,
+                         (unsigned long long)st.spk_bytes,
+                         (unsigned long long)st.rx_frames,
+                         (unsigned long long)st.dropped_bytes,
+                         (long long)rx_span_ms,
+                         (long long)st.max_rx_gap_ms,
+                         (long long)spk_span_ms,
+                         (long long)st.max_spk_gap_ms,
+                         (unsigned)st.spk_gap_over_80ms,
+                         (unsigned)fill,
+                         (unsigned)free,
+                         (unsigned long long)st.spk_empty_waits,
+                         (unsigned long long)st.spk_writes,
+                         (long long)st.last_spk_write_us,
+                         (long long)st.max_spk_write_us,
+                         (unsigned)st.stat_send_failures);
+        if (n > 0 && n < (int)sizeof(body) && s_ws) {
+            int sent = esp_websocket_client_send_text(s_ws, body, n, pdMS_TO_TICKS(20));
+            if (sent < 0) stats_add_send_failure();
         }
     }
     vTaskDelete(NULL);
@@ -386,6 +577,8 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
     s_session_active = true;
     s_agent_speaking = false;
     s_last_audio_ms = 0;
+    s_spk_has_pcm_carry = false;
+    stats_reset();
     audio_mic_enable(false);
     esp_websocket_client_start(s_ws);
 
@@ -399,6 +592,7 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
     // (Stage keeps the WS session alive over TCP; unlike the ElevenLabs relay
     // it needs no upstream mic frames, so dropping ws_send is safe.)
     xTaskCreate(spk_task, "spk", 4096, NULL, 7, NULL);
+    xTaskCreate(ws_stats_task, "ws_stats", 4096, NULL, 4, NULL);
 #else
     xTaskCreate(mic_task,        "mic",        4096, NULL, 7, NULL);
     xTaskCreate(ws_send_task,    "ws_send",    8192, NULL, 5, NULL);
