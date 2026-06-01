@@ -78,7 +78,10 @@ final class DuckConnection: @unchecked Sendable {
     private var maxPongMs = 0.0
     private var heartbeatOutstanding = false
 
-    private static let heartbeatIntervalMs = 5_000
+    // ESP32 WiFi power-save can doze between sparse packets. Keep a tiny
+    // control packet moving often enough that the radio stays responsive
+    // before and during cues.
+    private static let heartbeatIntervalMs = 100
 
     init(duck: DuckID, connection: NWConnection) {
         self.id = UUID()
@@ -124,7 +127,7 @@ final class DuckConnection: @unchecked Sendable {
         sendQueue.async {
             self.heartbeatTimer?.cancel()
             let timer = DispatchSource.makeTimerSource(queue: self.sendQueue)
-            timer.schedule(deadline: .now() + .milliseconds(2_000),
+            timer.schedule(deadline: .now() + .milliseconds(100),
                            repeating: .milliseconds(Self.heartbeatIntervalMs))
             timer.setEventHandler { [weak self] in
                 self?.sendPing()
@@ -313,8 +316,8 @@ final class StageServer: @unchecked Sendable {
     let port: UInt16
     private static let unhealthyInFlightBytes = 64 * 1024
     private static let unhealthyLastAckMs = 1000.0
-    private static let unhealthyPongMs = 2000.0
-    private static let unhealthyMissingPongMs = 12000.0
+    private static let unhealthyPongMs = 500.0
+    private static let unhealthyMissingPongMs = 1000.0
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "boyband.stage.server")
     private var callbacks: StageCallbacks
