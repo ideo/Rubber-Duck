@@ -90,6 +90,7 @@ build-boyband:
 		-DBAMBU_DUCK_TURNKEY=1 \
 		-DBAMBU_DUCK_BOYBAND=1 \
 		-DRELAY_BASE_URL=$(STAGE_URL) \
+		$(if $(VOL_STEP),-DBAMBU_DUCK_BOYBAND_VOL_STEP=$(VOL_STEP),) \
 		build
 
 flash-boyband: build-boyband

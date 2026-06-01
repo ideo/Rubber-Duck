@@ -108,3 +108,14 @@ if(DEFINED BAMBU_DUCK_BOYBAND AND "${BAMBU_DUCK_BOYBAND}" STREQUAL "1")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE BAMBU_DUCK_BOYBAND=1)
     message(STATUS "Building BOYBAND duck (puppeteer mode — auto-connect, no wake gate, no notify)")
 endif()
+
+# Optional volume override for BOYBAND builds. Boy band has no working
+# volume button (no wake gate), so the boot-time volume can't be
+# adjusted on stage. Default in audio.c is step 3 ("Very Quiet" 0.05).
+# Override at build time: `make flash-boyband ... VOL_STEP=2`
+# Steps: 0=Loud(0.75) 1=Normal(0.50) 2=Quiet(0.25) 3=Very Quiet(0.05) 4=Mute
+if(DEFINED BAMBU_DUCK_BOYBAND_VOL_STEP)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        "BAMBU_DUCK_BOYBAND_VOL_STEP=${BAMBU_DUCK_BOYBAND_VOL_STEP}")
+    message(STATUS "BOYBAND boot volume step: ${BAMBU_DUCK_BOYBAND_VOL_STEP}")
+endif()

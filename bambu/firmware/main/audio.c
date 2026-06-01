@@ -256,6 +256,21 @@ esp_err_t audio_init(void) {
         }
         nvs_close(nvs);
     }
+#ifdef BAMBU_DUCK_BOYBAND
+    // Boy band override — ignore NVS, force every boot to "Very Quiet"
+    // (step 3, 0.05). A boy-band duck has no working volume button
+    // (no wake gate, see main.c BOYBAND branch), so we can't rely on
+    // the operator to cycle volume down on stage. If 0.05 is inaudible
+    // for your test setup, rebuild with -DBAMBU_DUCK_BOYBAND_VOL_STEP=2
+    // (Quiet 0.25) or 1 (Normal 0.50). VOL_STEP=N on the make line
+    // routes through to this flag.
+#  ifdef BAMBU_DUCK_BOYBAND_VOL_STEP
+    s_volume_step = BAMBU_DUCK_BOYBAND_VOL_STEP;
+#  else
+    s_volume_step = 3;
+#  endif
+    if (s_volume_step >= VOLUME_PRESET_COUNT) s_volume_step = 3;
+#endif
     ESP_LOGI(TAG, "volume: step=%u (%.2f)",
              s_volume_step, VOLUME_PRESETS[s_volume_step]);
 
