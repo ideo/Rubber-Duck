@@ -203,6 +203,9 @@ fly secrets list -a duck-duck-print      # see configured secrets
 
 ## When in doubt
 
+- Flashing a chip (web / make / esptool, + every gotcha that's cost a
+  session) → `bambu/docs/FLASHING.md`. **Read this before improvising a
+  flash procedure** — the recipe drifts across sessions otherwise.
 - Architecture or rationale → `bambu/docs/BAMBU-DUCK-API-SURVEY.md`
   (full reverse-engineering of the Bambu cloud + LAN MQTT API)
 - Self-hosting walkthrough → `bambu/DEPLOY.md` (written for

@@ -1,5 +1,10 @@
 # Bambu Duck Firmware
 
+> **Flashing a duck?** This file documents the pinout, NVS provisioning,
+> and known gaps. For the actual flash procedure — web flasher, `make
+> flash-*`, or `esptool`, plus every gotcha — see
+> **[../docs/FLASHING.md](../docs/FLASHING.md)**.
+
 ESP-IDF firmware for **XIAO Seeed ESP32-S3** (non-Sense). Push-to-talk client
 that streams mic audio to an ElevenAgents conversational agent over WebSocket
 and plays the response back through an I2S amplifier.
