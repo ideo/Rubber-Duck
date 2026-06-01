@@ -43,6 +43,12 @@ struct Args {
     var inputDeviceMatch: String = "BlackHole"
     /// If true, just print all input devices and exit.
     var listInputs: Bool = false
+    /// Path to an audio file to stream to one duck (real-audio test).
+    var playFile: String? = nil
+    /// Which duck to play the file to (default D1).
+    var playDuck: DuckID = .D1
+    /// Loop the played file instead of stopping after one pass.
+    var loop: Bool = false
 }
 
 func parseArgs() -> Args {
@@ -84,6 +90,19 @@ func parseArgs() -> Args {
             args.inputDeviceMatch = argv[i]
         case "--list-inputs":
             args.listInputs = true
+        case "--play":
+            i += 1
+            guard i < argv.count else {
+                fputs("error: --play requires a file path\n", stderr); exit(2)
+            }
+            args.playFile = argv[i]
+            // Optional next arg = target duck.
+            if i + 1 < argv.count, let d = DuckID.parse(argv[i + 1]) {
+                args.playDuck = d
+                i += 1
+            }
+        case "--loop":
+            args.loop = true
         case "-h", "--help":
             printHelp(); exit(0)
         default:
@@ -107,6 +126,7 @@ func printHelp() {
       BoyBandStage [--port N] [--sine [DUCKID]]
                    [--duck-map FILE.json | --no-duck-map]
                    [--mode1 [--input-device SUBSTR]]
+                   [--play FILE [DUCKID] [--loop]]
                    [--list-inputs]
 
     Options:
@@ -117,6 +137,9 @@ func printHelp() {
       --no-duck-map        Disable /ws/duck; only test path /duck/{ID} works
       --mode1              Mode 1: read 4ch input from CoreAudio, route to ducks
       --input-device STR   Substring of input device name (default "BlackHole")
+      --play FILE [DUCKID] Stream an audio file (wav/aiff/mp3/m4a) to one duck
+                           (default D1). Resamples to 16k/mono/int16, paced.
+      --loop               With --play: loop the file instead of one pass
       --list-inputs        Print available input devices and exit
       -h, --help           Show this help
 
@@ -172,6 +195,7 @@ if args.listInputs {
 
 var sineGen: SineGenerator?  // set after server starts
 var dawInput: DAWInput?      // set if Mode 1 enabled
+var filePlayer: FilePlayer?  // set if --play given
 
 let callbacks = StageCallbacks(
     onConnect: { conn in
@@ -257,6 +281,30 @@ if args.mode1 {
     }
 }
 
+if let path = args.playFile {
+    if args.sine || args.mode1 {
+        fputs("error: --play is mutually exclusive with --sine / --mode1\n", stderr)
+        exit(2)
+    }
+    let player = FilePlayer(server: server, duck: args.playDuck, loop: args.loop)
+    do {
+        let dur = try player.load(path: path)
+        log(String(format: "play        %@ → %@ (%.1fs, 16k/mono, %@)",
+                   (path as NSString).lastPathComponent, args.playDuck.rawValue,
+                   dur, args.loop ? "looping" : "once"))
+        // Wait for the target duck to be connected before starting, so we
+        // don't waste the first pass streaming into the void.
+        if server.connection(for: args.playDuck) == nil {
+            log("play        waiting for \(args.playDuck.rawValue) to connect…")
+        }
+        player.start(onDone: { log("play        finished"); })
+        filePlayer = player
+    } catch {
+        fputs("fatal: --play failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+}
+
 // Graceful shutdown on SIGINT / SIGTERM.
 let sigSrcInt  = DispatchSource.makeSignalSource(signal: SIGINT,  queue: .main)
 let sigSrcTerm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
@@ -266,6 +314,7 @@ let shutdown = {
     log("shutting down")
     sineGen?.stop()
     dawInput?.stop()
+    filePlayer?.stop()
     server.stop()
     exit(0)
 }

@@ -80,9 +80,23 @@ async def run(args: argparse.Namespace) -> int:
         slot_desc = args.duck
     log(f"connecting to {url}  ({slot_desc})")
 
+    # websockets renamed the header kwarg across versions: >=14 uses
+    # `additional_headers`, <14 uses `extra_headers`. Pick whichever the
+    # installed version accepts so this works in any venv.
+    connect_kwargs = {"max_size": 2 ** 24}
+    if extra_headers:
+        import inspect
+        sig = inspect.signature(websockets.connect)
+        if "additional_headers" in sig.parameters:
+            connect_kwargs["additional_headers"] = extra_headers
+        elif "extra_headers" in sig.parameters:
+            connect_kwargs["extra_headers"] = extra_headers
+        else:
+            log("warning: this websockets version takes no header kwarg; "
+                "X-Duck-Id will not be sent")
+
     try:
-        async with websockets.connect(url, max_size=2**24,
-                                      additional_headers=extra_headers) as ws:
+        async with websockets.connect(url, **connect_kwargs) as ws:
             log(f"connected as {slot_desc}; writing PCM → {args.out}")
 
             if args.send_ready:

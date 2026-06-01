@@ -231,6 +231,13 @@ swift run BoyBandStage --duck-map ../duck-map.local.json --sine
 # Solo one duck with sine (others silent) — what we used for first bring-up
 swift run BoyBandStage --duck-map ../duck-map.local.json --sine D1
 
+# Real audio — stream an audio file to one duck (wav/aiff/mp3/m4a).
+# Resamples to 16k/mono/int16 ONCE offline, then paces at 20ms so the
+# duck's buffer never overflows. The safest real-audio source (no live
+# device clock, no realtime resampler). --loop to repeat.
+#   ⚠️ THIS MAKES THE PHYSICAL DUCK PLAY SOUND — warn anyone nearby first.
+swift run BoyBandStage --duck-map ../duck-map.local.json --play song.wav D1 --loop
+
 # List Mac audio input devices (find your BlackHole for Mode 1)
 swift run BoyBandStage --list-inputs
 
@@ -376,6 +383,7 @@ boyband/
         ├── StageServer.swift    ← WebSocket server, MAC routing
         ├── DuckMap.swift        ← MAC→slot config loader
         ├── SineGenerator.swift  ← sound-check tone source
+        ├── FilePlayer.swift     ← --play: stream an audio file to one duck
         └── DAWInput.swift       ← Mode 1 multichannel audio input
 
 bambu/firmware/              ← the duck firmware (Bambu duck + BOYBAND flavor)

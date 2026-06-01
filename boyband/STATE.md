@@ -55,6 +55,16 @@ Zero-crossing analysis confirms 329.5 Hz on D2 (expected E4 =
 **Hardware not yet tested.** If a real duck fails after this, the
 problem is firmware/I2S/speaker, not Stage.
 
+**Real-audio path built (`--play FILE [DUCK] [--loop]`).** New
+`FilePlayer.swift` decodes any audio file (wav/aiff/mp3/m4a),
+resamples once to 16k/mono/int16 via AVAudioConverter, and paces it
+at 20ms so the duck buffer can't overflow. Verified end-to-end into
+`fake-duck.py`: a 48k/stereo/24-bit system sound came out clean 16k
+mono, real varying audio. **Not yet played out the physical duck**
+(awaiting a moment where a whisper of sound is OK — boot vol is
+still VOL_STEP=3). fake-duck.py also made version-robust across
+websockets header-kwarg rename.
+
 ## Next up
 
 1. **Hardware smoke test.** Plug in one real Bambu Duck. Find its
