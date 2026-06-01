@@ -4,6 +4,25 @@ Living status doc. Update in the same commit as the work it describes.
 
 ## Where we are
 
+**🎉 FIRST REAL DUCK CONNECTED & ANIMATING (2026-06-01).** A physical
+Bambu duck flashed with BOYBAND firmware connected to the Stage app
+over WiFi and wobbled its head to a streamed sine. **The entire
+pipeline works end-to-end on real hardware.** Read `OPERATIONS.md`
+for the complete run/connect/flash guide — it captures every gotcha
+from this bring-up.
+
+Key facts from bring-up:
+- Test duck MAC `dcb4d92961e9` → D1.
+- Network: IDEO-Guest (WPA-PSK). **Had to bake the Mac's RAW IP**
+  (`ws://10.5.128.41:3334`) into firmware — IDEO mDNS poisons
+  `.local` hostnames with a corporate-pinned ghost IP that even a
+  HUP flush won't clear. Hostname approach is dead on IDEO networks.
+- BOYBAND firmware flavor added to `bambu/firmware/` (puppeteer mode:
+  auto-connect, no wake gate, no notify, VOL_STEP boot volume). This
+  is a deliberate, `#ifdef`-gated build — see "firmware" note below.
+- The firmware branch was **merged into feature/boy-band** — all boy
+  band work (Stage + firmware + docs) now lives on ONE branch.
+
 **Week 1 — Stage skeleton verified end-to-end (in software).**
 **Week 2 — Production routing + Mode 1 skeleton landed.** Branch
 `feature/boy-band`.

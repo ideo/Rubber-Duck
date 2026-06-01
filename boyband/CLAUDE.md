@@ -5,7 +5,11 @@ repo. This is a **one-time live performance** rig: four Bambu Ducks on
 a stage, doing a presentation about themselves as a boy band. It is
 sibling to the Mac/Claude Code duck (root `CLAUDE.md`) and to the
 Bambu Duck (`bambu/CLAUDE.md`); it reuses the Bambu Duck firmware
-without modification.
+via a dedicated, `#ifdef`-gated build flavor (`BAMBU_DUCK_BOYBAND`).
+
+> **New here? Read `OPERATIONS.md` first** — it's the complete,
+> battle-tested guide to how the system runs/connects/flashes on both
+> the duck and the Mac. Then this file, then `PLAN.md`, then `STATE.md`.
 
 ## Collaborators
 
@@ -38,12 +42,19 @@ differs.
 
 ## Why this design is what it is — read before changing it
 
-- **Fake local relay, not new firmware.** The Bambu Duck firmware
-  already speaks websocket-PCM to its relay. `relay_url_load()` is
-  NVS-backed and accepts plain `ws://`. Stage app **impersonates the
-  relay locally** so the firmware doesn't change. If you find
-  yourself proposing a firmware patch for show logic, stop — you're
-  doing it wrong.
+- **Fake local relay.** The Bambu Duck firmware already speaks
+  websocket-PCM to its relay. Stage app **impersonates the relay
+  locally** so the firmware's audio/servo path doesn't change. The
+  one firmware addition we DID make is the `BAMBU_DUCK_BOYBAND` build
+  flavor (puppeteer mode: auto-connect at boot, no wake gate, no
+  notify channel, fixed boot volume) — it's purely additive,
+  `#ifdef`-gated, and doesn't affect the default Bambu build. Don't
+  add show *logic* to the firmware beyond that; new behavior belongs
+  in Stage on the Mac.
+- **Use the Mac's RAW IP, never its `.local` hostname.** IDEO
+  networks poison mDNS — `<mac>.local` resolves to a corporate-pinned
+  ghost IP that survives flushing. Bake `ws://<ip>:3334` into the
+  firmware. See `OPERATIONS.md` §3.
 - **Local-only, no internet on show day.** Stage runs on one Mac.
   Ducks join a dedicated WiFi (hotspot or travel router on the
   table). No fly.dev, no api.anthropic.com in the live performance
@@ -113,10 +124,23 @@ boyband/
 
 ## Safety rails specific to this branch
 
-- Never modify `bambu/firmware/` for Boy Band purposes. If something
-  there genuinely needs changing, raise it — but the answer is
-  almost always "make Stage match the firmware's existing protocol."
+- **Firmware changes only via the `BAMBU_DUCK_BOYBAND` `#ifdef`.**
+  The default Bambu build must stay byte-for-byte unaffected. New
+  show behavior should land in Stage (Mac) unless it physically
+  cannot — e.g. boot-time connection / volume, which must be in
+  firmware. When in doubt, raise it.
+- **Hardware ops: coordinate with the human before flashing.** Don't
+  run `make flash-*` or reset a duck unannounced. Confirm volume,
+  network, and which duck before each flash. (Learned the hard way
+  2026-06-01.)
+- **Reading a duck's serial port RESETS the chip** (pyserial DTR) and
+  drops its connection. Read once for the boot log / MAC, then leave
+  it alone; use `lsof -iTCP:3334` for connection telemetry. See
+  `OPERATIONS.md` §6.
 - Never put real API keys into any file under version control —
   including in code comments, READMEs, or example configs.
 - Never auto-play audio to a duck in a test without checking that
-  nobody is on stage. The ducks are loud.
+  nobody is on stage / nearby. The ducks can be loud (volume is
+  fixed at flash time — `VOL_STEP`).
+- **Don't touch a serial port the human has open** (Arduino IDE
+  monitor, screen, etc.). Ask them to close it — never kill it.
