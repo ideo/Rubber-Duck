@@ -64,7 +64,7 @@ We are not in the business of writing a piano-roll UI. Logic's region
 editor, fade tool, and tempo grid will outclass anything we'd build
 in 4 weeks. The DAW also gives us free: scrubbing, loops, automation,
 recording reactions during rehearsal, and a familiar tool for Jenna
-if she's authoring lines.
+if they're authoring lines.
 
 ### Mode 1 acceptance test
 

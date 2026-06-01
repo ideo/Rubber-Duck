@@ -13,11 +13,19 @@ via a dedicated, `#ifdef`-gated build flavor (`BAMBU_DUCK_BOYBAND`).
 
 ## Collaborators
 
-This branch is co-driven by **Devin Deruntz** (dderuntz@ideo.com) and
-**Jenna Fizel**. Either may instruct the AI with equal authority.
-If you are an AI assistant other than Claude Code (Jenna's tooling
-may vary), the conventions below apply to you too — read this file
-first, then `PLAN.md`, then `STATE.md` before suggesting anything.
+This branch is co-driven by **Devin Deruntz** (dderuntz@ideo.com, he/him)
+and **Jenna Fizel** (they/them). Either may instruct the AI with equal
+authority. If you are an AI assistant other than Claude Code (Jenna's
+tooling may vary), the conventions below apply to you too — read this
+file first, then `OPERATIONS.md`, then `PLAN.md`, then `STATE.md`
+before suggesting anything.
+
+**Knowledge transfer:** all shared knowledge lives in committed `.md`
+files in `boyband/` (not in any one Claude's private memory). If you
+learn something reusable — a hardware gotcha, a working norm, a fix —
+write it into the relevant committed doc (OPERATIONS.md for mechanics,
+this file for working norms, STATE.md for status) so the other
+collaborator and their Claude get it too.
 
 ## What this is
 
@@ -137,10 +145,22 @@ boyband/
   drops its connection. Read once for the boot log / MAC, then leave
   it alone; use `lsof -iTCP:3334` for connection telemetry. See
   `OPERATIONS.md` §6.
+- **AUDIO OUT OF A PHYSICAL DUCK — loud heads-up first, never loop,
+  shortest single pass.** The collaborators are often in shared/quiet
+  spaces. Before any command that streams audio to a *real* duck (a
+  Stage instance its hardware is connected to — e.g. `:3334`):
+  - Warn explicitly and get a go-ahead. Give a "playing in 3…2…1"
+    before sound actually starts.
+  - **NEVER use `--loop`** or any forever/long playback. Default to the
+    shortest possible single pass, ready to kill instantly.
+  - Prefer **silent verification**: stream to `fake-duck.py` (writes a
+    WAV, no hardware) or a Stage instance on a port with no real duck.
+    Those make zero sound — run them freely.
+  - Between tests, leave Stage **idle** (no `--sine`/`--play`) so the
+    duck stays connected but silent.
+  - (Volume is fixed at flash time via `VOL_STEP`; default 3 is a near-
+    silent whisper, but still audible up close.)
 - Never put real API keys into any file under version control —
   including in code comments, READMEs, or example configs.
-- Never auto-play audio to a duck in a test without checking that
-  nobody is on stage / nearby. The ducks can be loud (volume is
-  fixed at flash time — `VOL_STEP`).
 - **Don't touch a serial port the human has open** (Arduino IDE
   monitor, screen, etc.). Ask them to close it — never kill it.

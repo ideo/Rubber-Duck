@@ -181,15 +181,60 @@ Volume steps (boy band has **no volume button** — this is fixed at flash time)
 4. It sends its chip MAC as an `X-Duck-Id` header — that's how Stage knows
    which duck it is (see §5).
 
-### Finding a duck's MAC
+### Finding a duck's MAC — and the +1 gotcha
 
-You need each duck's MAC to map it to a slot (D1..D4). Easiest: just let
-it connect to Stage once with no map loaded — Stage logs the rejected MAC
-(see §6). Or read it from the boot serial log (`duck_id=...`). Or check
-`bambu/relay/ducks.db` if the duck was ever onboarded to the cloud relay.
+You need each duck's MAC to map it to a slot (D1..D4).
 
-The MAC for the first test duck (Devin's, as of bring-up) is
-`dcb4d92961e9` → mapped to D1.
+> ⚠️ **The duck's `duck_id` is its SoftAP MAC, which is the base MAC + 1
+> in the last octet.** `duck_id_get()` uses `esp_read_mac(ESP_MAC_WIFI_SOFTAP)`.
+> But `esptool` / `chip_id` reports the **base** MAC. So if you read the
+> MAC with esptool, **add 1 to the last byte** before putting it in the
+> duck-map. We got this wrong once (used the base MAC, duck got rejected
+> with "not in duck-map").
+
+Most reliable: read the **`duck_id=...`** line from the boot serial — that
+prints the exact value the firmware sends (already SoftAP/+1, no math).
+It logs the first time the duck opens a session. Other ways:
+
+- Let it connect to Stage with `--no-duck-map`; Stage logs the rejected
+  `duck_id` (see §6) — copy that verbatim.
+- `esptool ... chip_id` reports the base MAC → remember to +1.
+- The boot log's `softAP (xx:xx:...:NN)` line is the SoftAP MAC directly.
+
+### The duck roster (our hardware)
+
+| Name | Slot | duck_id (SoftAP MAC) | base MAC (esptool) | USB port |
+|---|---|---|---|---|
+| **Mallard** | D1 | `dcb4d92961e9` | `…61e8` | `…usbmodem101` |
+| **Pekin** | D2 | `dcb4d9296125` | `…6124` | `…usbmodem1101` |
+
+(Both ESP32-S3 ducky PCBs, same vendor batch — note the sequential MACs.)
+The live MAC→slot+name binding lives in `duck-map.local.json` (gitignored,
+per-Mac); `duck-map.example.json` shows the format.
+
+### Copying WiFi creds between ducks (NVS clone) — skip the captive portal
+
+If one duck already has working WiFi creds and you're flashing another for
+the same network, you can clone the creds over USB instead of running the
+captive portal again:
+
+```sh
+. ~/esp/esp-idf/export.sh
+# Dump the source duck's NVS partition (0x9000, size 0x6000). Resets it.
+python -m esptool --chip esp32s3 -p /dev/cu.usbmodemSRC \
+    read_flash 0x9000 0x6000 /tmp/nvs.bin
+# Write it onto the target duck's NVS.
+python -m esptool --chip esp32s3 -p /dev/cu.usbmodemDST \
+    write_flash 0x9000 /tmp/nvs.bin
+```
+
+**Why it's safe:** `duck_id` is derived from efuse at runtime, NOT stored
+in NVS — so the target keeps its own MAC/identity, it just inherits the
+WiFi creds. (It also inherits the source's volume + relay_url, but BOYBAND
+overrides volume at boot via `VOL_STEP`, and the relay_url is the same
+baked URL anyway.) The NVS partition offset/size come from
+`bambu/firmware/partitions.csv` (`nvs 0x9000 0x6000`). We used this to give
+Pekin Mallard's IDEO-Guest creds in ~5 seconds — no phone, no portal.
 
 ---
 
@@ -314,7 +359,7 @@ The most reliable telemetry during a test is **the physical duck itself**
 |---|---|---|
 | `Error connecting to host ...`, `errno=119`, `EHOSTUNREACH` | Mac IP unreachable — usually the **mDNS ghost IP** (baked hostname resolves to a dead corporate-pinned address) or wrong/changed Mac IP | Bake the Mac's **raw IP** into firmware (§3–4). Re-check `ipconfig getifaddr en0`. |
 | `esp_ws_handshake_status_code=503`, `Sec-WebSocket-Accept not found` | Stage running with `--no-duck-map` (production `/ws/duck` path disabled) | Restart Stage **with** `--duck-map ../duck-map.local.json` |
-| `reject MAC=xxxx — not in duck-map` (Mac stderr) | Duck's MAC isn't in the map | Add the MAC to `duck-map.local.json`, restart Stage |
+| `reject MAC=xxxx — not in duck-map` (Mac stderr) | Duck's MAC isn't in the map — OR you used the **base** MAC instead of the SoftAP MAC | Add the rejected `duck_id` verbatim to `duck-map.local.json`. Remember duck_id = base MAC **+1** (§4). |
 | Duck connects then immediately drops, repeatedly | You're **polling the serial port** (each open resets the chip) | Stop reading serial; use `lsof` instead |
 | No `/dev/cu.usbmodem*` appears | Charge-only cable, or chip not enumerating | Swap to a data cable (`bambu/docs/FLASHING.md`) |
 | Build error: `BAMBU_DUCK_BOYBAND requires -DRELAY_BASE_URL` | Forgot `STAGE_URL=` on the make line | Add `STAGE_URL=ws://<ip>:3334` |
