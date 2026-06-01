@@ -71,6 +71,14 @@ final class DuckConnection: @unchecked Sendable {
     private var maxInFlightBytesSeen = 0
     private var lastCompletionMs = 0.0
     private var maxCompletionMs = 0.0
+    private var heartbeatTimer: DispatchSourceTimer?
+    private var lastPingNs: UInt64?
+    private var lastPongNs: UInt64?
+    private var lastPongMs = 0.0
+    private var maxPongMs = 0.0
+    private var heartbeatOutstanding = false
+
+    private static let heartbeatIntervalMs = 5_000
 
     init(duck: DuckID, connection: NWConnection) {
         self.id = UUID()
@@ -112,6 +120,45 @@ final class DuckConnection: @unchecked Sendable {
         }
     }
 
+    func startHeartbeat() {
+        sendQueue.async {
+            self.heartbeatTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: self.sendQueue)
+            timer.schedule(deadline: .now() + .milliseconds(2_000),
+                           repeating: .milliseconds(Self.heartbeatIntervalMs))
+            timer.setEventHandler { [weak self] in
+                self?.sendPing()
+            }
+            self.heartbeatTimer = timer
+            timer.resume()
+        }
+    }
+
+    private func sendPing() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        lastPingNs = now
+        heartbeatOutstanding = true
+        let payload = withUnsafeBytes(of: now.bigEndian) { Data($0) }
+        connection.send(content: WSFrame.encodePing(payload), completion: .idempotent)
+    }
+
+    func notePong(payload: Data) {
+        sendQueue.async {
+            let now = DispatchTime.now().uptimeNanoseconds
+            self.lastPongNs = now
+            self.heartbeatOutstanding = false
+            let pingNs = self.decodePingTimestamp(payload) ?? self.lastPingNs ?? now
+            let elapsedMs = Double(now - pingNs) / 1_000_000.0
+            self.lastPongMs = elapsedMs
+            self.maxPongMs = max(self.maxPongMs, elapsedMs)
+        }
+    }
+
+    private func decodePingTimestamp(_ payload: Data) -> UInt64? {
+        guard payload.count == 8 else { return nil }
+        return payload.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+    }
+
     struct SendStats: Sendable {
         let sentFrames: Int
         let sentBytes: Int
@@ -124,21 +171,34 @@ final class DuckConnection: @unchecked Sendable {
         let droppedBytes: Int
         let lastCompletionMs: Double
         let maxCompletionMs: Double
+        let lastPongMs: Double
+        let maxPongMs: Double
+        let lastPongAgeMs: Double?
+        let outstandingPingAgeMs: Double?
     }
 
     func stats() -> SendStats {
         sendQueue.sync {
-            SendStats(sentFrames: sentFrames,
-                      sentBytes: sentBytes,
-                      completedFrames: completedFrames,
-                      completedBytes: completedBytes,
-                      inFlightFrames: inFlight,
-                      inFlightBytes: inFlightBytes,
-                      maxInFlightBytesSeen: maxInFlightBytesSeen,
-                      droppedFrames: dropped,
-                      droppedBytes: droppedBytes,
-                      lastCompletionMs: lastCompletionMs,
-                      maxCompletionMs: maxCompletionMs)
+            let now = DispatchTime.now().uptimeNanoseconds
+            let pongAge = lastPongNs.map { Double(now - $0) / 1_000_000.0 }
+            let pingAge = heartbeatOutstanding ? lastPingNs.map {
+                Double(now - $0) / 1_000_000.0
+            } : nil
+            return SendStats(sentFrames: sentFrames,
+                             sentBytes: sentBytes,
+                             completedFrames: completedFrames,
+                             completedBytes: completedBytes,
+                             inFlightFrames: inFlight,
+                             inFlightBytes: inFlightBytes,
+                             maxInFlightBytesSeen: maxInFlightBytesSeen,
+                             droppedFrames: dropped,
+                             droppedBytes: droppedBytes,
+                             lastCompletionMs: lastCompletionMs,
+                             maxCompletionMs: maxCompletionMs,
+                             lastPongMs: lastPongMs,
+                             maxPongMs: maxPongMs,
+                             lastPongAgeMs: pongAge,
+                             outstandingPingAgeMs: pingAge)
         }
     }
 
@@ -156,6 +216,10 @@ final class DuckConnection: @unchecked Sendable {
     }
 
     func close() {
+        sendQueue.async {
+            self.heartbeatTimer?.cancel()
+            self.heartbeatTimer = nil
+        }
         connection.cancel()
     }
 }
@@ -171,6 +235,10 @@ enum WSFrame {
 
     static func encodeBinary(_ payload: Data) -> Data {
         encode(opcode: 0x82, payload: payload)
+    }
+
+    static func encodePing(_ payload: Data) -> Data {
+        encode(opcode: 0x89, payload: payload)
     }
 
     private static func encode(opcode: UInt8, payload: Data) -> Data {
@@ -245,6 +313,8 @@ final class StageServer: @unchecked Sendable {
     let port: UInt16
     private static let unhealthyInFlightBytes = 64 * 1024
     private static let unhealthyLastAckMs = 1000.0
+    private static let unhealthyPongMs = 2000.0
+    private static let unhealthyMissingPongMs = 12000.0
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "boyband.stage.server")
     private var callbacks: StageCallbacks
@@ -310,7 +380,7 @@ final class StageServer: @unchecked Sendable {
             let s = conn.stats()
             let health = Self.healthIssue(for: s).map { "bad(\($0))" } ?? "ok"
             lines.append(String(format:
-                "%@: health=%@ sent=%d/%@ completed=%d/%@ inFlight=%d/%@ maxInFlight=%@ dropped=%d/%@ lastAck=%.1fms maxAck=%.1fms",
+                "%@: health=%@ sent=%d/%@ completed=%d/%@ inFlight=%d/%@ maxInFlight=%@ dropped=%d/%@ lastAck=%.1fms maxAck=%.1fms pong=%.1fms maxPong=%.1fms pongAge=%@",
                 conn.duck.rawValue,
                 health,
                 s.sentFrames, Self.formatBytes(s.sentBytes),
@@ -318,7 +388,9 @@ final class StageServer: @unchecked Sendable {
                 s.inFlightFrames, Self.formatBytes(s.inFlightBytes),
                 Self.formatBytes(s.maxInFlightBytesSeen),
                 s.droppedFrames, Self.formatBytes(s.droppedBytes),
-                s.lastCompletionMs, s.maxCompletionMs))
+                s.lastCompletionMs, s.maxCompletionMs,
+                s.lastPongMs, s.maxPongMs,
+                Self.formatMs(s.lastPongAgeMs)))
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -388,7 +460,18 @@ final class StageServer: @unchecked Sendable {
         if s.lastCompletionMs >= unhealthyLastAckMs {
             return String(format: "lastAck=%.1fms", s.lastCompletionMs)
         }
+        if let age = s.outstandingPingAgeMs, age >= unhealthyMissingPongMs {
+            return String(format: "missingPong=%.1fms", age)
+        }
+        if s.lastPongMs >= unhealthyPongMs {
+            return String(format: "pong=%.1fms", s.lastPongMs)
+        }
         return nil
+    }
+
+    private static func formatMs(_ ms: Double?) -> String {
+        guard let ms else { return "none" }
+        return String(format: "%.1fms", ms)
     }
 
     private static func formatBytes(_ n: Int) -> String {
@@ -636,6 +719,7 @@ final class StageServer: @unchecked Sendable {
             }
 
             self.callbacks.onConnect?(duckConn)
+            duckConn.startHeartbeat()
             self.readWSFrames(duck: duckConn, buffer: Data())
         })
     }
@@ -675,6 +759,8 @@ final class StageServer: @unchecked Sendable {
                     if p.count < 126 { pong.append(UInt8(p.count)) }
                     pong.append(p)
                     duck.connection.send(content: pong, completion: .idempotent)
+                case 0xA: // Pong from Stage heartbeat
+                    duck.notePong(payload: frame.payload)
                 default:
                     break
                 }
