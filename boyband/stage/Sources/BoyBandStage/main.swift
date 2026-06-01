@@ -298,6 +298,8 @@ if !args.plays.isEmpty {
         fputs("error: --play is mutually exclusive with --sine / --mode1\n", stderr)
         exit(2)
     }
+    // Load every track first (fail fast on a bad file before connecting).
+    var loaded: [(player: FilePlayer, duck: DuckID)] = []
     for play in args.plays {
         let player = FilePlayer(server: server, duck: play.duck, loop: args.loop)
         do {
@@ -305,15 +307,48 @@ if !args.plays.isEmpty {
             log(String(format: "play        %@ → %@ (%.1fs, 16k/mono, %@)",
                        (play.path as NSString).lastPathComponent, play.duck.rawValue,
                        dur, args.loop ? "looping" : "once"))
-            // FilePlayer holds its cursor until the target duck connects, so
-            // each pair starts from the top whenever its duck is ready.
-            let id = play.duck.rawValue
-            player.start(onDone: { log("play        \(id) finished") })
-            filePlayers.append(player)
+            loaded.append((player, play.duck))
         } catch {
             fputs("fatal: --play \(play.path) failed: \(error.localizedDescription)\n",
                   stderr)
             exit(1)
+        }
+    }
+    filePlayers = loaded.map { $0.player }
+
+    if loaded.count == 1 {
+        // Single track: hold-cursor mode, start immediately (resumes on
+        // reconnect from where it left off — no other track to stay aligned to).
+        let only = loaded[0]
+        let id = only.duck.rawValue
+        only.player.start(sharedClock: false, onDone: { log("play        \(id) finished") })
+    } else {
+        // Multi-track: synchronize. Wait until ALL target ducks are connected,
+        // then start every track at once on a shared wall-clock so the
+        // call/response timing across ducks holds. Falls back to starting
+        // anyway after a timeout if some duck never shows.
+        let targets = loaded.map { $0.duck }
+        let players = loaded
+        DispatchQueue.global().async {
+            let deadline = Date().addingTimeInterval(30)
+            var sawAll = false
+            while Date() < deadline {
+                if targets.allSatisfy({ server.connection(for: $0) != nil }) {
+                    sawAll = true; break
+                }
+                usleep(100_000)  // 100ms
+            }
+            let names = targets.map { label($0) }.joined(separator: ", ")
+            if sawAll {
+                log("play        all ducks connected — synchronized start: \(names)")
+            } else {
+                log("play        timeout waiting for all ducks; starting anyway: \(names)")
+            }
+            for entry in players {
+                let id = entry.duck.rawValue
+                entry.player.start(sharedClock: true,
+                                   onDone: { log("play        \(id) finished") })
+            }
         }
     }
 }

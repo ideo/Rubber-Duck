@@ -116,22 +116,29 @@ final class FilePlayer: @unchecked Sendable {
     }
 
     /// Start paced playback. `onDone` fires when a non-looping file finishes.
-    func start(onDone: (@Sendable () -> Void)? = nil) {
+    ///
+    /// Two clock modes:
+    /// - `sharedClock == false` (default, single-duck): HOLD the cursor while
+    ///   the duck is disconnected, so playback resumes from where it left off
+    ///   on reconnect. Good when there's only one track — no alignment to keep.
+    /// - `sharedClock == true` (multi-track / call-response): ALWAYS advance
+    ///   the cursor on wall-clock, sending only when connected. Multiple tracks
+    ///   started together stay time-aligned (so the back-and-forth timing
+    ///   holds). A momentarily-disconnected duck loses frames rather than
+    ///   drifting out of sync with the others.
+    func start(sharedClock: Bool = false, onDone: (@Sendable () -> Void)? = nil) {
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: .milliseconds(20))
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            // Only advance + send when the duck is actually connected. If it's
-            // mid-reconnect (e.g. right after a Stage restart), HOLD the cursor
-            // so playback starts from where we left off once it's back — we
-            // don't burn through the file streaming into the void.
-            guard let conn = self.server.connection(for: self.duck) else {
-                return  // not connected yet; hold position, try again in 20ms
+            let conn = self.server.connection(for: self.duck)
+            if !sharedClock && conn == nil {
+                return  // hold-mode: wait for reconnect, don't advance
             }
             let end = min(self.cursor + kChunkBytes, self.pcm.count)
             if self.cursor < end {
-                conn.sendPCM(Data(self.pcm[self.cursor..<end]))
-                self.cursor = end
+                if let conn { conn.sendPCM(Data(self.pcm[self.cursor..<end])) }
+                self.cursor = end  // shared-clock advances even if conn == nil
             }
             if self.cursor >= self.pcm.count {
                 if self.loop {
