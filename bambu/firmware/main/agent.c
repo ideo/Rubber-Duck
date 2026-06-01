@@ -389,10 +389,22 @@ esp_err_t agent_run_session(const char *event, const char *subtask) {
     audio_mic_enable(false);
     esp_websocket_client_start(s_ws);
 
+#ifdef BAMBU_DUCK_BOYBAND
+    // Boy band: ZERO mic. Do NOT spawn the mic-capture, upstream-send, or
+    // mute-timer tasks. The mic task ran at priority 7 — ABOVE the speaker
+    // drain (spk_task, 6) — and read the SHARED full-duplex I2S port, so it
+    // preempted/starved playback → "slow with gaps" underrun even when the
+    // track was fully buffered locally. With no mic task, spk_task owns the
+    // audio path; bump it to 7 so nothing but the scheduler tick competes.
+    // (Stage keeps the WS session alive over TCP; unlike the ElevenLabs relay
+    // it needs no upstream mic frames, so dropping ws_send is safe.)
+    xTaskCreate(spk_task, "spk", 4096, NULL, 7, NULL);
+#else
     xTaskCreate(mic_task,        "mic",        4096, NULL, 7, NULL);
     xTaskCreate(ws_send_task,    "ws_send",    8192, NULL, 5, NULL);
     xTaskCreate(spk_task,        "spk",        4096, NULL, 6, NULL);
     xTaskCreate(mute_timer_task, "mute_timer", 4096, NULL, 4, NULL);
+#endif
 
     while (s_session_active) {
         vTaskDelay(pdMS_TO_TICKS(200));

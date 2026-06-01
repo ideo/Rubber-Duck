@@ -52,10 +52,14 @@ final class DuckConnection: @unchecked Sendable {
     /// Outstanding (not-yet-acked) PCM sends. When the network backs up this
     /// climbs; past `maxInFlight` we DROP new chunks instead of piling them up.
     private var inFlight = 0
-    /// ~640ms of audio (32 × 20ms). Beyond this the duck's network can't keep
-    /// up, so DROP — stay real-time (a brief skip) rather than queue a growing
-    /// backlog the duck plays late/choppy ("fighting through the wedge").
-    private let maxInFlight = 32
+    /// Cap on outstanding sends. Sized to allow PREBUFFERING the whole track
+    /// into the duck's 1 MB buffer (≈1500 × 640 B ≈ 960 KB) — for pre-recorded
+    /// playback we WANT to fill the buffer, not drop, so WiFi jitter can't
+    /// underrun it. The cap still exists as a backstop: a genuinely dead socket
+    /// (completions never firing) stops accumulating past ~960KB.
+    /// (For LIVE Mode-2 audio later, a much lower cap to drop-and-stay-realtime
+    /// is the right call — different mode, revisit then.)
+    private let maxInFlight = 1500
     /// Diagnostics: how many chunks we've dropped this connection.
     private(set) var dropped = 0
 

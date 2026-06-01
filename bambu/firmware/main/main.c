@@ -46,6 +46,18 @@ static void led_blink(int times, int ms) {
 // and tap-on-shell detection behind a single wake_wait_for_trigger() entry.
 
 void app_main(void) {
+#ifdef BAMBU_DUCK_BOYBAND
+    // Silence ALL runtime logging on the show build. The duck logs to the
+    // USB-Serial-JTAG console, which shares the USB cable that only supplies
+    // power on stage — nothing drains that output. Over a few runs the
+    // console TX buffer fills and a task that tries to log can BLOCK on it,
+    // stalling the audio path → "a few good runs then sudden choke/death."
+    // (It also explains why reading the serial sometimes *helped*: reading
+    // drains the buffer.) No logs = no buffer = nothing to block on, plus a
+    // little CPU back for audio. Boot/ROM logs before this line are one-shot
+    // and harmless.
+    esp_log_level_set("*", ESP_LOG_NONE);
+#endif
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

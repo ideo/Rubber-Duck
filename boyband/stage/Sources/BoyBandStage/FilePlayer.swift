@@ -129,29 +129,37 @@ final class FilePlayer: @unchecked Sendable {
     /// Reset to the top so the next start() replays from the beginning.
     func rewind() { cursor = 0 }
 
-    /// Simple real-time trickle: one 20ms chunk (640 B) per 20ms tick =
-    /// 32 KB/s = the duck's drain rate. This is the version that played both
-    /// ducks cleanly for several turns. Backpressure/jitter is handled DOWN-
-    /// stream in DuckConnection.sendPCM, which drops chunks (per-duck, isolated)
-    /// when a duck's socket backs up — so a network jam on one duck becomes a
-    /// brief skip on that duck, NOT progressive garble and NOT a stall on the
-    /// other duck. (Earlier attempts to fix garble by changing the PACING here
-    /// — prebuffer burst, wall-clock lead — were wrong-headed; the real issue
-    /// was the shared send queue + no frame-dropping. See STATE.md.)
+    /// PREBUFFER playback. Pre-recorded audio is not interactive, so the right
+    /// move is to push the whole track into the duck's 1 MB speaker buffer up
+    /// front and let it play out from there — then WiFi jitter/slowness can't
+    /// underrun it ("slow with gaps"). We pace to wall-clock + a large LEAD so
+    /// the duck buffer holds up to ~LEAD seconds ahead; for our ~23s tracks
+    /// that's effectively the entire track buffered. Stays under the firmware's
+    /// 1 MB (no overflow). cursor == bytes sent == file position.
+    ///
+    /// This failed before ONLY because DFS clocked the duck down and it choked
+    /// on the burst-receive; with the CPU pinned (BOYBAND build) it's fine.
+    /// 700 KB ≈ 22 s of lead, just under the 1 MB buffer.
+    private let leadBytes = 700_000
+
     func start(sharedClock: Bool = false, onDone: (@Sendable () -> Void)? = nil) {
         timer?.cancel()  // re-entrant: drop any prior timer
+        let startTime = DispatchTime.now()
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now(), repeating: .milliseconds(20))
+        t.schedule(deadline: .now(), repeating: .milliseconds(10))
         t.setEventHandler { [weak self] in
             guard let self else { return }
             let conn = self.server.connection(for: self.duck)
-            if !sharedClock && conn == nil {
-                return  // hold-mode (single duck): wait for reconnect
-            }
-            let end = min(self.cursor + kChunkBytes, self.pcm.count)
-            if self.cursor < end {
+            if !sharedClock && conn == nil { return }  // hold for single-duck reconnect
+            // Send everything up to (real-time position + big lead). At t=0 this
+            // immediately pushes ~700KB (most/all of the track) into the buffer.
+            let elapsedS = Double(DispatchTime.now().uptimeNanoseconds
+                                  - startTime.uptimeNanoseconds) / 1_000_000_000.0
+            let target = Int(elapsedS * 2.0 * kSampleRate) + self.leadBytes
+            while self.cursor < self.pcm.count, self.cursor < target {
+                let end = min(self.cursor + kChunkBytes, self.pcm.count)
                 if let conn { conn.sendPCM(Data(self.pcm[self.cursor..<end])) }
-                self.cursor = end  // shared-clock advances even if conn == nil
+                self.cursor = end
             }
             if self.cursor >= self.pcm.count {
                 if self.loop { self.cursor = 0 }

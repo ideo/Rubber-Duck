@@ -41,19 +41,33 @@ MODEL = "eleven_multilingual_v2"
 # Two distinct voices so Mallard and Pekin sound different. Both are known-
 # valid IDs on this account (ygo… = bambu canonical; TX3… from gen_phrases.py).
 VOICE = {
-    "D1": "ygoBNrnmTEdu5NtDTmAY",   # Mallard
-    "D2": "TX3LPaxmHKxFdv7VOQHJ",   # Pekin
+    "D1": "U5UjeJMsOvyhYhXfZdvZ",   # Mallard (picked 2026-06-01)
+    "D2": "Xb3zeLrTi6F4ziIcXdwk",   # Pekin (picked 2026-06-01)
 }
 
-# The bit. Alternating turns = clean call/response. Keep lines short and punchy.
-DIALOGUE = [
-    ("D1", "Pekin. Pekin! Are you ready for this?"),
-    ("D2", "Mallard, I was born ready."),
-    ("D1", "Then let's give 'em what they came for. On three."),
-    ("D2", "A duck boy band?"),
-    ("D1", "A duck. boy. BAND."),
-    ("D2", "...okay yeah, that's pretty good."),
-]
+# Named bits. Alternating turns = clean call/response. Short + punchy.
+# Pick with --script NAME; output files are prefixed with the name
+# (e.g. moby_D1.wav, moby_D2.wav).
+DIALOGUES = {
+    "intro": [
+        ("D1", "Pekin. Pekin! Are you ready for this?"),
+        ("D2", "Mallard, I was born ready."),
+        ("D1", "Then let's give 'em what they came for. On three."),
+        ("D2", "A duck boy band?"),
+        ("D1", "A duck. boy. BAND."),
+        ("D2", "...okay yeah, that's pretty good."),
+    ],
+    # Both ducks realize they're reincarnations of the same Ishmael from
+    # "Moby Duck" — one soul, split in two. 6 turns, punchy.
+    "moby": [
+        ("D1", "Pekin. Do you ever feel like you've... been here before?"),
+        ("D2", "Call me Ishmael."),
+        ("D1", "I was about to say that. I AM Ishmael."),
+        ("D2", "Moby Duck. The white whale. The voyage. You were there."),
+        ("D1", "We're the same soul, aren't we. One duck, split in two."),
+        ("D2", "...so which of us gets the royalties?"),
+    ],
+}
 
 GAP_MS = 350  # silence between turns, ms
 
@@ -90,6 +104,8 @@ def tts_pcm(text: str, voice: str, api_key: str) -> bytes:
 
 def main() -> int:
     p = argparse.ArgumentParser()
+    p.add_argument("--script", default="intro", choices=sorted(DIALOGUES.keys()),
+                   help="Which named dialogue to generate (default: intro)")
     p.add_argument("--out-dir", default="stems/test")
     args = p.parse_args()
 
@@ -99,12 +115,13 @@ def main() -> int:
         print("ERROR: ELEVENLABS_API_KEY not set", file=sys.stderr)
         return 1
 
-    ducks = sorted({d for d, _ in DIALOGUE})
+    dialogue = DIALOGUES[args.script]
+    ducks = sorted({d for d, _ in dialogue})
     gap = b"\x00\x00" * int(SAMPLE_RATE * GAP_MS / 1000)
 
     # Generate each turn, remember (duck, pcm).
     turns = []
-    for i, (duck, text) in enumerate(DIALOGUE):
+    for i, (duck, text) in enumerate(dialogue):
         voice = VOICE.get(duck)
         if not voice:
             print(f"ERROR: no voice for {duck}", file=sys.stderr)
@@ -127,7 +144,7 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for d in ducks:
-        path = out_dir / f"dialogue_{d}.wav"
+        path = out_dir / f"{args.script}_{d}.wav"
         w = wave.open(str(path), "wb")
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SAMPLE_RATE)
         w.writeframes(bytes(tracks[d]))
