@@ -49,6 +49,10 @@ struct Args {
     var plays: [(path: String, duck: DuckID)] = []
     /// Loop the played file(s) instead of stopping after one pass.
     var loop: Bool = false
+    /// Pre-load --play tracks but don't auto-start; wait for HTTP /play.
+    /// Lets ducks connect+stabilize once, then trigger replays with no
+    /// Stage restart (restarts churn duck connections and wedge them).
+    var waitTrigger: Bool = false
 }
 
 func parseArgs() -> Args {
@@ -106,6 +110,8 @@ func parseArgs() -> Args {
             args.plays.append((path: path, duck: duck))
         case "--loop":
             args.loop = true
+        case "--wait-trigger":
+            args.waitTrigger = true
         case "-h", "--help":
             printHelp(); exit(0)
         default:
@@ -315,40 +321,54 @@ if !args.plays.isEmpty {
         }
     }
     filePlayers = loaded.map { $0.player }
+    let targets = loaded.map { $0.duck }
+    let multi = loaded.count > 1
 
-    if loaded.count == 1 {
-        // Single track: hold-cursor mode, start immediately (resumes on
-        // reconnect from where it left off — no other track to stay aligned to).
-        let only = loaded[0]
-        let id = only.duck.rawValue
+    // Start (or restart) all loaded tracks together. Ducks are expected to be
+    // already connected (that's the point of the control channel — no restart
+    // churn). Rewinds first so every trigger replays from the top.
+    let triggerPlay: @Sendable () -> Void = {
+        let names = targets.map { label($0) }.joined(separator: ", ")
+        let present = targets.filter { server.connection(for: $0) != nil }.count
+        log("play        ▶ \(names)  (\(present)/\(targets.count) ducks connected)")
+        for entry in loaded {
+            entry.player.rewind()
+            let id = entry.duck.rawValue
+            entry.player.start(sharedClock: multi,
+                               onDone: { log("play        \(id) finished") })
+        }
+    }
+    let triggerStop: @Sendable () -> Void = {
+        for entry in loaded { entry.player.stop() }
+        log("play        ⏹ stopped")
+    }
+    server.onControl = { cmd in
+        switch cmd {
+        case "play": triggerPlay()
+        case "stop": triggerStop()
+        default: break
+        }
+    }
+
+    if args.waitTrigger {
+        log("play        ARMED — \(loaded.count) track(s) loaded, waiting for trigger.")
+        log("play        trigger:  curl http://localhost:\(args.port)/play")
+        log("play        stop:     curl http://localhost:\(args.port)/stop")
+        log("play        status:   curl http://localhost:\(args.port)/status")
+    } else if !multi {
+        // Single track, auto-start: hold-cursor mode (resumes on reconnect).
+        let only = loaded[0]; let id = only.duck.rawValue
         only.player.start(sharedClock: false, onDone: { log("play        \(id) finished") })
     } else {
-        // Multi-track: synchronize. Wait until ALL target ducks are connected,
-        // then start every track at once on a shared wall-clock so the
-        // call/response timing across ducks holds. Falls back to starting
-        // anyway after a timeout if some duck never shows.
-        let targets = loaded.map { $0.duck }
-        let players = loaded
+        // Multi-track auto-start: wait until all ducks stably connected, then fire.
         DispatchQueue.global().async {
             let deadline = Date().addingTimeInterval(30)
-            var sawAll = false
+            func allConnected() -> Bool { targets.allSatisfy { server.connection(for: $0) != nil } }
             while Date() < deadline {
-                if targets.allSatisfy({ server.connection(for: $0) != nil }) {
-                    sawAll = true; break
-                }
-                usleep(100_000)  // 100ms
+                if allConnected() { usleep(1_500_000); if allConnected() { break } }
+                usleep(200_000)
             }
-            let names = targets.map { label($0) }.joined(separator: ", ")
-            if sawAll {
-                log("play        all ducks connected — synchronized start: \(names)")
-            } else {
-                log("play        timeout waiting for all ducks; starting anyway: \(names)")
-            }
-            for entry in players {
-                let id = entry.duck.rawValue
-                entry.player.start(sharedClock: true,
-                                   onDone: { log("play        \(id) finished") })
-            }
+            triggerPlay()
         }
     }
 }

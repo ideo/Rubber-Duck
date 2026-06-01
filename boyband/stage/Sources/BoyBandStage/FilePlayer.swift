@@ -126,14 +126,27 @@ final class FilePlayer: @unchecked Sendable {
     ///   started together stay time-aligned (so the back-and-forth timing
     ///   holds). A momentarily-disconnected duck loses frames rather than
     ///   drifting out of sync with the others.
+    /// Reset to the top so the next start() replays from the beginning.
+    func rewind() { cursor = 0 }
+
+    /// Simple real-time trickle: one 20ms chunk (640 B) per 20ms tick =
+    /// 32 KB/s = the duck's drain rate. This is the version that played both
+    /// ducks cleanly for several turns. Backpressure/jitter is handled DOWN-
+    /// stream in DuckConnection.sendPCM, which drops chunks (per-duck, isolated)
+    /// when a duck's socket backs up — so a network jam on one duck becomes a
+    /// brief skip on that duck, NOT progressive garble and NOT a stall on the
+    /// other duck. (Earlier attempts to fix garble by changing the PACING here
+    /// — prebuffer burst, wall-clock lead — were wrong-headed; the real issue
+    /// was the shared send queue + no frame-dropping. See STATE.md.)
     func start(sharedClock: Bool = false, onDone: (@Sendable () -> Void)? = nil) {
+        timer?.cancel()  // re-entrant: drop any prior timer
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: .milliseconds(20))
         t.setEventHandler { [weak self] in
             guard let self else { return }
             let conn = self.server.connection(for: self.duck)
             if !sharedClock && conn == nil {
-                return  // hold-mode: wait for reconnect, don't advance
+                return  // hold-mode (single duck): wait for reconnect
             }
             let end = min(self.cursor + kChunkBytes, self.pcm.count)
             if self.cursor < end {
@@ -141,12 +154,8 @@ final class FilePlayer: @unchecked Sendable {
                 self.cursor = end  // shared-clock advances even if conn == nil
             }
             if self.cursor >= self.pcm.count {
-                if self.loop {
-                    self.cursor = 0
-                } else {
-                    self.stop()
-                    onDone?()
-                }
+                if self.loop { self.cursor = 0 }
+                else { self.stop(); onDone?() }
             }
         }
         timer = t

@@ -52,6 +52,23 @@ void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    // CPU frequency / DFS policy. Boy band pins it; default uses DFS.
+#ifdef BAMBU_DUCK_BOYBAND
+    // Boy band: DFS OFF. Pin the CPU at a constant 160 MHz so it NEVER drops
+    // to 80 MHz. DFS dropping to 80 during the speaker drain starves the audio
+    // task → samples served late → I2S underrun → choppy garble (NOT white
+    // noise — matches the observed two-duck symptom; see bambu-garble-fix
+    // branch which diagnosed exactly this). Boy band ducks are USB-powered on
+    // stage, so the heat/current savings DFS buys are irrelevant — we want
+    // maximum, steady audio headroom. (Kept at 160, not 240, per the brownout
+    // note below — relevant with several ducks on one USB hub. Bump to 240 as
+    // a follow-up only if 160 proves insufficient under load.)
+    esp_pm_config_t pm = {
+        .max_freq_mhz = 160,
+        .min_freq_mhz = 160,   // == max ⇒ DFS effectively disabled
+        .light_sleep_enable = false,
+    };
+#else
     // Dynamic frequency scaling — let the CPU drop to 80 MHz when idle
     // (no tasks ready, no audio in flight) and ramp back to 160 MHz
     // under load. Combined with WiFi modem-sleep + tickless idle, this
@@ -67,6 +84,7 @@ void app_main(void) {
         .min_freq_mhz = 80,
         .light_sleep_enable = false,
     };
+#endif
     esp_err_t pm_err = esp_pm_configure(&pm);
     if (pm_err != ESP_OK) {
         ESP_LOGW(TAG, "esp_pm_configure failed: %s — DFS not active",

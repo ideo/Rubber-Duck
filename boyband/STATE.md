@@ -2,6 +2,44 @@
 
 Living status doc. Update in the same commit as the work it describes.
 
+## ⚠️ OPEN: two-duck garble on shared WiFi — transport rethink (2026-06-01)
+
+Single duck plays clean. **Two ducks on IDEO-Guest garble**, regardless
+of send pacing (tried real-time trickle AND burst/prebuffer — prebuffer
+garbled Mallard immediately). Mac sends perfect real-time (measured to a
+fake receiver), so it's NOT the Mac and NOT TCP corruption — it's the
+**congested shared corporate WiFi** failing to cleanly serve two
+simultaneous streams (and possibly the duck choking on a fast burst of
+many tiny 640B WS frames). Pattern: 1 stream = fine, 2 streams = garble.
+
+**Candidate fixes, in order of leverage:**
+1. **Clean network** — get both ducks + Mac off IDEO-Guest onto a
+   dedicated/uncontended network (phone hotspot now; dedicated travel
+   router for the show — already the show plan). Highest leverage,
+   least code. Most likely the real fix.
+2. **Serial transport (USB-CDC)** — *Devin's idea, 2026-06-01, NOTE
+   ONLY, not built.* The ducks are already USB-tethered (power). Stream
+   PCM over native USB-CDC instead of WiFi → eliminates the ENTIRE WiFi
+   failure class (jitter, contention, mDNS ghost, DHCP drift, reconnect
+   wedging). Bandwidth is a non-issue on USB-CDC (256 kbps/duck << USB
+   12 Mbps), one dedicated wire per duck via the 4-way hub.
+   - **Caveat (prior Bambu learning):** the slow *hardware UART* (115200)
+     overflows at audio rates — must use the *native USB-CDC* link, not
+     the UART. See memory `feedback_diag_via_ws.md`.
+   - **Caveat:** the chip's console logs share USB-CDC — show build must
+     silence console logging or frame/multiplex audio vs logs.
+   - **Firmware work:** add a serial audio-sink path (read framed PCM →
+     spk_stream, parallel to on_binary). Stage writes PCM to
+     /dev/cu.usbmodemXXX per duck instead of a WS server. Arguably
+     SIMPLER than the WS path (no server/handshake/reconnect).
+   - **Tradeoff:** ducks tethered to the Mac by USB. Fine for a tethered
+     desk/stage act; rules out wireless/scattered ducks.
+   - **Verdict:** for a one-time tethered show where reliability > wireless,
+     serial is plausibly the *correct* transport. Revisit if WiFi (even
+     on a clean network) stays flaky.
+3. **Larger WS frames** — send relay-sized chunks (multi-KB) instead of
+   640B, fewer frames/sec. Cheap to try; may help the burst-choke.
+
 ## Where we are
 
 **🎉 FIRST REAL DUCK CONNECTED & ANIMATING (2026-06-01).** A physical

@@ -43,19 +43,45 @@ final class DuckConnection: @unchecked Sendable {
     let connection: NWConnection
     let connectedAt: Date
 
+    /// Per-connection send queue — ISOLATES ducks from each other. Without
+    /// this, all connections shared one dispatch queue, so backpressure on
+    /// one duck's socket stalled sends to the others (head-of-line blocking →
+    /// the un-jammed duck starved and garbled). One queue per duck = a jam on
+    /// one can't delay another.
+    private let sendQueue: DispatchQueue
+    /// Outstanding (not-yet-acked) PCM sends. When the network backs up this
+    /// climbs; past `maxInFlight` we DROP new chunks instead of piling them up.
+    private var inFlight = 0
+    /// ~640ms of audio (32 × 20ms). Beyond this the duck's network can't keep
+    /// up, so DROP — stay real-time (a brief skip) rather than queue a growing
+    /// backlog the duck plays late/choppy ("fighting through the wedge").
+    private let maxInFlight = 32
+    /// Diagnostics: how many chunks we've dropped this connection.
+    private(set) var dropped = 0
+
     init(duck: DuckID, connection: NWConnection) {
         self.id = UUID()
         self.duck = duck
         self.connection = connection
         self.connectedAt = Date()
+        self.sendQueue = DispatchQueue(label: "duck.send.\(duck.rawValue)")
     }
 
-    /// Send a raw PCM (int16 LE) chunk to the duck. Should be ~20ms of
-    /// audio per call to keep cadence matched to the firmware's drain.
-    /// 20ms @ 16kHz mono = 320 samples = 640 bytes.
+    /// Send a raw PCM (int16 LE) chunk. Real-time discipline: if the socket is
+    /// backed up (inFlight ≥ maxInFlight), DROP this chunk rather than queue it
+    /// — late audio is useless; a skip beats progressive garble. ~20ms/chunk.
     func sendPCM(_ pcm: Data) {
         let frame = WSFrame.encodeBinary(pcm)
-        connection.send(content: frame, completion: .idempotent)
+        sendQueue.async {
+            if self.inFlight >= self.maxInFlight {
+                self.dropped += 1
+                return  // drop — don't fight through the backlog
+            }
+            self.inFlight += 1
+            self.connection.send(content: frame, completion: .contentProcessed { _ in
+                self.sendQueue.async { self.inFlight -= 1 }
+            })
+        }
     }
 
     /// Send a JSON control text frame. E.g. {"type":"interruption"}.
@@ -164,6 +190,10 @@ final class StageServer: @unchecked Sendable {
     private var callbacks: StageCallbacks
     private let lock = NSLock()
     private var ducks: [DuckID: DuckConnection] = [:]
+    /// Control-channel handler: HTTP GET/POST /play or /stop invokes this
+    /// with "play" / "stop". Lets the operator trigger playback without
+    /// restarting Stage (which would drop + churn duck connections).
+    var onControl: (@Sendable (String) -> Void)?
     /// MAC → slot map used to route real firmware (which hits /ws/duck
     /// and identifies via X-Duck-Id). nil = production path disabled;
     /// only /duck/{ID} works (test/dev mode).
@@ -246,9 +276,31 @@ final class StageServer: @unchecked Sendable {
                 connection.cancel(); return
             }
 
-            // We only speak WebSocket. Everything else gets a polite 404.
-            guard parsed.headers["upgrade"]?.lowercased() == "websocket",
-                  let key = parsed.headers["sec-websocket-key"] else {
+            // Control endpoints (plain HTTP GET/POST, no WS upgrade). Let us
+            // trigger playback on already-connected ducks WITHOUT restarting
+            // Stage (restarting drops + churns the duck connections).
+            let pathOnly = (parsed.path.components(separatedBy: "?").first ?? parsed.path)
+            if parsed.headers["upgrade"]?.lowercased() != "websocket" {
+                switch pathOnly {
+                case "/play":
+                    self.onControl?("play")
+                    self.sendError(connection, status: 200, body: "playing\n")
+                    return
+                case "/stop":
+                    self.onControl?("stop")
+                    self.sendError(connection, status: 200, body: "stopped\n")
+                    return
+                case "/status":
+                    let ducks = self.connectedDucks().map { $0.rawValue }.joined(separator: ",")
+                    self.sendError(connection, status: 200,
+                                   body: "connected: \(ducks.isEmpty ? "none" : ducks)\n")
+                    return
+                default:
+                    self.send404(connection)
+                    return
+                }
+            }
+            guard let key = parsed.headers["sec-websocket-key"] else {
                 self.send404(connection)
                 return
             }
@@ -334,6 +386,7 @@ final class StageServer: @unchecked Sendable {
     private func sendError(_ connection: NWConnection, status: Int, body: String) {
         let statusText: String
         switch status {
+        case 200: statusText = "OK"
         case 400: statusText = "Bad Request"
         case 403: statusText = "Forbidden"
         case 404: statusText = "Not Found"
