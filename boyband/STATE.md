@@ -55,13 +55,25 @@ Zero-crossing analysis confirms 329.5 Hz on D2 (expected E4 =
 **Hardware not yet tested.** If a real duck fails after this, the
 problem is firmware/I2S/speaker, not Stage.
 
-**🎉 TWO DUCKS CONNECTED SIMULTANEOUSLY (2026-06-01).** Mallard (D1,
-duck_id `dcb4d92961e9`) and Pekin (D2, duck_id `dcb4d9296125`) both
-flashed BOYBAND, both on IDEO-Guest, both holding live Stage
-connections at once. Multi-duck foundation proven on hardware.
-Multi-`--play` routes distinct audio per duck (verified in software
-via two fake-ducks). Have NOT yet played different audio out the two
-physical ducks at once (gated on noise tolerance, not on unknowns).
+**🎉🎉 CALL/RESPONSE WORKS ON HARDWARE (2026-06-01).** Mallard (D1)
+and Pekin (D2) traded a 6-line back-and-forth bit — two distinct
+voices, synchronized timing (Pekin's lines land in Mallard's gaps,
+no drift), single pass, at VOL_STEP=2. **Every primitive the show
+needs is now proven on real hardware:** independent addressing,
+concurrent voicing, sequential call/response with synchronized
+start, per-duck voices, controllable volume, clean single-pass.
+Mode 1 (piano-roll show) is now just CONTENT + SCALE — more ducks,
+longer scripts, real voices, authored in a DAW. No architectural
+unknowns remain.
+
+How it works: `gen-dialogue.py` turns an ordered script into one
+time-aligned WAV per duck (each silent while others talk); Stage's
+synchronized multi-`--play` waits for all ducks then starts every
+track on a shared clock. See `OPERATIONS.md` + commit 204e915.
+
+**Earlier milestone — two ducks connected simultaneously.** Mallard
+(duck_id `dcb4d92961e9`) + Pekin (`dcb4d9296125`) both flashed
+BOYBAND, both on IDEO-Guest, both holding live Stage connections.
 
 Two hardware learnings (also in MEMORY.md):
 - **duck_id = SoftAP MAC = base MAC + 1.** esptool reports base MAC;
