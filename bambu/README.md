@@ -3,6 +3,9 @@
 > **🦆 Flash a duck from your browser:**
 > [ideo.github.io/Rubber-Duck/flash](https://ideo.github.io/Rubber-Duck/flash/)
 > (Chrome / Edge — uses WebSerial, no install needed)
+>
+> All three flashing paths (web / `make` / `esptool`), what to expect
+> after flash, and every gotcha that's cost time: **[docs/FLASHING.md](docs/FLASHING.md)**.
 
 A standalone, conversational rubber duck that lives next to a Bambu 3D
 printer. No Mac, no plugin, no companion app — the duck has a real
