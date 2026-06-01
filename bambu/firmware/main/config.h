@@ -149,6 +149,15 @@
 #define RELAY_BASE_URL "wss://duck-duck-print.fly.dev"
 #endif
 
+// Boy band build (BAMBU_DUCK_BOYBAND=1) REQUIRES a compile-time
+// RELAY_BASE_URL — the URL is per-operator's-Mac and there's no
+// sensible default. Fail the build fast if the operator forgot the
+// -DRELAY_BASE_URL=... flag instead of letting the chip silently fall
+// back to "no URL configured" and refuse all sessions at runtime.
+#if defined(BAMBU_DUCK_BOYBAND) && !defined(RELAY_BASE_URL)
+#error "BAMBU_DUCK_BOYBAND requires -DRELAY_BASE_URL=ws://<your-mac>.local:3334 (or your Stage app's host:port)"
+#endif
+
 // Compile-time-baked endpoints. Only defined when RELAY_BASE_URL is —
 // i.e. on turnkey or builds with an explicit -DRELAY_BASE_URL flag.
 // agent.c falls back to runtime NVS lookup (relay_url_get / similar)

@@ -139,7 +139,11 @@ void app_main(void) {
             // mode. Initial Bambu setup happens during the APSTA captive
             // portal flow in provision.c — that's the only place chip-side
             // creds touch the relay.
+#ifndef BAMBU_DUCK_BOYBAND
+            // Boy band has no printer; the notify channel is dead weight
+            // (and would 404 against Stage anyway).
             notify_task_start();
+#endif
         } else {
             ESP_LOGE(TAG, "wifi creds present but connect failed");
             // Chip-internal failure → uh-oh (concerned, randomized) so
@@ -166,6 +170,40 @@ void app_main(void) {
         phrase_play(PHRASE_TAP_TO_START);
     }
 
+#ifdef BAMBU_DUCK_BOYBAND
+    // Boy band / puppeteer mode: no wake gate, no tap detector, no volume
+    // cycling, no soft re-onboard via long-press. WiFi creds still come
+    // through the existing captive portal on first boot, but after that
+    // the duck just keeps a relay session open forever. agent_run_session
+    // handles speaker drain + servo speech animation; the (still-spawned)
+    // mic task idles harmlessly because Stage never sends {"type":"ready"}
+    // so audio_mic_enable stays false for the life of the show.
+    if (!wifi_connected) {
+        ESP_LOGI(TAG, "boyband: no wifi creds — entering captive portal once");
+        audio_chirp_bend(320, 680, 320);
+        esp_err_t err = wifi_provision_run();
+        if (err == ESP_OK) {
+            wifi_connected = true;
+            audio_chirp_up();
+        } else {
+            ESP_LOGE(TAG, "boyband: provisioning failed: %s — rebooting",
+                     esp_err_to_name(err));
+            audio_chirp_uh_oh();
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            esp_restart();
+        }
+    }
+    while (1) {
+        ESP_LOGI(TAG, "boyband: opening persistent relay session");
+        agent_run_session(NULL, NULL);
+        // agent_run_session returns when the WS disconnects or errors.
+        // Just reconnect after a short delay — Stage may have restarted,
+        // WiFi may have hiccuped, etc.
+        ESP_LOGW(TAG, "boyband: session ended, reconnecting in 2s");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+    // Unreachable, but be explicit about it.
+#else
     // Wake monitor armed regardless of WiFi state — needed for both:
     //   - WiFi-up: tap / button → conversation
     //   - No WiFi: tap / button → enter SoftAP wizard
@@ -315,4 +353,5 @@ void app_main(void) {
         wake_quiet_for_ms(800);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
+#endif // BAMBU_DUCK_BOYBAND
 }

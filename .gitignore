@@ -4,6 +4,12 @@ widget/.build/
 widget/.swiftpm/
 widget/Playground/.build/
 widget/Playground/.swiftpm/
+
+# Swift Package Manager build output anywhere (boyband/stage, future packages).
+# Hidden ".build" directory + ".swiftpm" cache get regenerated on every
+# `swift build` and have no place in git.
+**/.build/
+**/.swiftpm/
 .release/
 duck-eval-test.txt
 *.wav
