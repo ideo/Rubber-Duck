@@ -258,6 +258,28 @@ make flash-boyband PORT=/dev/cu.usbmodem101 STAGE_URL=ws://10.5.128.41:3334 VOL_
 Flash simultaneously when possible by running separate terminal jobs, one per
 port, after verifying which physical duck is on each port.
 
+## Secret Handoff
+
+Real API keys must not be committed to this repo. Hand them off through a
+password manager or another approved secure channel.
+
+Required key for current authoring/TTS work:
+
+- ElevenLabs API key.
+
+Preferred local install location on each Mac:
+
+- macOS Keychain service `com.duckduckduck.boyband.elevenlabs`.
+
+Runbook:
+
+- See `boyband/docs/api-keys.md` for copy-paste-safe Keychain commands.
+- If a key check reports `ELEVENLABS_API_KEY env: missing`,
+  `boyband/.env.local: missing`, `bambu/relay/.env: missing`, and
+  `Keychain com.duckduckduck.boyband.elevenlabs: missing`, the Mac does not
+  have the ElevenLabs key installed yet.
+- Do not put the key in this handoff doc, Slack, or git.
+
 ## Operator Runbook
 
 Start a two-duck cue:

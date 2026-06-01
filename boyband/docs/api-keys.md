@@ -19,16 +19,37 @@ stop. Ask the human to put it in Keychain instead.
 ## Adding a key (one-time setup per Mac)
 
 ```sh
-# Replace YOUR_KEY with the real value at the prompt
+read -rsp "Anthropic API key: " KEY; echo
 security add-generic-password \
   -s com.duckduckduck.boyband.anthropic \
-  -a $USER \
-  -w \
+  -a "$USER" \
+  -w "$KEY" \
   -U
-# (you'll be prompted for the secret; it won't echo)
+unset KEY
 ```
 
 Repeat for `elevenlabs` and (optionally) `openai`.
+
+ElevenLabs example:
+
+```sh
+read -rsp "ElevenLabs API key: " KEY; echo
+security add-generic-password \
+  -s com.duckduckduck.boyband.elevenlabs \
+  -a "$USER" \
+  -w "$KEY" \
+  -U
+unset KEY
+```
+
+Verify without printing the key:
+
+```sh
+security find-generic-password \
+  -s com.duckduckduck.boyband.elevenlabs \
+  -a "$USER" \
+  -w >/dev/null && echo "ElevenLabs key: ok"
+```
 
 ## How the Stage app reads them
 
@@ -48,6 +69,20 @@ ELEVENLABS_API_KEY=…
 ```
 
 Keychain wins if both are set.
+
+Some older helper scripts still check `ELEVENLABS_API_KEY` in the shell
+environment or `bambu/relay/.env`. Prefer a temporary shell export for those
+scripts:
+
+```sh
+export ELEVENLABS_API_KEY="$(security find-generic-password \
+  -s com.duckduckduck.boyband.elevenlabs \
+  -a "$USER" \
+  -w)"
+```
+
+Do not commit `.env.local` or `bambu/relay/.env`, and do not use either file
+as the human handoff mechanism.
 
 ## If a key is leaked
 
