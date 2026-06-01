@@ -11,17 +11,16 @@ their Claude) can pick it up cold without re-walking the whole maze.
 > zero-mic, prebuffer, per-duck queues, drop-frames) and **it still
 > chokes — even on a single duck.**
 >
-> **LEADING HYPOTHESIS (not yet tested): WS FRAME SIZE.** The Bambu relay
-> streams the *same* duck firmware cleanly over the internet from
-> ElevenLabs — so we must have deviated from how it feeds the duck. We
-> did: the relay sends **few, large** binary frames (ElevenLabs chunks;
-> firmware comment notes "~320KB arrives at once"), while Stage sends
-> **~50 tiny 640-byte frames/sec**. Each WS frame costs the duck a fixed
-> per-frame overhead (WS event callback → `on_binary` → stream push →
-> servo update); 50 tiny frames/sec is ~10× the relay's frame load and
-> likely swamps the duck's WS event loop → choppy delivery into
-> `spk_stream` → underrun. **Fix to try first: make Stage send large
-> frames (16–32 KB), like the relay. Stage-only, no reflash.**
+> **FRAME SIZE — TESTED, did NOT fix it.** Strong hypothesis: relay sends
+> few large frames, we sent ~50 tiny 640B frames/sec. Changed Stage to
+> **16 KB frames** (~2/sec, matching the relay's `buffer_size=16384`).
+> **Still chokes the same.** So raw WS frame count is NOT the cause
+> either. (Kept the 16KB frame size anyway — it's closer to the proven
+> reference and harmless.)
+>
+> **We are now out of cheap guesses. STOP guessing — instrument both
+> ends (see "MEASURE BOTH ENDS" below). That is the only honest next
+> step.** Parked 2026-06-01.
 
 ## ⭐ Why does this work WORSE than the internet-based Bambu duck?
 
@@ -71,6 +70,7 @@ was defended — it was backwards. **Match the relay: few big frames.**
 | CPU clock too low (would 240 help?) | No. 160 MHz is ample for one 16kHz mono stream (~32KB/s is trivial). Choke persists at a steady 160 ⇒ not clock-bound. 240 also **browns out** (documented in sdkconfig.defaults) so it's off the table regardless. |
 | Console logging blocking on a full USB-CDC TX buffer | Firmware now **silences all logging** (`esp_log_level_set("*", ESP_LOG_NONE)`) in BOYBAND — still chokes. (Was a real hazard worth removing, just not THE cause.) |
 | Mic task starving the speaker on the shared full-duplex I2S | Firmware now spawns **zero mic/ws-send/mute tasks** in BOYBAND and bumps `spk_task` to priority 7 — still chokes. (Also a real improvement — mic_task at prio 7 *was* above spk_task at 6 — just not THE cause on its own.) |
+| WS frame too small (50 tiny 640B frames/sec vs relay's few large) | Changed Stage to **16 KB frames** (~2/sec). **Still chokes.** Frame count ruled out. |
 
 ## What's currently deployed (the firmware + Stage state right now)
 

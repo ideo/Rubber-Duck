@@ -25,8 +25,13 @@ import AVFoundation
 import Dispatch
 
 private let kSampleRate: Double = 16000
-private let kSamplesPerChunk = 320            // 20 ms @ 16 kHz
-private let kChunkBytes = kSamplesPerChunk * 2 // int16 → 2 bytes
+// FRAME SIZE — match the Bambu relay (the PROVEN-working reference), which
+// sends FEW LARGE binary frames (whole ElevenLabs chunks, up to ~320KB). We
+// were sending 640-byte (20ms) frames = ~50 WS frames/sec, ~10x the per-frame
+// overhead on the duck's WS event loop → choppy delivery → underrun. 16 KB
+// matches the duck's esp_websocket_client buffer_size (16384) and cuts frame
+// rate to ~2/sec. Must stay even (int16 alignment); 16384 is even.
+private let kChunkBytes = 16384               // 16 KB ≈ 512 ms @ 16 kHz mono
 
 final class FilePlayer: @unchecked Sendable {
     private let server: StageServer
