@@ -67,6 +67,8 @@ final class DuckConnection: @unchecked Sendable {
     private var inFlightBytes = 0
     private var maxInFlightBytesSeen = 0
     private var lastCompletionMs = 0.0
+    private var lastCompletionNs: UInt64?
+    private var lastPCMNs: UInt64?
     private var maxCompletionMs = 0.0
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastPingNs: UInt64?
@@ -102,6 +104,7 @@ final class DuckConnection: @unchecked Sendable {
             }
             self.inFlight += 1
             self.inFlightBytes += pcmBytes
+            self.lastPCMNs = DispatchTime.now().uptimeNanoseconds
             self.sentFrames += 1
             self.sentBytes += pcmBytes
             self.maxInFlightBytesSeen = max(self.maxInFlightBytesSeen, self.inFlightBytes)
@@ -114,6 +117,7 @@ final class DuckConnection: @unchecked Sendable {
                     self.completedFrames += 1
                     self.completedBytes += pcmBytes
                     self.lastCompletionMs = elapsedMs
+                    self.lastCompletionNs = DispatchTime.now().uptimeNanoseconds
                     self.maxCompletionMs = max(self.maxCompletionMs, elapsedMs)
                 }
             })
@@ -136,6 +140,12 @@ final class DuckConnection: @unchecked Sendable {
 
     private func sendPing() {
         let now = DispatchTime.now().uptimeNanoseconds
+        if inFlightBytes > 0 {
+            return
+        }
+        if let lastPCMNs, Double(now - lastPCMNs) / 1_000_000.0 < 500.0 {
+            return
+        }
         lastPingNs = now
         heartbeatOutstanding = true
         let payload = withUnsafeBytes(of: now.bigEndian) { Data($0) }
@@ -170,6 +180,7 @@ final class DuckConnection: @unchecked Sendable {
         let droppedFrames: Int
         let droppedBytes: Int
         let lastCompletionMs: Double
+        let lastCompletionAgeMs: Double?
         let maxCompletionMs: Double
         let lastPongMs: Double
         let maxPongMs: Double
@@ -180,6 +191,7 @@ final class DuckConnection: @unchecked Sendable {
     func stats() -> SendStats {
         sendQueue.sync {
             let now = DispatchTime.now().uptimeNanoseconds
+            let completionAge = lastCompletionNs.map { Double(now - $0) / 1_000_000.0 }
             let pongAge = lastPongNs.map { Double(now - $0) / 1_000_000.0 }
             let pingAge = heartbeatOutstanding ? lastPingNs.map {
                 Double(now - $0) / 1_000_000.0
@@ -194,6 +206,7 @@ final class DuckConnection: @unchecked Sendable {
                              droppedFrames: dropped,
                              droppedBytes: droppedBytes,
                              lastCompletionMs: lastCompletionMs,
+                             lastCompletionAgeMs: completionAge,
                              maxCompletionMs: maxCompletionMs,
                              lastPongMs: lastPongMs,
                              maxPongMs: maxPongMs,
@@ -380,7 +393,7 @@ final class StageServer: @unchecked Sendable {
             let s = conn.stats()
             let health = Self.healthIssue(for: s).map { "bad(\($0))" } ?? "ok"
             lines.append(String(format:
-                "%@: health=%@ sent=%d/%@ completed=%d/%@ inFlight=%d/%@ maxInFlight=%@ dropped=%d/%@ lastAck=%.1fms maxAck=%.1fms pong=%.1fms maxPong=%.1fms pongAge=%@",
+                "%@: health=%@ sent=%d/%@ completed=%d/%@ inFlight=%d/%@ maxInFlight=%@ dropped=%d/%@ lastAck=%.1fms ackAge=%@ maxAck=%.1fms pong=%.1fms maxPong=%.1fms pongAge=%@",
                 conn.duck.rawValue,
                 health,
                 s.sentFrames, Self.formatBytes(s.sentBytes),
@@ -388,7 +401,7 @@ final class StageServer: @unchecked Sendable {
                 s.inFlightFrames, Self.formatBytes(s.inFlightBytes),
                 Self.formatBytes(s.maxInFlightBytesSeen),
                 s.droppedFrames, Self.formatBytes(s.droppedBytes),
-                s.lastCompletionMs, s.maxCompletionMs,
+                s.lastCompletionMs, Self.formatMs(s.lastCompletionAgeMs), s.maxCompletionMs,
                 s.lastPongMs, s.maxPongMs,
                 Self.formatMs(s.lastPongAgeMs)))
         }
@@ -478,35 +491,44 @@ final class StageServer: @unchecked Sendable {
     }
 
     private static func healthIssue(for s: DuckConnection.SendStats) -> String? {
-        if s.inFlightBytes >= unhealthyInFlightBytes {
+        let audioFlowing = isAudioFlowing(s)
+        if s.inFlightBytes >= unhealthyInFlightBytes && !audioFlowing {
             return "inFlight=\(formatBytes(s.inFlightBytes))"
         }
-        if s.lastCompletionMs >= unhealthyLastAckMs {
+        if s.lastCompletionMs >= unhealthyLastAckMs && !audioFlowing {
             return String(format: "lastAck=%.1fms", s.lastCompletionMs)
         }
-        if let age = s.outstandingPingAgeMs, age >= unhealthyMissingPongMs {
+        if let age = s.outstandingPingAgeMs, age >= unhealthyMissingPongMs && !audioFlowing {
             return String(format: "missingPong=%.1fms", age)
         }
-        if s.lastPongMs >= unhealthyPongMs {
+        if s.inFlightBytes > 0 && s.lastPongMs >= unhealthyPongMs && !audioFlowing {
             return String(format: "pong=%.1fms", s.lastPongMs)
         }
         return nil
     }
 
     private static func recoveryIssue(for s: DuckConnection.SendStats) -> String? {
-        if s.inFlightBytes >= 512 * 1024 {
+        let audioFlowing = isAudioFlowing(s)
+        if s.inFlightBytes >= 384 * 1024 {
             return "wedgedInFlight=\(formatBytes(s.inFlightBytes))"
         }
-        if s.inFlightBytes >= 128 * 1024 && s.lastCompletionMs >= 5_000.0 {
+        if !audioFlowing && s.inFlightBytes >= 96 * 1024 && s.lastCompletionMs >= 2_500.0 {
             return String(format: "wedgedAck=%.1fms", s.lastCompletionMs)
         }
-        if let age = s.outstandingPingAgeMs, age >= 5_000.0 {
+        if !audioFlowing,
+           s.inFlightBytes >= 32 * 1024,
+           let age = s.outstandingPingAgeMs,
+           age >= 2_500.0 {
             return String(format: "wedgedMissingPong=%.1fms", age)
         }
-        if s.lastPongMs >= 5_000.0 {
-            return String(format: "wedgedPong=%.1fms", s.lastPongMs)
-        }
         return nil
+    }
+
+    private static func isAudioFlowing(_ s: DuckConnection.SendStats) -> Bool {
+        guard s.sentBytes > 0, s.inFlightBytes > 0, let age = s.lastCompletionAgeMs else {
+            return false
+        }
+        return age < 1_200.0
     }
 
     private static func formatMs(_ ms: Double?) -> String {
@@ -522,6 +544,10 @@ final class StageServer: @unchecked Sendable {
             return String(format: "%.1fKB", Double(n) / 1024.0)
         }
         return "\(n)B"
+    }
+
+    static func formatBytesForLog(_ n: Int) -> String {
+        formatBytes(n)
     }
 
     /// Snapshot of active connections (for broadcast loops).
@@ -598,6 +624,11 @@ final class StageServer: @unchecked Sendable {
                     return
                 case "/prev":
                     let body = self.onControl?("prev") ?? "prev\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/jump":
+                    let index = Self.queryValue("index", in: parsed.path) ?? ""
+                    let body = self.onControl?("jump:\(index)") ?? "jump unavailable\n"
                     self.sendError(connection, status: 200, body: body)
                     return
                 case "/cue":
@@ -738,6 +769,17 @@ final class StageServer: @unchecked Sendable {
             if kv.count == 2, kv[0] == "duck" {
                 return DuckID.parse(kv[1])
             }
+        }
+        return nil
+    }
+
+    private static func queryValue(_ name: String, in rawPath: String) -> String? {
+        let pieces = rawPath.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        guard pieces.count == 2 else { return nil }
+        for item in pieces[1].split(separator: "&") {
+            let kv = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard kv.first == Substring(name) else { continue }
+            return kv.count == 2 ? String(kv[1]) : ""
         }
         return nil
     }
@@ -924,6 +966,26 @@ final class StageServer: @unchecked Sendable {
       border-color: var(--accent);
       font-weight: 700;
     }
+    select {
+      min-height: 42px;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      padding: 0 10px;
+    }
+    select:hover { border-color: var(--accent); }
+    .jump-control {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+    .jump-control button {
+      min-width: 74px;
+    }
     .ducks {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1018,6 +1080,12 @@ final class StageServer: @unchecked Sendable {
         <button onclick="control('stop')">Stop</button>
         <button onclick="control('next')">Next</button>
         <button onclick="control('recover')">Recover</button>
+        <div class="jump-control">
+          <select id="lineSelect" aria-label="Jump to line" onchange="jumpToSelected()">
+            <option value="">Jump to line...</option>
+          </select>
+          <button onclick="jumpToSelected()">Jump</button>
+        </div>
       </div>
     </section>
 
@@ -1045,6 +1113,7 @@ final class StageServer: @unchecked Sendable {
 
   <script>
     let lastCue = "";
+    let lastTurnListKey = "";
     let metricBaselines = {};
 
     function parseBytes(s) {
@@ -1132,6 +1201,39 @@ final class StageServer: @unchecked Sendable {
       el.textContent = `[${now}] ${s}\n` + el.textContent;
     }
 
+    function turnOptionLabel(turn) {
+      const line = Number.isFinite(turn.line) ? turn.line : (turn.index + 1);
+      const who = turn.speaker ? `${turn.speaker}` : "Line";
+      const preview = turn.preview ? `: ${turn.preview}` : "";
+      return `${line}. ${who}${preview}`;
+    }
+
+    function updateLineSelect(state) {
+      const select = document.getElementById("lineSelect");
+      const turns = Array.isArray(state.turns) ? state.turns : [];
+      const listKey = turns.map(t => `${t.index}:${t.line}:${t.speaker}:${t.preview}`).join("|");
+      if (listKey !== lastTurnListKey) {
+        lastTurnListKey = listKey;
+        select.textContent = "";
+        if (!turns.length) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "Jump to line...";
+          select.appendChild(option);
+        } else {
+          for (const turn of turns) {
+            const option = document.createElement("option");
+            option.value = String(turn.index);
+            option.textContent = turnOptionLabel(turn);
+            select.appendChild(option);
+          }
+        }
+      }
+      if (Number.isFinite(state.cue?.index)) {
+        select.value = String(state.cue.index);
+      }
+    }
+
     async function control(cmd) {
       try {
         const r = await fetch("/" + cmd, { cache: "no-store" });
@@ -1143,12 +1245,19 @@ final class StageServer: @unchecked Sendable {
       }
     }
 
+    async function jumpToSelected() {
+      const value = document.getElementById("lineSelect").value;
+      if (value === "") return;
+      await control("jump?index=" + encodeURIComponent(value));
+    }
+
     async function refresh() {
       try {
         const r = await fetch("/state", { cache: "no-store" });
         const state = await r.json();
         const cue = state.cue || {};
         const status = parseStatus(state.status || "");
+        updateLineSelect(state);
         const cueText = cue.name ? `${cue.name}` : "No cue";
         const cueKey = `${cue.index}:${cue.name}:${cue.generation || 0}`;
         if (cueKey !== lastCue) {

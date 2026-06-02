@@ -188,7 +188,15 @@ static size_t spk_stream_send_even(const uint8_t *data, size_t len) {
     size_t free_bytes = xStreamBufferSpacesAvailable(s_spk_stream) & ~(size_t)1;
     size_t to_send = (len <= free_bytes) ? len : free_bytes;
     if (to_send == 0) return 0;
-    return xStreamBufferSend(s_spk_stream, data, to_send, pdMS_TO_TICKS(50));
+    size_t sent = xStreamBufferSend(s_spk_stream, data, to_send, 0);
+    if (sent != to_send || (sent & 1) != 0) {
+        xStreamBufferReset(s_spk_stream);
+        s_spk_has_pcm_carry = false;
+        ESP_LOGW(TAG, "spk stream partial/odd write (%u/%u), reset to keep PCM aligned",
+                 (unsigned)sent, (unsigned)to_send);
+        return 0;
+    }
+    return sent;
 }
 
 static void on_binary(const uint8_t *data, size_t len, int payload_offset, int payload_len) {
@@ -345,6 +353,12 @@ static void spk_task(void *arg) {
     while (s_session_active) {
         size_t n = xStreamBufferReceive(s_spk_stream, buf, sizeof(buf), pdMS_TO_TICKS(100));
         if (n > 0) {
+            if ((n & 1) != 0) {
+                xStreamBufferReset(s_spk_stream);
+                ESP_LOGW(TAG, "spk stream odd read (%u), reset to keep PCM aligned",
+                         (unsigned)n);
+                continue;
+            }
             // Feed envelope to servo for beak movement before playing.
             servo_feed_audio_envelope(buf, n / sizeof(int16_t));
             int64_t start_us = esp_timer_get_time();

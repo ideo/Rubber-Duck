@@ -8,13 +8,14 @@
 //   1. Resample-once: decode → AVAudioConverter → 16k/mono/int16, fully in
 //      memory, before any sending. No live device clock, no realtime
 //      resampler drift.
-//   2. Real-time pacing: 320 samples (640 bytes = 20 ms) every 20 ms. Keeps
-//      the duck's 1 MB speaker buffer near-empty so it can NEVER overflow.
+//   2. Real-time pacing: 640 samples (1280 bytes = 40 ms) every 40 ms. Keeps
+//      the duck's 1 MB speaker buffer near-empty while halving WebSocket
+//      binary frame rate versus 20 ms chunks.
 //      Overflow is exactly what triggers the firmware's drop path; an odd-
 //      byte drop there shifts every subsequent int16 → white noise (the bug
 //      fixed by the aligned-drop guard in agent.c on_binary). We avoid the
 //      whole situation by not over-filling.
-//   3. Even byte counts always: 320-sample chunks are inherently 2-byte
+//   3. Even byte counts always: 640-sample chunks are inherently 2-byte
 //      aligned, so the duck never receives a half-sample.
 //
 // Usage (from main.swift): --play <file> <DUCKID> [--loop]
@@ -25,11 +26,10 @@ import AVFoundation
 import Dispatch
 
 private let kSampleRate: Double = 16000
-// FRAME SIZE — send one 20 ms PCM frame per Stage tick. The duck-side gap
-// counters showed 80 ms frames reaching esp_websocket_client in ~500 ms bursts
-// even though the Mac had flushed them immediately; strict real-time pacing
-// avoids pushing a burst into the TCP/WebSocket stack.
-private let kChunkBytes = 640                 // 20 ms @ 16 kHz mono int16
+// FRAME SIZE — send one 40 ms PCM frame per Stage tick. This keeps the same
+// 16 kHz PCM bitrate but halves WebSocket binary message count versus 20 ms
+// frames, which should reduce pressure on esp_websocket_client.
+private let kChunkBytes = 1280                // 40 ms @ 16 kHz mono int16
 
 final class FilePlayer: @unchecked Sendable {
     private let server: StageServer
@@ -134,7 +134,7 @@ final class FilePlayer: @unchecked Sendable {
 
     /// Keep one frame of lead. Larger leads made short files finish on the Mac
     /// immediately while the duck received them in visible ~500 ms bursts.
-    private let leadBytes = 640
+    private let leadBytes = 1280
 
     func start(sharedClock: Bool = false, onDone: (@Sendable () -> Void)? = nil) {
         timer?.cancel()  // re-entrant: drop any prior timer
@@ -145,7 +145,7 @@ final class FilePlayer: @unchecked Sendable {
             guard let self else { return }
             let conn = self.server.connection(for: self.duck)
             if !sharedClock && conn == nil { return }  // hold for single-duck reconnect
-            // Send everything up to real-time position plus one 20 ms frame.
+            // Send everything up to real-time position plus one 40 ms frame.
             // Keeping this strict avoids wedging the ESP websocket path with
             // a burst of already-late PCM frames.
             let elapsedS = Double(DispatchTime.now().uptimeNanoseconds
