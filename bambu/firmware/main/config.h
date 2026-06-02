@@ -154,7 +154,7 @@
 // sensible default. Fail the build fast if the operator forgot the
 // -DRELAY_BASE_URL=... flag instead of letting the chip silently fall
 // back to "no URL configured" and refuse all sessions at runtime.
-#if defined(BAMBU_DUCK_BOYBAND) && !defined(RELAY_BASE_URL)
+#if defined(BAMBU_DUCK_BOYBAND) && !defined(BAMBU_DUCK_BOYBAND_USB) && !defined(RELAY_BASE_URL)
 #error "BAMBU_DUCK_BOYBAND requires -DRELAY_BASE_URL=ws://<your-mac>.local:3334 (or your Stage app's host:port)"
 #endif
 

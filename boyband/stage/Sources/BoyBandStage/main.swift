@@ -62,6 +62,11 @@ struct Args {
     /// Runtime slot aliases for reduced hardware. Example: D3=D1 routes
     /// generated Pintail lines to physical D1.
     var duckAliases: [DuckID: DuckID] = [:]
+    /// Audio transport for file/turn playback. WebSocket remains the default
+    /// unless --usb-map is supplied, in which case USB is the assumed test path.
+    var transport: AudioTransportMode = .ws
+    var transportWasSet: Bool = false
+    var usbMapPath: String? = nil
 }
 
 func parseArgs() -> Args {
@@ -135,6 +140,21 @@ func parseArgs() -> Args {
                 exit(2)
             }
             args.turnManifestPath = argv[i]
+        case "--usb-map":
+            i += 1
+            guard i < argv.count else {
+                fputs("error: --usb-map requires a path\n", stderr)
+                exit(2)
+            }
+            args.usbMapPath = argv[i]
+        case "--transport":
+            i += 1
+            guard i < argv.count, let mode = AudioTransportMode.parse(argv[i]) else {
+                fputs("error: --transport requires ws, usb, or auto\n", stderr)
+                exit(2)
+            }
+            args.transport = mode
+            args.transportWasSet = true
         case "--duck-alias":
             i += 1
             guard i < argv.count else {
@@ -157,8 +177,15 @@ func parseArgs() -> Args {
         }
         i += 1
     }
+    if args.usbMapPath != nil && !args.transportWasSet {
+        args.transport = .usb
+    }
     if args.duckMapPath != nil && args.noDuckMap {
         fputs("error: --duck-map and --no-duck-map are mutually exclusive\n", stderr)
+        exit(2)
+    }
+    if args.transport == .usb && args.usbMapPath == nil {
+        fputs("error: --transport usb requires --usb-map FILE\n", stderr)
         exit(2)
     }
     if args.playlistDir != nil && !args.plays.isEmpty {
@@ -200,6 +227,8 @@ func printHelp() {
       --turn-manifest FILE Preload gen-play-stems.py manifest; /play streams
                            one speaker utterance at a time.
       --duck-alias FROM=TO Route one manifest duck to another, e.g. D3=D1.
+      --usb-map FILE       Open ducks over USB Serial/JTAG from local map.
+      --transport MODE     ws, usb, or auto for file/turn playback.
       --loop               With --play: loop the file instead of one pass
       --list-inputs        Print available input devices and exit
       -h, --help           Show this help
@@ -507,9 +536,25 @@ let duckMap: DuckMap? = {
     return map
 }()
 
+let usbMap: USBDuckMap? = {
+    guard let path = args.usbMapPath else { return nil }
+    guard let map = USBDuckMap.load(from: path) else {
+        fputs("fatal: --usb-map \(path) could not be loaded\n", stderr)
+        exit(1)
+    }
+    log("usb-map     loaded \(path) — \(map.allEntries.count) entries")
+    for e in map.allEntries {
+        let nm = e.name.map { " \"\($0)\"" } ?? ""
+        let dev = e.currentDevice ?? "(auto)"
+        log("  \(e.duck.rawValue)\(nm) ← \(e.usbSerial ?? "no-serial") \(dev)")
+    }
+    return map
+}()
+
 // Label a connection as "D2 (Pekin)" when a name is known, else just "D2".
 func label(_ duck: DuckID) -> String {
     if let n = duckMap?.name(for: duck) { return "\(duck.rawValue) (\(n))" }
+    if let n = usbMap?.name(for: duck) { return "\(duck.rawValue) (\(n))" }
     return duck.rawValue
 }
 
@@ -547,6 +592,111 @@ if duckMap != nil {
         "and /duck/{D1..D4} (test)")
 } else {
     log("listening on ws://0.0.0.0:\(args.port)/duck/{D1..D4} (test only)")
+}
+
+let usbStage: USBStage? = {
+    guard let usbMap else { return nil }
+    let stage = USBStage(map: usbMap, logger: log)
+    stage.start()
+    log("transport  \(args.transport.rawValue)")
+    return stage
+}()
+
+@Sendable func transportIsConnected(_ duck: DuckID) -> Bool {
+    switch args.transport {
+    case .ws:
+        return server.connection(for: duck) != nil
+    case .usb:
+        return usbStage?.isConnected(duck) ?? false
+    case .auto:
+        return (usbStage?.isConnected(duck) ?? false) ||
+               server.connection(for: duck) != nil
+    }
+}
+
+@Sendable func transportSendPCM(_ duck: DuckID, _ pcm: Data) {
+    switch args.transport {
+    case .ws:
+        server.connection(for: duck)?.sendPCM(pcm)
+    case .usb:
+        usbStage?.sendPCM(duck, pcm)
+    case .auto:
+        if usbStage?.isConnected(duck) == true {
+            usbStage?.sendPCM(duck, pcm)
+        } else {
+            server.connection(for: duck)?.sendPCM(pcm)
+        }
+    }
+}
+
+@Sendable func transportInFlightBytes(_ duck: DuckID) -> Int {
+    switch args.transport {
+    case .ws:
+        return server.connection(for: duck)?.stats().inFlightBytes ?? 0
+    case .usb:
+        return usbStage?.stats(for: duck)?.inFlightBytes ?? 0
+    case .auto:
+        if usbStage?.isConnected(duck) == true {
+            return usbStage?.stats(for: duck)?.inFlightBytes ?? 0
+        }
+        return server.connection(for: duck)?.stats().inFlightBytes ?? 0
+    }
+}
+
+@discardableResult
+@Sendable func transportKick(_ duck: DuckID) -> Bool {
+    switch args.transport {
+    case .ws:
+        return server.kick(duck)
+    case .usb:
+        return usbStage?.kick(duck) ?? false
+    case .auto:
+        if usbStage?.isConnected(duck) == true {
+            return usbStage?.kick(duck) ?? false
+        }
+        return server.kick(duck)
+    }
+}
+
+@Sendable func transportReset(_ duck: DuckID) {
+    if args.transport == .usb || args.transport == .auto {
+        usbStage?.reset(duck)
+    }
+}
+
+@Sendable func transportStatusReport() -> String {
+    switch args.transport {
+    case .ws:
+        return server.statusReport()
+    case .usb:
+        return usbStage?.statusReport() ?? "connected: none\n"
+    case .auto:
+        if let usbStage, !usbStage.statusReport().hasPrefix("connected: none") {
+            return usbStage.statusReport()
+        }
+        return server.statusReport()
+    }
+}
+
+@Sendable func transportHealthReport() -> String {
+    switch args.transport {
+    case .ws:
+        return server.healthReport()
+    case .usb:
+        return usbStage?.healthReport() ?? "connected: none\n"
+    case .auto:
+        if let usbStage, !usbStage.healthReport().hasPrefix("connected: none") {
+            return usbStage.healthReport()
+        }
+        return server.healthReport()
+    }
+}
+
+func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
+    FilePlayer(duck: duck,
+               loop: loop,
+               isConnected: transportIsConnected,
+               sendPCM: transportSendPCM)
 }
 
 if args.sine {
@@ -616,7 +766,7 @@ if let turnManifestPath = args.turnManifestPath {
         let clipURL = turn.clip.hasPrefix("/")
             ? URL(fileURLWithPath: turn.clip)
             : manifestBaseURL.appendingPathComponent(turn.clip)
-        let player = FilePlayer(server: server, duck: targetDuck, loop: false)
+        let player = makeFilePlayer(duck: targetDuck, loop: false)
         let durationSec: Double
         do {
             durationSec = try player.load(path: clipURL.path)
@@ -656,6 +806,7 @@ if let turnManifestPath = args.turnManifestPath {
 
     @Sendable func stopAllTurns() {
         for u in utterances { u.player.stop() }
+        for duck in Set(utterances.map(\.duck)) { transportReset(duck) }
         turnState.stop()
     }
 
@@ -663,15 +814,14 @@ if let turnManifestPath = args.turnManifestPath {
                                         generation: Int,
                                         startedWaitingAt: Date = Date()) {
         let timeoutSec = 4.0
-        if let conn = server.connection(for: utterance.duck) {
-            let stats = conn.stats()
-            if stats.inFlightBytes > 0 {
+        let inFlightBytes = transportInFlightBytes(utterance.duck)
+        if inFlightBytes > 0 {
                 let waited = Date().timeIntervalSince(startedWaitingAt)
                 if waited >= timeoutSec {
                     log("turns      \(String(format: "%02d", utterance.index)) " +
                         "\(utterance.speaker) drain timed out " +
-                        "(\(StageServer.formatBytesForLog(stats.inFlightBytes)) in flight); kicking \(label(utterance.duck))")
-                    _ = server.kick(utterance.duck)
+                        "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(utterance.duck))")
+                    _ = transportKick(utterance.duck)
                     turnState.stop()
                     return
                 } else {
@@ -682,7 +832,6 @@ if let turnManifestPath = args.turnManifestPath {
                     }
                     return
                 }
-            }
         }
 
         log(String(format: "turns      %02d %@ finished",
@@ -706,7 +855,7 @@ if let turnManifestPath = args.turnManifestPath {
 
     @Sendable func triggerTurn(_ utterance: LoadedUtterance) {
         let i = turnState.currentIndex()
-        guard server.connection(for: utterance.duck) != nil else {
+        guard transportIsConnected(utterance.duck) else {
             turnState.stop()
             log(String(format: "turns      paused %02d/%02d %@ → %@ (0/1 connected)",
                        i + 1, utterances.count, utterance.speaker,
@@ -717,6 +866,7 @@ if let turnManifestPath = args.turnManifestPath {
                    i + 1, utterances.count, utterance.speaker,
                    label(utterance.duck), 1))
         duckStats.reset(utterance.duck)
+        transportReset(utterance.duck)
         let generation = turnState.start(trackCount: 1)
         utterance.player.rewind()
         utterance.player.start(sharedClock: false,
@@ -744,7 +894,7 @@ if let turnManifestPath = args.turnManifestPath {
             """
         }.joined(separator: ",")
         return """
-        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(alias))","text":"\(jsonEscape(u.text))"},"turns":[\(turnItems)],"status":"\(jsonEscape(server.statusReport()))","health":"\(jsonEscape(server.healthReport()))"}
+        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(alias))","text":"\(jsonEscape(u.text))"},"turns":[\(turnItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
         """
     }
@@ -783,6 +933,10 @@ if let turnManifestPath = args.turnManifestPath {
             return turnLine()
         case "state":
             return stateJSON()
+        case "status":
+            return transportStatusReport()
+        case "health":
+            return transportHealthReport()
         default:
             return "unknown control: \(cmd)\n"
         }
@@ -826,7 +980,7 @@ if let turnManifestPath = args.turnManifestPath {
     let cues: [LoadedCue] = grouped.keys.sorted().map { part in
         let entries = grouped[part]!.sorted { $0.duck.rawValue < $1.duck.rawValue }
         let tracks: [LoadedTrack] = entries.map { entry in
-            let player = FilePlayer(server: server, duck: entry.duck, loop: false)
+            let player = makeFilePlayer(duck: entry.duck, loop: false)
             var durationSec = 0.0
             do {
                 let dur = try player.load(path: entry.path)
@@ -870,6 +1024,7 @@ if let turnManifestPath = args.turnManifestPath {
         for cue in cues {
             for track in cue.tracks { track.player.stop() }
         }
+        for duck in Set(cues.flatMap { $0.tracks.map(\.duck) }) { transportReset(duck) }
         recoveryMonitor.cancel()
         playlistState.stop()
     }
@@ -900,9 +1055,10 @@ if let turnManifestPath = args.turnManifestPath {
     @Sendable func triggerCue(_ cue: LoadedCue) {
         let targets = cue.tracks.map { $0.duck }
         let names = targets.map { label($0) }.joined(separator: ", ")
-        let present = targets.filter { server.connection(for: $0) != nil }.count
+        let present = targets.filter { transportIsConnected($0) }.count
         log("playlist   ▶ \(cue.name) \(names)  (\(present)/\(targets.count) ducks connected)")
         for duck in targets { duckStats.reset(duck) }
+        for duck in targets { transportReset(duck) }
         let generation = playlistState.start(trackCount: cue.tracks.count)
         startRecoveryMonitor(generation: generation)
         for track in cue.tracks {
@@ -934,7 +1090,7 @@ if let turnManifestPath = args.turnManifestPath {
         let elapsedSec = snapshot.startedAt.map { min(Date().timeIntervalSince($0),
                                                       cue.durationSec) } ?? 0.0
         return """
-        {"cue":{"index":\(snapshot.index),"count":\(cues.count),"name":"\(cue.name)","durationSec":\(String(format: "%.3f", cue.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"status":"\(jsonEscape(server.statusReport()))","health":"\(jsonEscape(server.healthReport()))"}
+        {"cue":{"index":\(snapshot.index),"count":\(cues.count),"name":"\(cue.name)","durationSec":\(String(format: "%.3f", cue.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
         """
     }
@@ -974,6 +1130,10 @@ if let turnManifestPath = args.turnManifestPath {
             return cueLine()
         case "state":
             return stateJSON()
+        case "status":
+            return transportStatusReport()
+        case "health":
+            return transportHealthReport()
         default:
             return "unknown control: \(cmd)\n"
         }
@@ -992,7 +1152,7 @@ if let turnManifestPath = args.turnManifestPath {
     // Load every track first (fail fast on a bad file before connecting).
     var loaded: [(player: FilePlayer, duck: DuckID)] = []
     for play in args.plays {
-        let player = FilePlayer(server: server, duck: play.duck, loop: args.loop)
+        let player = makeFilePlayer(duck: play.duck, loop: args.loop)
         do {
             let dur = try player.load(path: play.path)
             log(String(format: "play        %@ → %@ (%.1fs, 16k/mono, %@)",
@@ -1014,8 +1174,9 @@ if let turnManifestPath = args.turnManifestPath {
     // churn). Rewinds first so every trigger replays from the top.
     let triggerPlay: @Sendable () -> Void = {
         let names = targets.map { label($0) }.joined(separator: ", ")
-        let present = targets.filter { server.connection(for: $0) != nil }.count
+        let present = targets.filter { transportIsConnected($0) }.count
         log("play        ▶ \(names)  (\(present)/\(targets.count) ducks connected)")
+        for duck in targets { transportReset(duck) }
         for entry in loaded {
             entry.player.rewind()
             let id = entry.duck.rawValue
@@ -1035,6 +1196,10 @@ if let turnManifestPath = args.turnManifestPath {
         case "stop":
             triggerStop()
             return "stopped\n"
+        case "status":
+            return transportStatusReport()
+        case "health":
+            return transportHealthReport()
         default:
             return "unknown control: \(cmd)\n"
         }
@@ -1053,7 +1218,7 @@ if let turnManifestPath = args.turnManifestPath {
         // Multi-track auto-start: wait until all ducks stably connected, then fire.
         DispatchQueue.global().async {
             let deadline = Date().addingTimeInterval(30)
-            func allConnected() -> Bool { targets.allSatisfy { server.connection(for: $0) != nil } }
+            func allConnected() -> Bool { targets.allSatisfy { transportIsConnected($0) } }
             while Date() < deadline {
                 if allConnected() { usleep(1_500_000); if allConnected() { break } }
                 usleep(200_000)
@@ -1073,6 +1238,7 @@ let shutdown = {
     sineGen?.stop()
     dawInput?.stop()
     filePlayers.forEach { $0.stop() }
+    usbStage?.stop()
     server.stop()
     exit(0)
 }

@@ -64,6 +64,12 @@ void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+#ifdef BAMBU_DUCK_BOYBAND_USB
+    // USB show build: do not enable ESP-IDF PM hooks. The first wired
+    // experiments crashed in esp_pm idle spinlocks shortly after entering
+    // the USB session. The sdkconfig CPU default is already 160 MHz, which is
+    // the show target, so leave PM unconfigured here.
+#else
     // CPU frequency / DFS policy. Boy band pins it; default uses DFS.
 #ifdef BAMBU_DUCK_BOYBAND
     // Boy band: DFS OFF. Pin the CPU at a constant 160 MHz so it NEVER drops
@@ -102,6 +108,7 @@ void app_main(void) {
         ESP_LOGW(TAG, "esp_pm_configure failed: %s — DFS not active",
                  esp_err_to_name(pm_err));
     }
+#endif
 
     led_init();
     ESP_ERROR_CHECK(audio_init());
@@ -119,9 +126,20 @@ void app_main(void) {
     // share this lower register so the whole "powering on" arc
     // reads as one continuous moment — wizard / setup-mode chirps
     // stay in the higher register to be clearly distinct.
+#ifndef BAMBU_DUCK_BOYBAND_USB
     led_on();
     audio_chirp_bend(280, 380, 180);
     led_off();
+#endif
+
+#ifdef BAMBU_DUCK_BOYBAND_USB
+    // Wired show flavor: the Mac owns transport over USB Serial/JTAG, so skip
+    // WiFi, captive portal, Bambu auth, and relay setup entirely.
+    while (1) {
+        agent_run_usb_session();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+#endif
 
     // Soft-reonboard hand-off: a previous boot's long-press set the
     // provision_pending flag and rebooted. Honor it now — skip the

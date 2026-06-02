@@ -10,6 +10,10 @@
 // NULL when unknown — the relay will say "your print" instead.
 esp_err_t agent_run_session(const char *event, const char *subtask);
 
+// Boy-band wired transport: read framed PCM from ESP32-S3 USB Serial/JTAG
+// instead of opening WiFi/WebSocket. Only compiled into the USB show flavor.
+esp_err_t agent_run_usb_session(void);
+
 // Spawn the long-lived /ws/notify task. Call once after WiFi (STA) is up.
 // On notify events the task triggers a session via the same code path as
 // a button press, passing event+subtask through to the relay as query

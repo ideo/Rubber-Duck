@@ -647,11 +647,18 @@ final class StageServer: @unchecked Sendable {
                                       contentType: "text/html; charset=utf-8",
                                       body: Self.visualizerHTML)
                     return
+                case "/subtitles", "/subtitle":
+                    self.sendResponse(connection, status: 200,
+                                      contentType: "text/html; charset=utf-8",
+                                      body: Self.subtitlesHTML)
+                    return
                 case "/status":
-                    self.sendError(connection, status: 200, body: self.statusReport())
+                    let body = self.onControl?("status") ?? self.statusReport()
+                    self.sendError(connection, status: 200, body: body)
                     return
                 case "/health":
-                    self.sendError(connection, status: 200, body: self.healthReport())
+                    let body = self.onControl?("health") ?? self.healthReport()
+                    self.sendError(connection, status: 200, body: body)
                     return
                 default:
                     if pathOnly == "/kick" || pathOnly.hasPrefix("/kick/") {
@@ -1294,6 +1301,199 @@ final class StageServer: @unchecked Sendable {
 
     refresh();
     setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
+"""#
+
+    private static let subtitlesHTML = #"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boy Band Subtitles</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #2a2824;
+      --fg: #ffffff;
+      color-scheme: dark light;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+    }
+    body {
+      min-height: 100svh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: Outfit, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      transition: background-color 260ms ease, color 260ms ease;
+      overflow: hidden;
+    }
+    main {
+      width: min(1760px, 92vw);
+      min-height: 100svh;
+      display: grid;
+      place-items: center;
+      padding: 6vh 4vw;
+    }
+    .subtitle {
+      margin: 0;
+      max-width: 26ch;
+      text-align: center;
+      font-size: clamp(42px, 7.4vw, 136px);
+      line-height: 1.04;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-wrap: balance;
+      overflow-wrap: break-word;
+    }
+    .idle .subtitle {
+      opacity: .32;
+      font-weight: 500;
+    }
+    @media (max-width: 720px) {
+      main { width: 96vw; padding: 5vh 4vw; }
+      .subtitle {
+        max-width: 18ch;
+        font-size: clamp(34px, 11vw, 72px);
+        line-height: 1.08;
+      }
+    }
+  </style>
+</head>
+<body class="idle">
+  <main>
+    <p id="subtitle" class="subtitle">Ready</p>
+  </main>
+
+  <script>
+    const themes = {
+      pintail: { bg: "#2A2824", fg: "#FFFFFF" },
+      classic: { bg: "#ECEA6E", fg: "#000000" },
+      mallard: { bg: "#527F16", fg: "#FFFFFF" },
+      pekin: { bg: "#EFEFEF", fg: "#000000" }
+    };
+    const fallback = themes.pintail;
+    let lastKey = "";
+    let lastLive = null;
+    const holdMs = 1200;
+
+    function speakerKey(speaker) {
+      return String(speaker || "")
+        .toLowerCase()
+        .replace(/[^a-z]/g, "");
+    }
+
+    function applyTheme(speaker) {
+      const key = speakerKey(speaker);
+      const theme = themes[key] || fallback;
+      document.documentElement.style.setProperty("--bg", theme.bg);
+      document.documentElement.style.setProperty("--fg", theme.fg);
+    }
+
+    function subtitleChunks(text) {
+      const words = String(text || "").trim().match(/\S+/g) || [];
+      if (words.length <= 9) return [words.join(" ")];
+
+      const chunks = [];
+      let current = [];
+      let chars = 0;
+      for (const word of words) {
+        current.push(word);
+        chars += word.length + 1;
+        const atPunctuation = /[.!?;:]$/.test(word);
+        const atSoftPause = /[,]$/.test(word) && current.length >= 5;
+        const fullEnough = current.length >= 7 || chars >= 44;
+        if ((atPunctuation && current.length >= 3) || atSoftPause || fullEnough) {
+          chunks.push(current.join(" "));
+          current = [];
+          chars = 0;
+        }
+      }
+      if (current.length) {
+        if (chunks.length && current.length <= 2) {
+          chunks[chunks.length - 1] += " " + current.join(" ");
+        } else {
+          chunks.push(current.join(" "));
+        }
+      }
+      return chunks.length ? chunks : [String(text || "").trim()];
+    }
+
+    function pacedText(state, text) {
+      const cue = state.cue || {};
+      const chunks = subtitleChunks(text);
+      if (chunks.length <= 1) return chunks[0] || "";
+      const duration = Number(cue.durationSec || 0);
+      const elapsed = Math.max(0, Number(cue.elapsedSec || 0));
+      const progress = duration > 0 ? Math.min(.999, elapsed / duration) : 0;
+      const index = Math.max(0, Math.min(chunks.length - 1, Math.floor(progress * chunks.length)));
+      return chunks[index];
+    }
+
+    function paint(text, speaker, idle) {
+      document.body.classList.toggle("idle", Boolean(idle));
+      document.getElementById("subtitle").textContent = text || "Ready";
+      applyTheme(speaker);
+    }
+
+    function updateText(state) {
+      const turn = state.turn || {};
+      const text = String(turn.text || "").trim();
+      const isPlaying = Boolean(state.playing && text);
+      if (isPlaying) {
+        const live = {
+          text: pacedText(state, text),
+          speaker: turn.speaker,
+          at: Date.now()
+        };
+        lastLive = live;
+        paint(live.text, live.speaker, false);
+        return;
+      }
+
+      if (lastLive && Date.now() - lastLive.at < holdMs) {
+        paint(lastLive.text, lastLive.speaker, false);
+        return;
+      }
+
+      paint("Ready", turn.speaker, true);
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch("/state", { cache: "no-store" });
+        const state = await response.json();
+        const key = [
+          state.playing ? "1" : "0",
+          state.cue?.generation || 0,
+          state.cue?.index || 0,
+          Math.floor((Number(state.cue?.elapsedSec || 0)) * 4),
+          state.turn?.speaker || "",
+          state.turn?.text || ""
+        ].join("|");
+        if (key !== lastKey) {
+          lastKey = key;
+          updateText(state);
+        }
+      } catch {
+        document.body.classList.add("idle");
+        document.getElementById("subtitle").textContent = "Offline";
+        applyTheme("pintail");
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 250);
   </script>
 </body>
 </html>

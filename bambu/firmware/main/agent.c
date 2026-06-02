@@ -27,6 +27,9 @@
 #include <string.h>
 #include <esp_timer.h>
 #include <esp_websocket_client.h>
+#ifdef BAMBU_DUCK_BOYBAND_USB
+#include <driver/usb_serial_jtag.h>
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/stream_buffer.h>
@@ -43,6 +46,9 @@ static StreamBufferHandle_t s_spk_stream = NULL;
 static StreamBufferHandle_t s_mic_stream = NULL;
 static uint8_t s_spk_pcm_carry = 0;
 static bool s_spk_has_pcm_carry = false;
+#ifdef BAMBU_DUCK_BOYBAND_USB
+static uint8_t s_usb_rx_buf[8192];
+#endif
 
 typedef struct {
     uint64_t rx_bytes;
@@ -463,6 +469,99 @@ static void mute_timer_task(void *arg) {
 }
 
 // ---- public ----
+
+#ifdef BAMBU_DUCK_BOYBAND_USB
+static void usb_reset_speaker_stream(void) {
+    if (s_spk_stream) xStreamBufferReset(s_spk_stream);
+    s_spk_has_pcm_carry = false;
+    s_agent_speaking = false;
+    s_last_audio_ms = 0;
+    servo_set_speaking(false);
+    stats_reset();
+}
+
+esp_err_t agent_run_usb_session(void) {
+    if (!s_spk_stream) {
+        s_spk_stream = xStreamBufferCreateWithCaps(1024 * 1024, 1,
+                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_spk_stream) return ESP_ERR_NO_MEM;
+    }
+
+    s_session_active = true;
+    s_agent_speaking = false;
+    s_last_audio_ms = 0;
+    s_spk_has_pcm_carry = false;
+    stats_reset();
+    audio_mic_enable(false);
+    xTaskCreate(spk_task, "spk", 4096, NULL, 7, NULL);
+    xTaskCreate(mute_timer_task, "mute_timer", 4096, NULL, 4, NULL);
+
+    if (!usb_serial_jtag_is_driver_installed()) {
+        usb_serial_jtag_driver_config_t cfg = {
+            .tx_buffer_size = 256,
+            .rx_buffer_size = 16 * 1024,
+        };
+        esp_err_t err = usb_serial_jtag_driver_install(&cfg);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    uint8_t *buf = s_usb_rx_buf;
+    const size_t buf_cap = sizeof(s_usb_rx_buf);
+    size_t have = 0;
+    while (1) {
+        int n = 0;
+        if (have < buf_cap) {
+            uint32_t cap = (uint32_t)(buf_cap - have);
+            if (cap > 1024) cap = 1024;
+            n = usb_serial_jtag_read_bytes(buf + have, cap, pdMS_TO_TICKS(10));
+        }
+        if (n > 0) {
+            have += (size_t)n;
+        } else {
+            taskYIELD();
+        }
+
+        size_t pos = 0;
+        while (have - pos >= 7) {
+            if (memcmp(buf + pos, "DUK1", 4) != 0) {
+                pos++;
+                continue;
+            }
+
+            uint8_t type = buf[pos + 4];
+            uint16_t len = (uint16_t)buf[pos + 5] |
+                           ((uint16_t)buf[pos + 6] << 8);
+            if (len > 4096) {
+                pos++;
+                continue;
+            }
+            if (have - pos < (size_t)7 + len) {
+                break;
+            }
+
+            const uint8_t *payload = buf + pos + 7;
+            if (type == 0x01) {
+                on_binary(payload, len, 0, len);
+            } else if (type == 0x02) {
+                usb_reset_speaker_stream();
+            }
+            pos += (size_t)7 + len;
+        }
+
+        if (pos > 0) {
+            memmove(buf, buf + pos, have - pos);
+            have -= pos;
+        }
+        if (have == buf_cap) {
+            memmove(buf, buf + have - 3, 3);
+            have = 3;
+        }
+    }
+    return ESP_OK;
+}
+#endif
 
 // Percent-encode a UTF-8 string into out (zero-terminated). Used to embed
 // notification fields in the /ws/duck?event=&subtask= query params.

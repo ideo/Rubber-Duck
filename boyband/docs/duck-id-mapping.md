@@ -104,6 +104,33 @@ The map is the **only** thing that ties physical ducks to slot IDs.
 Keeping it in a JSON file means an operator can hand-edit on the
 fly — no rebuild, no firmware reflash, no NVS write tools.
 
+## USB assignment for wired transport
+
+For the show rig, the ducks are expected to be plugged into USB even
+when the current audio transport is WiFi/WebSocket. Save the wired
+assignment in `boyband/duck-usb-map.local.json` (gitignored). The USB
+Serial/JTAG device exposes a stable serial number, while macOS
+`/dev/cu.usbmodem*` names can change:
+
+```json
+{
+  "ducks": [
+    {
+      "slot": "D1",
+      "name": "Mallard",
+      "duck_id": "DCB4D92961E9",
+      "usb_serial": "DC:B4:D9:29:61:E8",
+      "current_device": "/dev/cu.usbmodem1101"
+    }
+  ]
+}
+```
+
+Use `usb_serial` as the stable identity and `current_device` as the
+current boot's handle. Note that the USB serial can be the chip base
+MAC while `duck_id` is the runtime ID reported over the existing
+WebSocket path, so keep both fields.
+
 ## What this rules out (intentionally)
 
 - **Hot-swapping ducks mid-show without restart.** If a duck dies

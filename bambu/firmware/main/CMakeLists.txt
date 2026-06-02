@@ -49,6 +49,7 @@ idf_component_register(
         json
         driver
         esp_driver_i2s
+        esp_driver_usb_serial_jtag
 )
 if(HAS_PHRASES)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE PHRASES_ENABLED=1)
@@ -104,7 +105,12 @@ endif()
 # emitting frames upstream. See bambu-boyband-firmware branch and the
 # Mac-side Stage app (`boyband/stage/` on feature/boy-band) for the
 # other half of the system.
-if(DEFINED BAMBU_DUCK_BOYBAND AND "${BAMBU_DUCK_BOYBAND}" STREQUAL "1")
+if(DEFINED BAMBU_DUCK_BOYBAND_USB AND "${BAMBU_DUCK_BOYBAND_USB}" STREQUAL "1")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        BAMBU_DUCK_BOYBAND=1
+        BAMBU_DUCK_BOYBAND_USB=1)
+    message(STATUS "Building BOYBAND USB duck (wired USB Serial/JTAG transport, no WiFi)")
+elseif(DEFINED BAMBU_DUCK_BOYBAND AND "${BAMBU_DUCK_BOYBAND}" STREQUAL "1")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE BAMBU_DUCK_BOYBAND=1)
     message(STATUS "Building BOYBAND duck (puppeteer mode — auto-connect, no wake gate, no notify)")
 endif()

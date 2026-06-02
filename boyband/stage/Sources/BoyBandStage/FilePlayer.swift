@@ -32,9 +32,10 @@ private let kSampleRate: Double = 16000
 private let kChunkBytes = 1280                // 40 ms @ 16 kHz mono int16
 
 final class FilePlayer: @unchecked Sendable {
-    private let server: StageServer
     private let duck: DuckID
     private let loop: Bool
+    private let isConnected: @Sendable (DuckID) -> Bool
+    private let sendPCM: @Sendable (DuckID, Data) -> Void
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "boyband.stage.fileplayer")
 
@@ -44,9 +45,20 @@ final class FilePlayer: @unchecked Sendable {
     private var cursor: Int = 0
 
     init(server: StageServer, duck: DuckID, loop: Bool) {
-        self.server = server
         self.duck = duck
         self.loop = loop
+        self.isConnected = { server.connection(for: $0) != nil }
+        self.sendPCM = { duck, pcm in server.connection(for: duck)?.sendPCM(pcm) }
+    }
+
+    init(duck: DuckID,
+         loop: Bool,
+         isConnected: @escaping @Sendable (DuckID) -> Bool,
+         sendPCM: @escaping @Sendable (DuckID, Data) -> Void) {
+        self.duck = duck
+        self.loop = loop
+        self.isConnected = isConnected
+        self.sendPCM = sendPCM
     }
 
     /// Decode + resample the file into 16k/mono/int16. Throws on failure.
@@ -143,8 +155,8 @@ final class FilePlayer: @unchecked Sendable {
         t.schedule(deadline: .now(), repeating: .milliseconds(10))
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            let conn = self.server.connection(for: self.duck)
-            if !sharedClock && conn == nil { return }  // hold for single-duck reconnect
+            let connected = self.isConnected(self.duck)
+            if !sharedClock && !connected { return }  // hold for single-duck reconnect
             // Send everything up to real-time position plus one 40 ms frame.
             // Keeping this strict avoids wedging the ESP websocket path with
             // a burst of already-late PCM frames.
@@ -153,12 +165,12 @@ final class FilePlayer: @unchecked Sendable {
             let target = Int(elapsedS * 2.0 * kSampleRate) + self.leadBytes
             while self.cursor < self.pcm.count, self.cursor < target {
                 let end = min(self.cursor + kChunkBytes, self.pcm.count)
-                if let conn {
+                if connected {
                     var chunk = Data(self.pcm[self.cursor..<end])
                     if end == self.pcm.count && chunk.count < kChunkBytes {
                         chunk.append(contentsOf: repeatElement(0, count: kChunkBytes - chunk.count))
                     }
-                    conn.sendPCM(chunk)
+                    self.sendPCM(self.duck, chunk)
                 }
                 self.cursor = end
             }
