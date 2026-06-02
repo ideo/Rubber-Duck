@@ -462,6 +462,44 @@ final class PlaylistState: @unchecked Sendable {
     }
 }
 
+final class DuckGainStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var balances: [DuckID: Double]
+    private var global: Double
+
+    init(initial: [DuckID: Double]) {
+        self.balances = initial
+        self.global = 1.0
+    }
+
+    func get(_ duck: DuckID) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        return global * (balances[duck] ?? 1.0)
+    }
+
+    func balance(_ duck: DuckID) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        return balances[duck] ?? 1.0
+    }
+
+    func setBalance(_ duck: DuckID, _ value: Double) {
+        lock.lock()
+        balances[duck] = value
+        lock.unlock()
+    }
+
+    func setGlobal(_ value: Double) {
+        lock.lock()
+        global = value
+        lock.unlock()
+    }
+
+    func snapshot() -> (global: Double, balances: [DuckID: Double]) {
+        lock.lock(); defer { lock.unlock() }
+        return (global, balances)
+    }
+}
+
 final class RecoveryMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
@@ -614,10 +652,12 @@ func label(_ duck: DuckID) -> String {
     return duck.rawValue
 }
 
+let duckGains = DuckGainStore(initial: args.duckGains)
+
 let gainSummary = DuckID.allCases
-    .map { "\(label($0))=\(String(format: "%.2f", args.duckGains[$0] ?? 1.0))x" }
+    .map { "\(label($0))=\(String(format: "%.2f", duckGains.balance($0)))x" }
     .joined(separator: ", ")
-log("gain        \(gainSummary)")
+log("gain        global=1.00x balance \(gainSummary)")
 
 let duckStats = DuckStatsTracker()
 
@@ -754,13 +794,56 @@ let usbStage: USBStage? = {
 }
 
 func duckGain(_ duck: DuckID) -> Double {
-    args.duckGains[duck] ?? 1.0
+    duckGains.get(duck)
+}
+
+func gainJSON() -> String {
+    let snapshot = duckGains.snapshot()
+    let items = DuckID.allCases.map { duck in
+        let name = label(duck)
+        let balance = snapshot.balances[duck] ?? 1.0
+        let effective = snapshot.global * balance
+        return """
+        "\(duck.rawValue)":{"name":"\(jsonEscape(name))","balance":\(String(format: "%.3f", balance)),"effective":\(String(format: "%.3f", effective))}
+        """
+    }.joined(separator: ",")
+    return "{\"global\":\(String(format: "%.3f", snapshot.global)),\"ducks\":{\(items)}}\n"
+}
+
+func handleGainControl(_ command: String) -> String {
+    guard command.hasPrefix("gain:") else { return gainJSON() }
+    let raw = String(command.dropFirst("gain:".count))
+    let parts = raw.split(separator: "=", maxSplits: 1)
+    guard parts.count == 2,
+          let gain = Double(parts[1]),
+          gain >= 0.0,
+          gain <= 8.0 else {
+        return "{\"error\":\"gain must be 0...8\"}\n"
+    }
+    let key = parts[0].uppercased()
+    if key == "GLOBAL" {
+        duckGains.setGlobal(gain)
+        log("gain        global=\(String(format: "%.2f", gain))x")
+        return gainJSON()
+    }
+    if key == "ALL" {
+        for duck in DuckID.allCases { duckGains.setBalance(duck, gain) }
+        log("gain        balance ALL=\(String(format: "%.2f", gain))x")
+        return gainJSON()
+    }
+    guard let duck = DuckID.parse(key) else {
+        return "{\"error\":\"target must be D1..D4, ALL, or GLOBAL\"}\n"
+    }
+    duckGains.setBalance(duck, gain)
+    log("gain        balance \(label(duck))=\(String(format: "%.2f", gain))x " +
+        "effective=\(String(format: "%.2f", duckGains.get(duck)))x")
+    return gainJSON()
 }
 
 func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
     FilePlayer(duck: duck,
                loop: loop,
-               gain: duckGain(duck),
+               gainProvider: duckGain,
                isConnected: transportIsConnected,
                sendPCM: transportSendPCM)
 }
@@ -1186,6 +1269,10 @@ if let turnManifestPath = args.turnManifestPath {
             return transportStatusReport()
         case "health":
             return transportHealthReport()
+        case "gain":
+            return gainJSON()
+        case let gain where gain.hasPrefix("gain:"):
+            return handleGainControl(gain)
         default:
             return "unknown control: \(cmd)\n"
         }
@@ -1383,6 +1470,10 @@ if let turnManifestPath = args.turnManifestPath {
             return transportStatusReport()
         case "health":
             return transportHealthReport()
+        case "gain":
+            return gainJSON()
+        case let gain where gain.hasPrefix("gain:"):
+            return handleGainControl(gain)
         default:
             return "unknown control: \(cmd)\n"
         }
@@ -1449,6 +1540,10 @@ if let turnManifestPath = args.turnManifestPath {
             return transportStatusReport()
         case "health":
             return transportHealthReport()
+        case "gain":
+            return gainJSON()
+        case let gain where gain.hasPrefix("gain:"):
+            return handleGainControl(gain)
         default:
             return "unknown control: \(cmd)\n"
         }

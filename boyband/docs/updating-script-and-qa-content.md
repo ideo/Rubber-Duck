@@ -132,8 +132,9 @@ Only click Play/Start when the room is ready for the ducks to speak.
 
 ## Tuning Duck Volume
 
-Stage applies per-duck digital gain after each clip is decoded to 16 kHz mono
-PCM. The current defaults compensate for the June 2 ElevenLabs voices:
+Stage applies a global volume multiplier and per-duck balance multipliers to
+each outgoing PCM chunk. The current startup balance defaults compensate for
+the June 2 ElevenLabs voices:
 
 ```text
 D1 Classic  0.56x
@@ -142,7 +143,7 @@ D3 Pintail  0.78x
 D4 Pekin    2.47x
 ```
 
-To override these during rehearsal, restart Stage with repeatable
+To override the startup balance defaults, restart Stage with repeatable
 `--duck-gain` flags:
 
 ```sh
@@ -154,8 +155,17 @@ swift run BoyBandStage --port 3334 \
   --duck-gain D4=3.0
 ```
 
+You can tune both layers live in `http://localhost:3334/visualizer`:
+
+- Global volume calls `/gain?global=1.25`.
+- Duck balance calls `/gain?duck=D3&value=0.82`.
+
+Both affect outgoing audio chunks immediately. They do not rewrite source clips
+or change firmware volume. `--duck-gain` sets only the per-duck startup balance
+defaults for the next Stage launch; live global volume starts at `1.00x`.
+
 `--duck-gain ALL=1.1` is also supported. Use it carefully: Classic's current
-script clips already peak near full scale, so a large global boost can sound
+script clips already peak near full scale, so large effective gains can sound
 crunchy. These defaults assume ducks are flashed with USB boy-band firmware at
 `VOL_STEP=0` (Loud); if they are flashed quieter, raise the multipliers.
 

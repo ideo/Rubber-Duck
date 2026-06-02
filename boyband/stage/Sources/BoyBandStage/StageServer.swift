@@ -631,6 +631,20 @@ final class StageServer: @unchecked Sendable {
                     let body = self.onControl?("jump:\(index)") ?? "jump unavailable\n"
                     self.sendError(connection, status: 200, body: body)
                     return
+                case "/gain", "/gains":
+                    let duck = Self.queryValue("duck", in: parsed.path) ?? ""
+                    let value = Self.queryValue("value", in: parsed.path) ?? ""
+                    let global = Self.queryValue("global", in: parsed.path) ?? ""
+                    let target = global.isEmpty ? duck : "GLOBAL"
+                    let setting = global.isEmpty ? value : global
+                    let command = target.isEmpty && setting.isEmpty
+                        ? "gain"
+                        : "gain:\(target)=\(setting)"
+                    let body = self.onControl?(command) ?? "{}\n"
+                    self.sendResponse(connection, status: 200,
+                                      contentType: "application/json",
+                                      body: body)
+                    return
                 case "/cue":
                     let body = self.onControl?("cue") ?? "cue unavailable\n"
                     self.sendError(connection, status: 200, body: body)
@@ -1074,6 +1088,48 @@ final class StageServer: @unchecked Sendable {
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 14px;
     }
+    .gain-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+    .gain-global {
+      grid-template-columns: minmax(130px, auto) minmax(180px, 1fr) 74px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+      margin-bottom: 2px;
+    }
+    .gain-row {
+      display: grid;
+      grid-template-columns: minmax(86px, auto) minmax(120px, 1fr) 74px 74px;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+    }
+    .gain-row label {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .gain-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .gain-row input[type="number"], .gain-effective {
+      width: 74px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #12171a;
+      color: var(--text);
+      font: inherit;
+      padding: 0 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .gain-effective {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }
     .duck-head {
       display: flex;
       align-items: center;
@@ -1203,6 +1259,38 @@ final class StageServer: @unchecked Sendable {
       </div>
     </section>
 
+    <section class="gain-grid" aria-label="Duck gains">
+      <div class="gain-row gain-global">
+        <label for="GlobalGainRange">Global volume</label>
+        <input id="GlobalGainRange" type="range" min="0" max="4" step="0.01" oninput="globalGainInput(this)">
+        <input id="GlobalGainNumber" type="number" min="0" max="8" step="0.01" oninput="globalGainInput(this)">
+      </div>
+      <div class="gain-row">
+        <label for="D1GainRange">D1 Classic</label>
+        <input id="D1GainRange" type="range" min="0" max="8" step="0.01" oninput="gainInput('D1', this)">
+        <input id="D1GainNumber" type="number" min="0" max="8" step="0.01" oninput="gainInput('D1', this)">
+        <output id="D1GainEffective" class="gain-effective">--</output>
+      </div>
+      <div class="gain-row">
+        <label for="D2GainRange">D2 Mallard</label>
+        <input id="D2GainRange" type="range" min="0" max="8" step="0.01" oninput="gainInput('D2', this)">
+        <input id="D2GainNumber" type="number" min="0" max="8" step="0.01" oninput="gainInput('D2', this)">
+        <output id="D2GainEffective" class="gain-effective">--</output>
+      </div>
+      <div class="gain-row">
+        <label for="D3GainRange">D3 Pintail</label>
+        <input id="D3GainRange" type="range" min="0" max="8" step="0.01" oninput="gainInput('D3', this)">
+        <input id="D3GainNumber" type="number" min="0" max="8" step="0.01" oninput="gainInput('D3', this)">
+        <output id="D3GainEffective" class="gain-effective">--</output>
+      </div>
+      <div class="gain-row">
+        <label for="D4GainRange">D4 Pekin</label>
+        <input id="D4GainRange" type="range" min="0" max="8" step="0.01" oninput="gainInput('D4', this)">
+        <input id="D4GainNumber" type="number" min="0" max="8" step="0.01" oninput="gainInput('D4', this)">
+        <output id="D4GainEffective" class="gain-effective">--</output>
+      </div>
+    </section>
+
     <section>
       <pre id="eventLog" class="log"></pre>
     </section>
@@ -1212,6 +1300,7 @@ final class StageServer: @unchecked Sendable {
     let lastCue = "";
     let lastTurnListKey = "";
     let metricBaselines = {};
+    let gainTimers = {};
     const duckSlots = ["D1", "D2", "D3", "D4"];
 
     function parseBytes(s) {
@@ -1349,6 +1438,77 @@ final class StageServer: @unchecked Sendable {
       await control("jump?index=" + encodeURIComponent(value));
     }
 
+    function updateGainUI(gains) {
+      const activeId = document.activeElement?.id || "";
+      const global = Number(gains?.global ?? 1);
+      const globalText = global.toFixed(2);
+      const globalRange = document.getElementById("GlobalGainRange");
+      const globalNumber = document.getElementById("GlobalGainNumber");
+      if (globalRange && activeId !== "GlobalGainRange") globalRange.value = globalText;
+      if (globalNumber && activeId !== "GlobalGainNumber") globalNumber.value = globalText;
+      const ducks = gains?.ducks || gains || {};
+      for (const id of duckSlots) {
+        const balance = Number(ducks?.[id]?.balance ?? ducks?.[id]?.gain ?? 1);
+        const effective = Number(ducks?.[id]?.effective ?? (balance * global));
+        const text = balance.toFixed(2);
+        const range = document.getElementById(id + "GainRange");
+        const number = document.getElementById(id + "GainNumber");
+        const output = document.getElementById(id + "GainEffective");
+        if (range && activeId !== id + "GainRange") range.value = text;
+        if (number && activeId !== id + "GainNumber") number.value = text;
+        if (output) output.textContent = effective.toFixed(2);
+      }
+    }
+
+    async function refreshGains() {
+      try {
+        const r = await fetch("/gain", { cache: "no-store" });
+        updateGainUI(await r.json());
+      } catch (e) {
+        logLine(`gain: ${e}`);
+      }
+    }
+
+    function gainInput(id, el) {
+      const value = Math.max(0, Math.min(8, Number(el.value) || 0));
+      const text = value.toFixed(2);
+      const range = document.getElementById(id + "GainRange");
+      const number = document.getElementById(id + "GainNumber");
+      if (range && range !== el) range.value = text;
+      if (number && number !== el) number.value = text;
+      clearTimeout(gainTimers[id]);
+      gainTimers[id] = setTimeout(async () => {
+        try {
+          const r = await fetch(`/gain?duck=${encodeURIComponent(id)}&value=${encodeURIComponent(text)}`, { cache: "no-store" });
+          const body = await r.json();
+          updateGainUI(body);
+          logLine(`gain ${id}: ${text}x`);
+        } catch (e) {
+          logLine(`gain ${id}: ${e}`);
+        }
+      }, 180);
+    }
+
+    function globalGainInput(el) {
+      const value = Math.max(0, Math.min(8, Number(el.value) || 0));
+      const text = value.toFixed(2);
+      const range = document.getElementById("GlobalGainRange");
+      const number = document.getElementById("GlobalGainNumber");
+      if (range && range !== el) range.value = text;
+      if (number && number !== el) number.value = text;
+      clearTimeout(gainTimers.GLOBAL);
+      gainTimers.GLOBAL = setTimeout(async () => {
+        try {
+          const r = await fetch(`/gain?global=${encodeURIComponent(text)}`, { cache: "no-store" });
+          const body = await r.json();
+          updateGainUI(body);
+          logLine(`global gain: ${text}x`);
+        } catch (e) {
+          logLine(`global gain: ${e}`);
+        }
+      }, 180);
+    }
+
     async function refresh() {
       try {
         const r = await fetch("/state", { cache: "no-store" });
@@ -1391,7 +1551,9 @@ final class StageServer: @unchecked Sendable {
     }
 
     refresh();
+    refreshGains();
     setInterval(refresh, 1000);
+    setInterval(refreshGains, 3000);
   </script>
 </body>
 </html>

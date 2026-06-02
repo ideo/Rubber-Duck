@@ -34,7 +34,7 @@ private let kChunkBytes = 1280                // 40 ms @ 16 kHz mono int16
 final class FilePlayer: @unchecked Sendable {
     private let duck: DuckID
     private let loop: Bool
-    private let gain: Double
+    private let gainProvider: @Sendable (DuckID) -> Double
     private let isConnected: @Sendable (DuckID) -> Bool
     private let sendPCM: @Sendable (DuckID, Data) -> Void
     private var timer: DispatchSourceTimer?
@@ -48,7 +48,7 @@ final class FilePlayer: @unchecked Sendable {
     init(server: StageServer, duck: DuckID, loop: Bool, gain: Double = 1.0) {
         self.duck = duck
         self.loop = loop
-        self.gain = gain
+        self.gainProvider = { _ in gain }
         self.isConnected = { server.connection(for: $0) != nil }
         self.sendPCM = { duck, pcm in server.connection(for: duck)?.sendPCM(pcm) }
     }
@@ -56,11 +56,12 @@ final class FilePlayer: @unchecked Sendable {
     init(duck: DuckID,
          loop: Bool,
          gain: Double = 1.0,
+         gainProvider: (@Sendable (DuckID) -> Double)? = nil,
          isConnected: @escaping @Sendable (DuckID) -> Bool,
          sendPCM: @escaping @Sendable (DuckID, Data) -> Void) {
         self.duck = duck
         self.loop = loop
-        self.gain = gain
+        self.gainProvider = gainProvider ?? { _ in gain }
         self.isConnected = isConnected
         self.sendPCM = sendPCM
     }
@@ -130,7 +131,7 @@ final class FilePlayer: @unchecked Sendable {
             bytes.append(UInt8(truncatingIfNeeded: s))
             bytes.append(UInt8(truncatingIfNeeded: Int(s) >> 8))
         }
-        self.pcm = Self.applyGain(bytes, gain: gain)
+        self.pcm = bytes
         return Double(outFrames) / kSampleRate
     }
 
@@ -174,6 +175,7 @@ final class FilePlayer: @unchecked Sendable {
                     if end == self.pcm.count && chunk.count < kChunkBytes {
                         chunk.append(contentsOf: repeatElement(0, count: kChunkBytes - chunk.count))
                     }
+                    chunk = Self.applyGain(chunk, gain: self.gainProvider(self.duck))
                     self.sendPCM(self.duck, chunk)
                 }
                 self.cursor = end
@@ -197,9 +199,9 @@ final class FilePlayer: @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: msg])
     }
 
-    private static func applyGain(_ bytes: [UInt8], gain: Double) -> [UInt8] {
+    private static func applyGain(_ bytes: Data, gain: Double) -> Data {
         guard gain != 1.0 else { return bytes }
-        var out = bytes
+        var out = [UInt8](bytes)
         var i = 0
         while i + 1 < out.count {
             let raw = UInt16(out[i]) | (UInt16(out[i + 1]) << 8)
@@ -211,6 +213,6 @@ final class FilePlayer: @unchecked Sendable {
             out[i + 1] = UInt8((value >> 8) & 0xFF)
             i += 2
         }
-        return out
+        return Data(out)
     }
 }
