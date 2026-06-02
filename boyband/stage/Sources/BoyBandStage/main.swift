@@ -340,6 +340,27 @@ struct LoadedUtterance: @unchecked Sendable {
     let durationSec: Double
 }
 
+struct QAHelperResult: Decodable {
+    let question: String
+    let lines: [QAHelperLine]
+}
+
+struct QAHelperLine: Decodable {
+    let duck: String
+    let speaker: String
+    let text: String
+    let path: String
+    let durationSec: Double
+
+    enum CodingKeys: String, CodingKey {
+        case duck
+        case speaker
+        case text
+        case path
+        case durationSec = "duration_sec"
+    }
+}
+
 final class PlaylistState: @unchecked Sendable {
     private let lock = NSLock()
     private var index: Int = 0
@@ -699,6 +720,34 @@ func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
                sendPCM: transportSendPCM)
 }
 
+func runQAHelper(question: String) throws -> QAHelperResult {
+    let stageDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let boybandDir = stageDir.deletingLastPathComponent()
+    let python = boybandDir.appendingPathComponent(".venv/bin/python").path
+    let script = boybandDir.appendingPathComponent("scripts/qa-eleven.py").path
+    let executable = FileManager.default.fileExists(atPath: python) ? python : "/usr/bin/python3"
+
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: executable)
+    p.arguments = [script, question]
+    p.currentDirectoryURL = boybandDir.deletingLastPathComponent()
+    let outPipe = Pipe()
+    let errPipe = Pipe()
+    p.standardOutput = outPipe
+    p.standardError = errPipe
+    try p.run()
+    p.waitUntilExit()
+
+    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+    if p.terminationStatus != 0 {
+        let errText = String(data: errData, encoding: .utf8) ?? "unknown error"
+        throw NSError(domain: "QAHelper", code: Int(p.terminationStatus),
+                      userInfo: [NSLocalizedDescriptionKey: errText.trimmingCharacters(in: .whitespacesAndNewlines)])
+    }
+    return try JSONDecoder().decode(QAHelperResult.self, from: outData)
+}
+
 if args.sine {
     let gen = SineGenerator(server: server)
     gen.start(solo: args.soloDuck)
@@ -794,6 +843,10 @@ if let turnManifestPath = args.turnManifestPath {
     filePlayers = utterances.map(\.player)
     let turnState = PlaylistState()
     let gapSec = Double(manifest.gapMs ?? 300) / 1000.0
+    let qaState = PlaylistState()
+    let qaLock = NSLock()
+    var qaUtterances: [LoadedUtterance] = []
+    var qaQuestion: String = ""
 
     @Sendable func turnLine() -> String {
         let i = turnState.currentIndex()
@@ -808,6 +861,84 @@ if let turnManifestPath = args.turnManifestPath {
         for u in utterances { u.player.stop() }
         for duck in Set(utterances.map(\.duck)) { transportReset(duck) }
         turnState.stop()
+    }
+
+    @Sendable func stopQA(clear: Bool = false) {
+        qaLock.lock()
+        let snapshot = qaUtterances
+        if clear {
+            qaUtterances.removeAll()
+            qaQuestion = ""
+        }
+        qaLock.unlock()
+        for u in snapshot { u.player.stop() }
+        for duck in Set(snapshot.map(\.duck)) { transportReset(duck) }
+        qaState.stop()
+    }
+
+    @Sendable func qaSnapshotUtterances() -> (question: String, utterances: [LoadedUtterance]) {
+        qaLock.lock(); defer { qaLock.unlock() }
+        return (qaQuestion, qaUtterances)
+    }
+
+    @Sendable func finishQATurnAfterDrain(_ utterance: LoadedUtterance,
+                                          generation: Int,
+                                          startedWaitingAt: Date = Date()) {
+        let timeoutSec = 4.0
+        let inFlightBytes = transportInFlightBytes(utterance.duck)
+        if inFlightBytes > 0 {
+            let waited = Date().timeIntervalSince(startedWaitingAt)
+            if waited >= timeoutSec {
+                log("qa         \(String(format: "%02d", utterance.index)) " +
+                    "\(utterance.speaker) drain timed out " +
+                    "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(utterance.duck))")
+                _ = transportKick(utterance.duck)
+                qaState.stop()
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+                finishQATurnAfterDrain(utterance,
+                                       generation: generation,
+                                       startedWaitingAt: startedWaitingAt)
+            }
+            return
+        }
+
+        log(String(format: "qa         %02d %@ finished",
+                   utterance.index, utterance.speaker))
+        guard qaState.finish(generation: generation) else { return }
+        let (_, currentQA) = qaSnapshotUtterances()
+        let finishedIndex = qaState.currentIndex()
+        guard finishedIndex < currentQA.count - 1 else {
+            log("qa         complete")
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + gapSec) {
+            let snapshot = qaState.snapshot()
+            guard snapshot.generation == generation else { return }
+            let nextIndex = qaState.advance(delta: 1, maxIndex: currentQA.count - 1)
+            triggerQATurn(currentQA[nextIndex])
+        }
+    }
+
+    @Sendable func triggerQATurn(_ utterance: LoadedUtterance) {
+        guard transportIsConnected(utterance.duck) else {
+            qaState.stop()
+            log(String(format: "qa         paused %02d %@ → %@ (0/1 connected)",
+                       utterance.index, utterance.speaker, label(utterance.duck)))
+            return
+        }
+        log(String(format: "qa         ▶ %02d %@ → %@",
+                   utterance.index, utterance.speaker, label(utterance.duck)))
+        duckStats.reset(utterance.duck)
+        transportReset(utterance.duck)
+        let generation = qaState.start(trackCount: 1)
+        utterance.player.rewind()
+        utterance.player.start(sharedClock: false,
+                               onDone: {
+                                   finishQATurnAfterDrain(utterance,
+                                                          generation: generation)
+                               })
     }
 
     @Sendable func finishTurnAfterDrain(_ utterance: LoadedUtterance,
@@ -877,6 +1008,25 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     @Sendable func stateJSON() -> String {
+        let qaSnapshot = qaState.snapshot()
+        let (question, currentQA) = qaSnapshotUtterances()
+        if !currentQA.isEmpty {
+            let idx = min(max(qaSnapshot.index, 0), currentQA.count - 1)
+            let u = currentQA[idx]
+            let elapsedSec = qaSnapshot.startedAt.map { min(Date().timeIntervalSince($0),
+                                                            u.durationSec) } ?? 0.0
+            let name = String(format: "Q&A %02d %@", u.index, u.speaker)
+            let items = currentQA.enumerated().map { offset, item in
+                """
+                {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(item.duck.rawValue)","preview":"\(jsonEscape(previewWords(item.text)))"}
+                """
+            }.joined(separator: ",")
+            return """
+            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(u.duck.rawValue)","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+
+            """
+        }
+
         let snapshot = turnState.snapshot()
         let u = utterances[snapshot.index]
         let elapsedSec = snapshot.startedAt.map { min(Date().timeIntervalSince($0),
@@ -902,20 +1052,24 @@ if let turnManifestPath = args.turnManifestPath {
     server.onControl = { cmd in
         switch cmd {
         case "play":
+            stopQA(clear: true)
             stopAllTurns()
             let i = turnState.currentIndex()
             triggerTurn(utterances[i])
             return "playing \(utterances[i].speaker)\n"
         case "stop":
+            stopQA(clear: true)
             stopAllTurns()
             log("turns      ⏹ stopped")
             return "stopped\n"
         case "next":
+            stopQA(clear: true)
             stopAllTurns()
             _ = turnState.advance(delta: 1, maxIndex: utterances.count - 1)
             log("turns      armed \(turnLine().trimmingCharacters(in: .whitespacesAndNewlines))")
             return turnLine()
         case "prev":
+            stopQA(clear: true)
             stopAllTurns()
             _ = turnState.advance(delta: -1, maxIndex: utterances.count - 1)
             log("turns      armed \(turnLine().trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -925,10 +1079,60 @@ if let turnManifestPath = args.turnManifestPath {
             guard let requestedIndex = Int(raw) else {
                 return "invalid jump index\n"
             }
+            stopQA(clear: true)
             stopAllTurns()
             _ = turnState.jump(to: requestedIndex, maxIndex: utterances.count - 1)
             log("turns      armed \(turnLine().trimmingCharacters(in: .whitespacesAndNewlines))")
             return turnLine()
+        case let qa where qa.hasPrefix("qa:"):
+            let raw = String(qa.dropFirst("qa:".count))
+            let question = raw.removingPercentEncoding?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? raw
+            guard !question.isEmpty else {
+                return "empty question\n"
+            }
+            stopAllTurns()
+            stopQA(clear: true)
+            log("qa         question: \(question)")
+            do {
+                let result = try runQAHelper(question: question)
+                var loaded: [LoadedUtterance] = []
+                for (offset, line) in result.lines.enumerated() {
+                    guard let sourceDuck = DuckID.parse(line.duck) else {
+                        continue
+                    }
+                    let targetDuck = args.duckAliases[sourceDuck] ?? sourceDuck
+                    let player = makeFilePlayer(duck: targetDuck, loop: false)
+                    let durationSec = try player.load(path: line.path)
+                    loaded.append(LoadedUtterance(index: offset + 1,
+                                                  speaker: line.speaker,
+                                                  sourceDuck: sourceDuck,
+                                                  duck: targetDuck,
+                                                  text: line.text,
+                                                  path: line.path,
+                                                  player: player,
+                                                  durationSec: durationSec))
+                    let aliasNote = sourceDuck == targetDuck
+                        ? targetDuck.rawValue
+                        : "\(sourceDuck.rawValue)→\(targetDuck.rawValue)"
+                    log(String(format: "qa         %02d %@ %@ %.2fs %@",
+                               offset + 1, line.speaker, aliasNote, durationSec,
+                               (line.path as NSString).lastPathComponent))
+                }
+                guard !loaded.isEmpty else {
+                    return "Q&A generated no playable lines\n"
+                }
+                qaLock.lock()
+                qaQuestion = result.question
+                qaUtterances = loaded
+                qaLock.unlock()
+                _ = qaState.jump(to: 0, maxIndex: loaded.count - 1)
+                triggerQATurn(loaded[0])
+                return "answering: \(loaded.map { $0.speaker }.joined(separator: " → "))\n"
+            } catch {
+                log("qa         failed: \(error.localizedDescription)")
+                return "Q&A failed: \(error.localizedDescription)\n"
+            }
         case "cue":
             return turnLine()
         case "state":

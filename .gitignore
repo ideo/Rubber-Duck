@@ -54,6 +54,8 @@ boyband/.env.local
 boyband/voices.local.json
 boyband/duck-map.local.json
 boyband/duck-usb-map.local.json
+boyband/qa-agent.local.json
+boyband/qa-cache/
 boyband/**/*.mp3
 boyband/**/*.aif*
 boyband/**/*.logicx
