@@ -32,6 +32,9 @@ TTS_MODEL = "eleven_flash_v2_5"
 AGENT_TTS_MODEL = "eleven_flash_v2"
 AGENT_LLM = "qwen3-30b-a3b"
 PROMPT_VERSION = "2026-06-02-grounded-router-v2-no-spoken-ids"
+SIGNED_URL_TIMEOUT_SEC = 10
+AGENT_RESPONSE_TIMEOUT_SEC = 25
+TTS_TIMEOUT_SEC = 25
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_AGENT_FILE = ROOT / "boyband" / "qa-agent.local.json"
@@ -286,7 +289,7 @@ def signed_url(key: str, agent_id: str) -> str:
         "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
         headers={"xi-api-key": key},
         params={"agent_id": agent_id},
-        timeout=20,
+        timeout=SIGNED_URL_TIMEOUT_SEC,
     )
     if r.status_code != 200:
         raise RuntimeError(f"signed url failed {r.status_code}: {r.text[:500]}")
@@ -307,7 +310,7 @@ def extract_json(text: str) -> dict:
 
 async def ask_agent(key: str, agent_id: str, question: str) -> list[dict]:
     url = signed_url(key, agent_id)
-    async with websockets.connect(url, max_size=None) as ws:
+    async with websockets.connect(url, max_size=None, open_timeout=10, ping_timeout=10) as ws:
         await ws.send(json.dumps({
             "type": "conversation_initiation_client_data",
             "conversation_config_override": {"agent": {"first_message": ""}},
@@ -318,7 +321,7 @@ async def ask_agent(key: str, agent_id: str, question: str) -> list[dict]:
         }, ensure_ascii=False))
 
         parts: list[str] = []
-        deadline = time.monotonic() + 35
+        deadline = time.monotonic() + AGENT_RESPONSE_TIMEOUT_SEC
         while time.monotonic() < deadline:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.1, deadline - time.monotonic()))
             event = json.loads(raw)
@@ -333,7 +336,7 @@ async def ask_agent(key: str, agent_id: str, question: str) -> list[dict]:
                     parts.append(text)
                     break
         if not parts:
-            raise RuntimeError("agent timed out without a text response")
+            raise RuntimeError(f"agent timed out after {AGENT_RESPONSE_TIMEOUT_SEC}s without a text response")
 
     data = extract_json("\n".join(parts))
     lines = data.get("lines") or []
@@ -365,7 +368,7 @@ def tts_pcm(key: str, duck: str, text: str) -> bytes:
                 "similarity_boost": 0.82,
             },
         },
-        timeout=120,
+        timeout=TTS_TIMEOUT_SEC,
     )
     if r.status_code != 200:
         raise RuntimeError(f"TTS failed {r.status_code} for {duck}: {r.text[:500]}")

@@ -1041,14 +1041,14 @@ final class StageServer: @unchecked Sendable {
       color: var(--text);
       text-shadow: 0 1px 2px #000;
     }
-    .controls {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 8px;
-      align-content: start;
-    }
-    button {
-      min-height: 42px;
+	    .controls {
+	      display: grid;
+	      grid-template-columns: repeat(5, minmax(0, 1fr));
+	      gap: 8px;
+	      align-content: start;
+	    }
+	    button {
+	      min-height: 42px;
       border: 1px solid var(--line);
       border-radius: 6px;
       background: var(--panel-2);
@@ -1074,12 +1074,12 @@ final class StageServer: @unchecked Sendable {
       padding: 0 10px;
     }
     select:hover { border-color: var(--accent); }
-    .jump-control {
-      grid-column: 1 / -1;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-    }
+	    .jump-control {
+	      grid-column: 1 / -1;
+	      display: grid;
+	      grid-template-columns: 140px minmax(0, 1fr) auto;
+	      gap: 8px;
+	    }
     .jump-control button {
       min-width: 74px;
     }
@@ -1216,15 +1216,19 @@ final class StageServer: @unchecked Sendable {
       <div class="controls">
         <button onclick="control('prev')">Prev</button>
         <button class="primary" onclick="control('play')">Play</button>
-        <button onclick="control('stop')">Stop</button>
-        <button onclick="control('next')">Next</button>
-        <button onclick="control('recover')">Recover</button>
-        <div class="jump-control">
-          <select id="lineSelect" aria-label="Jump to line" onchange="jumpToSelected()">
-            <option value="">Jump to line...</option>
-          </select>
-          <button onclick="jumpToSelected()">Jump</button>
-        </div>
+	        <button onclick="control('stop')">Stop</button>
+	        <button onclick="control('next')">Next</button>
+	        <button onclick="control('recover')">Recover</button>
+	        <div class="jump-control">
+	          <select id="stateSelect" aria-label="Visualizer state" onchange="setVisualizerState(this.value)">
+	            <option value="show">State: Show</option>
+	            <option value="qa">State: Q&A</option>
+	          </select>
+	          <select id="lineSelect" aria-label="Jump to line" onchange="jumpToSelected()">
+	            <option value="">Jump to line...</option>
+	          </select>
+	          <button id="jumpButton" onclick="jumpToSelected()">Jump</button>
+	        </div>
       </div>
     </section>
 
@@ -1299,9 +1303,10 @@ final class StageServer: @unchecked Sendable {
   <script>
     let lastCue = "";
     let lastTurnListKey = "";
-    let metricBaselines = {};
-    let gainTimers = {};
-    const duckSlots = ["D1", "D2", "D3", "D4"];
+	    let metricBaselines = {};
+	    let gainTimers = {};
+	    let visualizerState = localStorage.getItem("boyband.visualizerState") || "show";
+	    const duckSlots = ["D1", "D2", "D3", "D4"];
 
     function parseBytes(s) {
       if (!s) return 0;
@@ -1395,35 +1400,58 @@ final class StageServer: @unchecked Sendable {
       return `${line}. ${who}${preview}`;
     }
 
-    function updateLineSelect(state) {
-      const select = document.getElementById("lineSelect");
-      const turns = Array.isArray(state.turns) ? state.turns : [];
-      const listKey = turns.map(t => `${t.index}:${t.line}:${t.speaker}:${t.preview}`).join("|");
-      if (listKey !== lastTurnListKey) {
-        lastTurnListKey = listKey;
-        select.textContent = "";
-        if (!turns.length) {
-          const option = document.createElement("option");
-          option.value = "";
-          option.textContent = "Jump to line...";
-          select.appendChild(option);
-        } else {
-          for (const turn of turns) {
-            const option = document.createElement("option");
-            option.value = String(turn.index);
+	    function updateLineSelect(state) {
+	      const select = document.getElementById("lineSelect");
+	      const source = document.getElementById("stateSelect");
+	      const jumpButton = document.getElementById("jumpButton");
+	      if (source && source.value !== visualizerState) source.value = visualizerState;
+	      const isQAState = Boolean(String(state.turn?.question || "").trim());
+	      const turns = visualizerState === "qa"
+	        ? (Array.isArray(state.qaTurns) ? state.qaTurns : [])
+	        : (Array.isArray(state.scriptTurns) ? state.scriptTurns : (Array.isArray(state.turns) ? state.turns : []));
+	      const listKey = `${visualizerState}|` + turns.map(t => `${t.index}:${t.line}:${t.speaker}:${t.preview}`).join("|");
+	      const previousValue = select.value;
+	      if (listKey !== lastTurnListKey) {
+	        lastTurnListKey = listKey;
+	        select.textContent = "";
+	        if (!turns.length) {
+	          const option = document.createElement("option");
+	          option.value = "";
+	          option.textContent = visualizerState === "qa" ? "No Q&A lines yet" : "Jump to line...";
+	          select.appendChild(option);
+	        } else {
+	          for (const turn of turns) {
+	            const option = document.createElement("option");
+	            option.value = String(turn.index);
             option.textContent = turnOptionLabel(turn);
-            select.appendChild(option);
-          }
-        }
-      }
-      if (Number.isFinite(state.cue?.index)) {
-        select.value = String(state.cue.index);
-      }
-    }
+	            select.appendChild(option);
+	          }
+	        }
+	      }
+	      const desired = (visualizerState === "qa" || !isQAState) && Number.isFinite(state.cue?.index)
+	        ? String(state.cue.index)
+	        : previousValue;
+	      if ([...select.options].some(option => option.value === desired)) {
+	        select.value = desired;
+	      } else {
+	        select.value = "";
+	      }
+	      if (jumpButton) {
+	        jumpButton.disabled = visualizerState === "qa";
+	        jumpButton.textContent = visualizerState === "qa" ? "View" : "Jump";
+	      }
+	    }
 
-    async function control(cmd) {
-      try {
-        const r = await fetch("/" + cmd, { cache: "no-store" });
+	    function setVisualizerState(mode) {
+	      visualizerState = mode === "qa" ? "qa" : "show";
+	      localStorage.setItem("boyband.visualizerState", visualizerState);
+	      lastTurnListKey = "";
+	      refresh();
+	    }
+
+	    async function control(cmd) {
+	      try {
+	        const r = await fetch("/" + cmd, { cache: "no-store" });
         const text = await r.text();
         logLine(`${cmd}: ${text.trim()}`);
         await refresh();
@@ -1432,11 +1460,15 @@ final class StageServer: @unchecked Sendable {
       }
     }
 
-    async function jumpToSelected() {
-      const value = document.getElementById("lineSelect").value;
-      if (value === "") return;
-      await control("jump?index=" + encodeURIComponent(value));
-    }
+	    async function jumpToSelected() {
+	      if (visualizerState === "qa") {
+	        logLine("Q&A lines are view-only");
+	        return;
+	      }
+	      const value = document.getElementById("lineSelect").value;
+	      if (value === "") return;
+	      await control("jump?index=" + encodeURIComponent(value));
+	    }
 
     function updateGainUI(gains) {
       const activeId = document.activeElement?.id || "";

@@ -873,6 +873,7 @@ func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
 }
 
 func runQAHelper(question: String) throws -> QAHelperResult {
+    let timeoutSec: TimeInterval = 90
     let stageDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let boybandDir = stageDir.deletingLastPathComponent()
     let python = boybandDir.appendingPathComponent(".venv/bin/python").path
@@ -888,7 +889,21 @@ func runQAHelper(question: String) throws -> QAHelperResult {
     p.standardOutput = outPipe
     p.standardError = errPipe
     try p.run()
-    p.waitUntilExit()
+
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .userInitiated).async {
+        p.waitUntilExit()
+        finished.signal()
+    }
+
+    if finished.wait(timeout: .now() + timeoutSec) == .timedOut {
+        if p.isRunning {
+            p.terminate()
+        }
+        throw NSError(domain: "QAHelper", code: 124,
+                      userInfo: [NSLocalizedDescriptionKey:
+                          "Q&A timed out after \(Int(timeoutSec))s waiting for ElevenLabs"])
+    }
 
     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
     let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
@@ -1192,6 +1207,11 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     @Sendable func stateJSON() -> String {
+        let scriptItems = utterances.enumerated().map { offset, item in
+            return """
+            {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(item.alias))","preview":"\(jsonEscape(previewWords(item.text)))"}
+            """
+        }.joined(separator: ",")
         let qaSnapshot = qaState.snapshot()
         let (question, currentQA) = qaSnapshotUtterances()
         if !currentQA.isEmpty {
@@ -1206,7 +1226,7 @@ if let turnManifestPath = args.turnManifestPath {
                 """
             }.joined(separator: ",")
             return """
-            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"qaTurns":[\(items)],"scriptTurns":[\(scriptItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
             """
         }
@@ -1216,13 +1236,8 @@ if let turnManifestPath = args.turnManifestPath {
         let elapsedSec = snapshot.startedAt.map { min(Date().timeIntervalSince($0),
                                                       u.durationSec) } ?? 0.0
         let name = String(format: "line%02d %@", u.index, u.speaker)
-        let turnItems = utterances.enumerated().map { offset, item in
-            return """
-            {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(item.alias))","preview":"\(jsonEscape(previewWords(item.text)))"}
-            """
-        }.joined(separator: ",")
         return """
-        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))"},"turns":[\(turnItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))"},"turns":[\(scriptItems)],"scriptTurns":[\(scriptItems)],"qaTurns":[],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
         """
     }
