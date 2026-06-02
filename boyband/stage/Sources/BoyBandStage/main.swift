@@ -53,6 +53,9 @@ struct Args {
     /// Lets ducks connect+stabilize once, then trigger replays with no
     /// Stage restart (restarts churn duck connections and wedge them).
     var waitTrigger: Bool = false
+    /// Preload a directory of chunk files named like NAME_part01_D1.wav.
+    /// HTTP /next and /prev switch the active cue without restarting Stage.
+    var playlistDir: String? = nil
 }
 
 func parseArgs() -> Args {
@@ -112,6 +115,13 @@ func parseArgs() -> Args {
             args.loop = true
         case "--wait-trigger":
             args.waitTrigger = true
+        case "--playlist-dir":
+            i += 1
+            guard i < argv.count else {
+                fputs("error: --playlist-dir requires a directory\n", stderr)
+                exit(2)
+            }
+            args.playlistDir = argv[i]
         case "-h", "--help":
             printHelp(); exit(0)
         default:
@@ -122,6 +132,10 @@ func parseArgs() -> Args {
     }
     if args.duckMapPath != nil && args.noDuckMap {
         fputs("error: --duck-map and --no-duck-map are mutually exclusive\n", stderr)
+        exit(2)
+    }
+    if args.playlistDir != nil && !args.plays.isEmpty {
+        fputs("error: --playlist-dir and --play are mutually exclusive\n", stderr)
         exit(2)
     }
     return args
@@ -148,6 +162,8 @@ func printHelp() {
       --input-device STR   Substring of input device name (default "BlackHole")
       --play FILE [DUCKID] Stream an audio file (wav/aiff/mp3/m4a) to one duck
                            (default D1). Resamples to 16k/mono/int16, paced.
+      --playlist-dir DIR   Preload NAME_partNN_DX.wav chunks. /next and /prev
+                           switch cues without restarting Stage.
       --loop               With --play: loop the file instead of one pass
       --list-inputs        Print available input devices and exit
       -h, --help           Show this help
@@ -205,6 +221,113 @@ if args.listInputs {
 var sineGen: SineGenerator?  // set after server starts
 var dawInput: DAWInput?      // set if Mode 1 enabled
 var filePlayers: [FilePlayer] = []  // one per --play pair
+
+struct LoadedTrack: @unchecked Sendable {
+    let player: FilePlayer
+    let duck: DuckID
+    let path: String
+    let durationSec: Double
+}
+
+struct LoadedCue: @unchecked Sendable {
+    let part: Int
+    let name: String
+    let tracks: [LoadedTrack]
+    let durationSec: Double
+}
+
+final class PlaylistState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var index: Int = 0
+    private var playing: Bool = false
+    private var generation: Int = 0
+    private var remainingTracks: Int = 0
+    private var startedAt: Date?
+
+    func currentIndex() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return index
+    }
+
+    func snapshot() -> (index: Int, playing: Bool, generation: Int, startedAt: Date?) {
+        lock.lock(); defer { lock.unlock() }
+        return (index, playing, generation, startedAt)
+    }
+
+    func advance(delta: Int, maxIndex: Int) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        index = min(max(index + delta, 0), maxIndex)
+        playing = false
+        remainingTracks = 0
+        startedAt = nil
+        generation += 1
+        return index
+    }
+
+    func start(trackCount: Int) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        generation += 1
+        remainingTracks = trackCount
+        playing = trackCount > 0
+        startedAt = playing ? Date() : nil
+        return generation
+    }
+
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        generation += 1
+        remainingTracks = 0
+        playing = false
+        startedAt = nil
+    }
+
+    func finish(generation expectedGeneration: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard generation == expectedGeneration else { return false }
+        remainingTracks = max(remainingTracks - 1, 0)
+        guard remainingTracks == 0 else { return false }
+        playing = false
+        startedAt = nil
+        return true
+    }
+}
+
+final class RecoveryMonitor: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timer: DispatchSourceTimer?
+
+    func replace(with newTimer: DispatchSourceTimer) {
+        lock.lock()
+        let oldTimer = timer
+        timer = newTimer
+        lock.unlock()
+        oldTimer?.cancel()
+        newTimer.resume()
+    }
+
+    func cancel() {
+        lock.lock()
+        let oldTimer = timer
+        timer = nil
+        lock.unlock()
+        oldTimer?.cancel()
+    }
+}
+
+func jsonEscape(_ s: String) -> String {
+    var out = ""
+    for ch in s {
+        switch ch {
+        case "\\": out += "\\\\"
+        case "\"": out += "\\\""
+        case "\n": out += "\\n"
+        case "\r": out += "\\r"
+        case "\t": out += "\\t"
+        default: out.append(ch)
+        }
+    }
+    return out
+}
 
 // Resolve duck-map FIRST so the connect/disconnect logs can show names.
 let duckMap: DuckMap? = {
@@ -299,7 +422,180 @@ if args.mode1 {
     }
 }
 
-if !args.plays.isEmpty {
+if let playlistDir = args.playlistDir {
+    if args.sine || args.mode1 {
+        fputs("error: --playlist-dir is mutually exclusive with --sine / --mode1\n",
+              stderr)
+        exit(2)
+    }
+    let dirURL = URL(fileURLWithPath: playlistDir)
+    let fm = FileManager.default
+    guard let files = try? fm.contentsOfDirectory(at: dirURL,
+                                                  includingPropertiesForKeys: nil)
+    else {
+        fputs("fatal: --playlist-dir \(playlistDir) could not be read\n", stderr)
+        exit(1)
+    }
+
+    var grouped: [Int: [(path: String, duck: DuckID)]] = [:]
+    for url in files {
+        let stem = url.deletingPathExtension().lastPathComponent
+        guard let partRange = stem.range(of: "_part", options: .backwards) else {
+            continue
+        }
+        let rest = stem[partRange.upperBound...].split(separator: "_", maxSplits: 1)
+        guard rest.count == 2,
+              let part = Int(rest[0]),
+              let duck = DuckID.parse(String(rest[1])) else {
+            continue
+        }
+        grouped[part, default: []].append((path: url.path, duck: duck))
+    }
+
+    let cues: [LoadedCue] = grouped.keys.sorted().map { part in
+        let entries = grouped[part]!.sorted { $0.duck.rawValue < $1.duck.rawValue }
+        let tracks: [LoadedTrack] = entries.map { entry in
+            let player = FilePlayer(server: server, duck: entry.duck, loop: false)
+            var durationSec = 0.0
+            do {
+                let dur = try player.load(path: entry.path)
+                durationSec = dur
+                log(String(format: "playlist   part%02d %@ → %@ (%.1fs)",
+                           part,
+                           (entry.path as NSString).lastPathComponent,
+                           entry.duck.rawValue,
+                           dur))
+            } catch {
+                fputs("fatal: playlist load \(entry.path) failed: \(error.localizedDescription)\n",
+                      stderr)
+                exit(1)
+            }
+            return LoadedTrack(player: player, duck: entry.duck, path: entry.path,
+                               durationSec: durationSec)
+        }
+        let durationSec = tracks.map(\.durationSec).max() ?? 0
+        return LoadedCue(part: part, name: String(format: "part%02d", part),
+                         tracks: tracks, durationSec: durationSec)
+    }
+
+    if cues.isEmpty {
+        fputs("fatal: --playlist-dir \(playlistDir) contained no NAME_partNN_DX audio files\n",
+              stderr)
+        exit(1)
+    }
+
+    filePlayers = cues.flatMap { $0.tracks.map(\.player) }
+    let playlistState = PlaylistState()
+    let recoveryMonitor = RecoveryMonitor()
+
+    @Sendable func cueLine() -> String {
+        let cueIndex = playlistState.currentIndex()
+        let cue = cues[cueIndex]
+        let targets = cue.tracks.map { label($0.duck) }.joined(separator: ", ")
+        return "cue \(cueIndex + 1)/\(cues.count): \(cue.name) → \(targets)\n"
+    }
+
+    @Sendable func stopAllPlaylistTracks() {
+        for cue in cues {
+            for track in cue.tracks { track.player.stop() }
+        }
+        recoveryMonitor.cancel()
+        playlistState.stop()
+    }
+
+    @Sendable func startRecoveryMonitor(generation: Int) {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        timer.setEventHandler {
+            let snapshot = playlistState.snapshot()
+            guard snapshot.playing, snapshot.generation == generation else { return }
+            let kicked = server.kickWedgedConnections()
+            if !kicked.isEmpty {
+                let names = kicked.map { label($0) }.joined(separator: ", ")
+                log("recover    kicked wedged \(names); waiting for reconnect")
+            }
+        }
+        recoveryMonitor.replace(with: timer)
+    }
+
+    @Sendable func triggerCue(_ cue: LoadedCue) {
+        let targets = cue.tracks.map { $0.duck }
+        let names = targets.map { label($0) }.joined(separator: ", ")
+        let present = targets.filter { server.connection(for: $0) != nil }.count
+        log("playlist   ▶ \(cue.name) \(names)  (\(present)/\(targets.count) ducks connected)")
+        let generation = playlistState.start(trackCount: cue.tracks.count)
+        startRecoveryMonitor(generation: generation)
+        for track in cue.tracks {
+            track.player.rewind()
+            let part = cue.name
+            let id = track.duck.rawValue
+            track.player.start(sharedClock: cue.tracks.count > 1,
+                               onDone: {
+                                   log("playlist   \(part) \(id) finished")
+                                   guard playlistState.finish(generation: generation) else {
+                                       return
+                                   }
+                                   let finishedIndex = playlistState.currentIndex()
+                                   guard finishedIndex < cues.count - 1 else {
+                                       log("playlist   complete")
+                                       return
+                                   }
+                                   let nextIndex = playlistState.advance(delta: 1,
+                                                                         maxIndex: cues.count - 1)
+                                   log("playlist   auto-armed \(cueLine().trimmingCharacters(in: .whitespacesAndNewlines))")
+                                   triggerCue(cues[nextIndex])
+                               })
+        }
+    }
+
+    @Sendable func stateJSON() -> String {
+        let snapshot = playlistState.snapshot()
+        let cue = cues[snapshot.index]
+        let elapsedSec = snapshot.startedAt.map { min(Date().timeIntervalSince($0),
+                                                      cue.durationSec) } ?? 0.0
+        return """
+        {"cue":{"index":\(snapshot.index),"count":\(cues.count),"name":"\(cue.name)","durationSec":\(String(format: "%.3f", cue.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"status":"\(jsonEscape(server.statusReport()))","health":"\(jsonEscape(server.healthReport()))"}
+
+        """
+    }
+
+    server.onControl = { cmd in
+        switch cmd {
+        case "play":
+            stopAllPlaylistTracks()
+            let cueIndex = playlistState.currentIndex()
+            let cue = cues[cueIndex]
+            triggerCue(cue)
+            return "playing \(cue.name)\n"
+        case "stop":
+            stopAllPlaylistTracks()
+            log("playlist   ⏹ stopped")
+            return "stopped\n"
+        case "next":
+            stopAllPlaylistTracks()
+            _ = playlistState.advance(delta: 1, maxIndex: cues.count - 1)
+            log("playlist   armed \(cueLine().trimmingCharacters(in: .whitespacesAndNewlines))")
+            return cueLine()
+        case "prev":
+            stopAllPlaylistTracks()
+            _ = playlistState.advance(delta: -1, maxIndex: cues.count - 1)
+            log("playlist   armed \(cueLine().trimmingCharacters(in: .whitespacesAndNewlines))")
+            return cueLine()
+        case "cue":
+            return cueLine()
+        case "state":
+            return stateJSON()
+        default:
+            return "unknown control: \(cmd)\n"
+        }
+    }
+
+    log("playlist   ARMED — \(cues.count) cue(s) loaded. \(cueLine().trimmingCharacters(in: .whitespacesAndNewlines))")
+    log("playlist   trigger: curl http://localhost:\(args.port)/play")
+    log("playlist   next:    curl http://localhost:\(args.port)/next")
+    log("playlist   prev:    curl http://localhost:\(args.port)/prev")
+    log("playlist   cue:     curl http://localhost:\(args.port)/cue")
+} else if !args.plays.isEmpty {
     if args.sine || args.mode1 {
         fputs("error: --play is mutually exclusive with --sine / --mode1\n", stderr)
         exit(2)
@@ -344,9 +640,14 @@ if !args.plays.isEmpty {
     }
     server.onControl = { cmd in
         switch cmd {
-        case "play": triggerPlay()
-        case "stop": triggerStop()
-        default: break
+        case "play":
+            triggerPlay()
+            return "playing\n"
+        case "stop":
+            triggerStop()
+            return "stopped\n"
+        default:
+            return "unknown control: \(cmd)\n"
         }
     }
 

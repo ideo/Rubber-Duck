@@ -179,6 +179,16 @@ void app_main(void) {
             // Chip-internal failure → uh-oh (concerned, randomized) so
             // it's distinguishable from the neutral chirp_down hangup.
             audio_chirp_uh_oh();
+#ifdef BAMBU_DUCK_BOYBAND
+            // The provisioning wizard creates its own default STA netif.
+            // If we already tried the saved-credentials STA path above,
+            // falling through and starting the wizard in the same boot will
+            // assert inside esp_netif_create_default_wifi_sta(). For the show
+            // build, stale WiFi creds mean "take me back to setup" instead.
+            wifi_clear_creds();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+#endif
             // Fall through to no-wifi idle. Long-press will wipe creds + reboot
             // for a clean re-onboard; short press / tap will enter SoftAP.
         }

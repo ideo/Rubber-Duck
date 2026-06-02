@@ -52,13 +52,10 @@ final class DuckConnection: @unchecked Sendable {
     /// Outstanding (not-yet-acked) PCM sends. When the network backs up this
     /// climbs; past `maxInFlight` we DROP new chunks instead of piling them up.
     private var inFlight = 0
-    /// Cap on outstanding sends. Sized to allow PREBUFFERING the whole track
-    /// into the duck's 1 MB buffer (≈1500 × 640 B ≈ 960 KB) — for pre-recorded
-    /// playback we WANT to fill the buffer, not drop, so WiFi jitter can't
-    /// underrun it. The cap still exists as a backstop: a genuinely dead socket
-    /// (completions never firing) stops accumulating past ~960KB.
-    /// (For LIVE Mode-2 audio later, a much lower cap to drop-and-stay-realtime
-    /// is the right call — different mode, revisit then.)
+    /// Cap on outstanding sends. For prerecorded playback, `contentProcessed`
+    /// can lag even while the duck is still receiving and playing cleanly, so
+    /// keep enough headroom to avoid false late-frame drops during healthy
+    /// streaming. The cap still prevents an unbounded queue on a dead socket.
     private let maxInFlight = 1500
     /// Diagnostics: how many chunks we've dropped this connection.
     private(set) var dropped = 0
@@ -326,7 +323,7 @@ final class StageServer: @unchecked Sendable {
     /// Control-channel handler: HTTP GET/POST /play or /stop invokes this
     /// with "play" / "stop". Lets the operator trigger playback without
     /// restarting Stage (which would drop + churn duck connections).
-    var onControl: (@Sendable (String) -> Void)?
+    var onControl: (@Sendable (String) -> String)?
     /// MAC → slot map used to route real firmware (which hits /ws/duck
     /// and identifies via X-Duck-Id). nil = production path disabled;
     /// only /duck/{ID} works (test/dev mode).
@@ -456,6 +453,30 @@ final class StageServer: @unchecked Sendable {
         return snapshot.map(\.duck)
     }
 
+    /// Kick only sockets that are currently wedged enough that they are
+    /// unlikely to recover by waiting. This is intentionally stricter than
+    /// `healthIssue`: the visualizer can warn early, but auto-recovery should
+    /// avoid kicking a duck for a harmless one-off slow ACK.
+    @discardableResult
+    func kickWedgedConnections() -> [DuckID] {
+        lock.lock()
+        let snapshot = ducks.values
+            .filter { Self.recoveryIssue(for: $0.stats()) != nil }
+            .sorted { $0.duck.rawValue < $1.duck.rawValue }
+        for conn in snapshot {
+            if ducks[conn.duck]?.id == conn.id {
+                ducks.removeValue(forKey: conn.duck)
+            }
+        }
+        lock.unlock()
+
+        for conn in snapshot {
+            conn.close()
+            callbacks.onDisconnect?(conn)
+        }
+        return snapshot.map(\.duck)
+    }
+
     private static func healthIssue(for s: DuckConnection.SendStats) -> String? {
         if s.inFlightBytes >= unhealthyInFlightBytes {
             return "inFlight=\(formatBytes(s.inFlightBytes))"
@@ -468,6 +489,22 @@ final class StageServer: @unchecked Sendable {
         }
         if s.lastPongMs >= unhealthyPongMs {
             return String(format: "pong=%.1fms", s.lastPongMs)
+        }
+        return nil
+    }
+
+    private static func recoveryIssue(for s: DuckConnection.SendStats) -> String? {
+        if s.inFlightBytes >= 512 * 1024 {
+            return "wedgedInFlight=\(formatBytes(s.inFlightBytes))"
+        }
+        if s.inFlightBytes >= 128 * 1024 && s.lastCompletionMs >= 5_000.0 {
+            return String(format: "wedgedAck=%.1fms", s.lastCompletionMs)
+        }
+        if let age = s.outstandingPingAgeMs, age >= 5_000.0 {
+            return String(format: "wedgedMissingPong=%.1fms", age)
+        }
+        if s.lastPongMs >= 5_000.0 {
+            return String(format: "wedgedPong=%.1fms", s.lastPongMs)
         }
         return nil
     }
@@ -541,12 +578,43 @@ final class StageServer: @unchecked Sendable {
                                              "wait for reconnect, then trigger /play again\n")
                         return
                     }
-                    self.onControl?("play")
-                    self.sendError(connection, status: 200, body: "playing\n")
+                    let body = self.onControl?("play") ?? "playing\n"
+                    self.sendError(connection, status: 200, body: body)
                     return
                 case "/stop":
-                    self.onControl?("stop")
-                    self.sendError(connection, status: 200, body: "stopped\n")
+                    let body = self.onControl?("stop") ?? "stopped\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/recover":
+                    let kicked = self.kickWedgedConnections()
+                    let body = kicked.isEmpty
+                        ? "no wedged sockets\n"
+                        : "kicked wedged socket(s): \(kicked.map(\.rawValue).joined(separator: ","))\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/next":
+                    let body = self.onControl?("next") ?? "next\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/prev":
+                    let body = self.onControl?("prev") ?? "prev\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/cue":
+                    let body = self.onControl?("cue") ?? "cue unavailable\n"
+                    self.sendError(connection, status: 200, body: body)
+                    return
+                case "/state":
+                    let body = self.onControl?("state") ??
+                        "{\"cue\":null,\"status\":\"\(Self.jsonEscape(self.statusReport()))\",\"health\":\"\(Self.jsonEscape(self.healthReport()))\"}\n"
+                    self.sendResponse(connection, status: 200,
+                                      contentType: "application/json",
+                                      body: body)
+                    return
+                case "/visualizer", "/":
+                    self.sendResponse(connection, status: 200,
+                                      contentType: "text/html; charset=utf-8",
+                                      body: Self.visualizerHTML)
                     return
                 case "/status":
                     self.sendError(connection, status: 200, body: self.statusReport())
@@ -681,6 +749,11 @@ final class StageServer: @unchecked Sendable {
     }
 
     private func sendError(_ connection: NWConnection, status: Int, body: String) {
+        sendResponse(connection, status: status, contentType: "text/plain; charset=utf-8", body: body)
+    }
+
+    private func sendResponse(_ connection: NWConnection, status: Int,
+                              contentType: String, body: String) {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
@@ -692,12 +765,430 @@ final class StageServer: @unchecked Sendable {
         default:  statusText = "Error"
         }
         let resp = "HTTP/1.1 \(status) \(statusText)\r\n" +
+                   "Content-Type: \(contentType)\r\n" +
                    "Content-Length: \(body.utf8.count)\r\n" +
                    "Connection: close\r\n\r\n\(body)"
         connection.send(content: Data(resp.utf8), completion: .contentProcessed { _ in
             connection.cancel()
         })
     }
+
+    private static func jsonEscape(_ s: String) -> String {
+        var out = ""
+        for ch in s {
+            switch ch {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default: out.append(ch)
+            }
+        }
+        return out
+    }
+
+    private static let visualizerHTML = #"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boy Band Stage</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101316;
+      --panel: #1a2024;
+      --panel-2: #20272d;
+      --text: #eef3f1;
+      --muted: #a8b4b0;
+      --line: #344047;
+      --ok: #52d273;
+      --warn: #ffcc66;
+      --bad: #ff6b66;
+      --accent: #65c7d3;
+      --accent-2: #e7a84e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 52px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .status-pill {
+      min-width: 130px;
+      text-align: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: var(--panel);
+      white-space: nowrap;
+    }
+    .status-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok), var(--line) 55%); }
+    .status-pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad), var(--line) 55%); }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .cue-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+    .cue-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      margin-bottom: 12px;
+    }
+    .cue-title h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .cue-meta {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .progress-shell {
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0d1012;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width .25s ease;
+    }
+    .progress-label {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      color: var(--text);
+      text-shadow: 0 1px 2px #000;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      align-content: start;
+    }
+    button {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary {
+      color: #081113;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    .ducks {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .duck-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .duck-head h3 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .health {
+      border-radius: 6px;
+      padding: 4px 8px;
+      background: #0d1012;
+      color: var(--muted);
+      min-width: 56px;
+      text-align: center;
+    }
+    .health.ok { color: var(--ok); }
+    .health.bad { color: var(--bad); }
+    dl {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+    }
+    .metric {
+      min-height: 58px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      background: #12171a;
+    }
+    dt {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    dd {
+      margin: 3px 0 0;
+      font-size: 16px;
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    .log {
+      min-height: 120px;
+      max-height: 170px;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      margin: 0;
+    }
+    @media (max-width: 760px) {
+      main { padding: 12px; }
+      header, .cue-title { align-items: flex-start; flex-direction: column; }
+      .cue-grid, .ducks { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Boy Band Stage</h1>
+      <div id="overall" class="status-pill">connecting</div>
+    </header>
+
+    <section class="cue-grid">
+      <div>
+        <div class="cue-title">
+          <h2 id="cueName">Cue</h2>
+          <div id="cueMeta" class="cue-meta">--</div>
+        </div>
+        <div class="progress-shell">
+          <div id="progressFill" class="progress-fill"></div>
+          <div id="progressLabel" class="progress-label">0%</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button onclick="control('prev')">Prev</button>
+        <button class="primary" onclick="control('play')">Play</button>
+        <button onclick="control('stop')">Stop</button>
+        <button onclick="control('next')">Next</button>
+        <button onclick="control('recover')">Recover</button>
+      </div>
+    </section>
+
+    <section class="ducks">
+      <div>
+        <div class="duck-head">
+          <h3>D1 Mallard</h3>
+          <div id="D1Health" class="health">--</div>
+        </div>
+        <dl id="D1Metrics"></dl>
+      </div>
+      <div>
+        <div class="duck-head">
+          <h3>D2 Pekin</h3>
+          <div id="D2Health" class="health">--</div>
+        </div>
+        <dl id="D2Metrics"></dl>
+      </div>
+    </section>
+
+    <section>
+      <pre id="eventLog" class="log"></pre>
+    </section>
+  </main>
+
+  <script>
+    let lastCue = "";
+    let metricBaselines = {};
+
+    function parseBytes(s) {
+      if (!s) return 0;
+      const m = String(s).match(/^([0-9.]+)(B|KB|MB)$/);
+      if (!m) return Number(s) || 0;
+      const v = Number(m[1]);
+      return m[2] === "MB" ? v * 1048576 : m[2] === "KB" ? v * 1024 : v;
+    }
+
+    function formatBytes(n) {
+      n = Math.max(0, n || 0);
+      if (n >= 1048576) return (n / 1048576).toFixed(2) + "MB";
+      if (n >= 1024) return (n / 1024).toFixed(1) + "KB";
+      return Math.round(n) + "B";
+    }
+
+    function parseCounter(value) {
+      const [frames, bytes] = String(value || "0/0B").split("/");
+      return { frames: Number(frames) || 0, bytes: parseBytes(bytes || "0B") };
+    }
+
+    function formatCounter(frames, bytes) {
+      return `${Math.max(0, frames)}/${formatBytes(bytes)}`;
+    }
+
+    function parseStatus(text) {
+      const ducks = {};
+      for (const line of text.trim().split(/\n+/)) {
+        const head = line.match(/^(D[1-4]):\s+health=([^\s]+)/);
+        if (!head) continue;
+        const duck = head[1];
+        ducks[duck] = { health: head[2] };
+        for (const part of line.split(/\s+/).slice(2)) {
+          const kv = part.split("=");
+          if (kv.length === 2) ducks[duck][kv[0]] = kv[1];
+        }
+      }
+      return ducks;
+    }
+
+    function captureBaselines(status) {
+      metricBaselines = {};
+      for (const id of ["D1", "D2"]) {
+        const data = status[id] || {};
+        metricBaselines[id] = {
+          completed: parseCounter(data.completed),
+          sent: parseCounter(data.sent),
+          dropped: parseCounter(data.dropped)
+        };
+      }
+    }
+
+    function deltaCounter(data, key, id) {
+      const current = parseCounter(data[key]);
+      const base = metricBaselines[id]?.[key] || { frames: 0, bytes: 0 };
+      return formatCounter(current.frames - base.frames, current.bytes - base.bytes);
+    }
+
+    function metricHTML(id, data) {
+      const completed = deltaCounter(data, "completed", id);
+      const sent = deltaCounter(data, "sent", id);
+      const inFlight = data.inFlight || "0/0B";
+      const dropped = deltaCounter(data, "dropped", id);
+      const pong = data.pong || "--";
+      const maxPong = data.maxPong || "--";
+      return `
+        <div class="metric"><dt>Completed</dt><dd>${completed}</dd></div>
+        <div class="metric"><dt>Sent</dt><dd>${sent}</dd></div>
+        <div class="metric"><dt>In Flight</dt><dd>${inFlight}</dd></div>
+        <div class="metric"><dt>Dropped</dt><dd>${dropped}</dd></div>
+        <div class="metric"><dt>Pong</dt><dd>${pong}</dd></div>
+        <div class="metric"><dt>Max Pong</dt><dd>${maxPong}</dd></div>`;
+    }
+
+    function setHealth(id, value) {
+      const el = document.getElementById(id + "Health");
+      el.textContent = value || "--";
+      el.className = "health " + (value && value.startsWith("ok") ? "ok" : value ? "bad" : "");
+    }
+
+    function logLine(s) {
+      const el = document.getElementById("eventLog");
+      const now = new Date().toLocaleTimeString();
+      el.textContent = `[${now}] ${s}\n` + el.textContent;
+    }
+
+    async function control(cmd) {
+      try {
+        const r = await fetch("/" + cmd, { cache: "no-store" });
+        const text = await r.text();
+        logLine(`${cmd}: ${text.trim()}`);
+        await refresh();
+      } catch (e) {
+        logLine(`${cmd}: ${e}`);
+      }
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch("/state", { cache: "no-store" });
+        const state = await r.json();
+        const cue = state.cue || {};
+        const status = parseStatus(state.status || "");
+        const cueText = cue.name ? `${cue.name}` : "No cue";
+        const cueKey = `${cue.index}:${cue.name}:${cue.generation || 0}`;
+        if (cueKey !== lastCue) {
+          lastCue = cueKey;
+          captureBaselines(status);
+          logLine(`${state.playing ? "playing" : "armed"} ${cueText}`);
+        }
+        document.getElementById("cueName").textContent = cueText;
+        document.getElementById("cueMeta").textContent =
+          cue.count ? `${cue.index + 1}/${cue.count}  ${Math.round(cue.durationSec || 0)}s` : "--";
+
+        let allOk = true;
+        for (const id of ["D1", "D2"]) {
+          const data = status[id] || {};
+          if (!data.health || !data.health.startsWith("ok")) allOk = false;
+          setHealth(id, data.health);
+          document.getElementById(id + "Metrics").innerHTML = metricHTML(id, data);
+        }
+        const overall = document.getElementById("overall");
+        overall.textContent = allOk ? "healthy" : "check ducks";
+        overall.className = "status-pill " + (allOk ? "ok" : "bad");
+
+        let pct = cue.durationSec ? Math.min(100, ((cue.elapsedSec || 0) / cue.durationSec) * 100) : 0;
+        if (!state.playing && (cue.elapsedSec || 0) === 0) pct = 0;
+        document.getElementById("progressFill").style.width = pct.toFixed(1) + "%";
+        document.getElementById("progressLabel").textContent =
+          `${pct.toFixed(0)}% ${state.playing ? "playing" : "armed"}`;
+      } catch (e) {
+        const overall = document.getElementById("overall");
+        overall.textContent = "offline";
+        overall.className = "status-pill bad";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
+"""#
 
     private func upgradeWebSocket(connection: NWConnection, key: String, duck: DuckID) {
         let accept = wsAcceptKey(key)

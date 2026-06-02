@@ -361,6 +361,16 @@ static void render_settings_section(httpd_req_t *req) {
 
 static void render_collect_wifi(httpd_req_t *req) {
     httpd_resp_send_chunk(req, html_head, sizeof(html_head) - 1);
+#ifdef BAMBU_DUCK_BOYBAND
+    static const char start[] =
+        "<h1>Duck WiFi setup</h1>"
+        "<p class=sub>Tell me the WiFi network for Stage. No Bambu account "
+        "is needed for boy band mode.</p>"
+        "<form method=POST action=/save>"
+        "<h2>WiFi</h2>"
+        "<label for=ssid>Network</label>"
+        "<select id=ssid name=ssid required>";
+#else
     static const char start[] =
         "<h1>🦆 Hi! Let's get you set up.</h1>"
         "<p class=sub>Tell me your WiFi and Bambu account. I'll handle the rest "
@@ -369,6 +379,7 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<h2>WiFi</h2>"
         "<label for=ssid>Network</label>"
         "<select id=ssid name=ssid required>";
+#endif
     httpd_resp_send_chunk(req, start, sizeof(start) - 1);
     if (s_scan_count == 0) {
         static const char none[] = "<option value=''>(no networks found — type below)</option>";
@@ -394,6 +405,7 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=pw>WiFi password</label>"
         "<input type=password id=pw name=pw autocomplete=off"
         " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+#ifndef BAMBU_DUCK_BOYBAND
         "<h2>Bambu account</h2>"
         "<p class=sub>So I can talk to your printer through Bambu's cloud.</p>"
         "<label for=bemail>Email</label>"
@@ -402,6 +414,7 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=bpw>Password</label>"
         "<input type=password id=bpw name=bpw required autocomplete=off"
         " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+#endif
 #ifndef BAMBU_DUCK_TURNKEY
         // Turnkey builds (idf.py -DBAMBU_DUCK_TURNKEY=1) skip the
         // ElevenLabs section — the relay being used already has shared
@@ -692,10 +705,17 @@ static esp_err_t root_handler(httpd_req_t *req) {
                 true);
             return ESP_OK;
         case WIZ_DONE:
+#ifdef BAMBU_DUCK_BOYBAND
+            render_status(req, "WiFi saved",
+                "The duck is joining Stage. You can disconnect from the duck's "
+                "WiFi now. Your phone will switch back to your normal network.",
+                false);
+#else
             render_status(req, "🦆 You're set!",
                 "Bambu is connected. You can disconnect from the duck's "
                 "WiFi now. Your phone will switch back to your home network.",
                 false);
+#endif
             return ESP_OK;
     }
     return ESP_OK;
