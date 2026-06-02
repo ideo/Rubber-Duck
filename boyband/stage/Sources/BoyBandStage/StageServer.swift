@@ -1071,7 +1071,7 @@ final class StageServer: @unchecked Sendable {
     }
     .ducks {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 14px;
     }
     .duck-head {
@@ -1098,7 +1098,7 @@ final class StageServer: @unchecked Sendable {
     .health.bad { color: var(--bad); }
     dl {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       margin: 0;
     }
@@ -1175,17 +1175,31 @@ final class StageServer: @unchecked Sendable {
     <section class="ducks">
       <div>
         <div class="duck-head">
-          <h3>D1 Mallard</h3>
+          <h3>D1 Classic</h3>
           <div id="D1Health" class="health">--</div>
         </div>
         <dl id="D1Metrics"></dl>
       </div>
       <div>
         <div class="duck-head">
-          <h3>D2 Pekin</h3>
+          <h3>D2 Mallard</h3>
           <div id="D2Health" class="health">--</div>
         </div>
         <dl id="D2Metrics"></dl>
+      </div>
+      <div>
+        <div class="duck-head">
+          <h3>D3 Pintail</h3>
+          <div id="D3Health" class="health">--</div>
+        </div>
+        <dl id="D3Metrics"></dl>
+      </div>
+      <div>
+        <div class="duck-head">
+          <h3>D4 Pekin</h3>
+          <div id="D4Health" class="health">--</div>
+        </div>
+        <dl id="D4Metrics"></dl>
       </div>
     </section>
 
@@ -1198,6 +1212,7 @@ final class StageServer: @unchecked Sendable {
     let lastCue = "";
     let lastTurnListKey = "";
     let metricBaselines = {};
+    const duckSlots = ["D1", "D2", "D3", "D4"];
 
     function parseBytes(s) {
       if (!s) return 0;
@@ -1240,7 +1255,7 @@ final class StageServer: @unchecked Sendable {
 
     function captureBaselines(status) {
       metricBaselines = {};
-      for (const id of ["D1", "D2"]) {
+      for (const id of duckSlots) {
         const data = status[id] || {};
         metricBaselines[id] = {
           completed: parseCounter(data.completed),
@@ -1353,7 +1368,7 @@ final class StageServer: @unchecked Sendable {
           cue.count ? `${cue.index + 1}/${cue.count}  ${Math.round(cue.durationSec || 0)}s` : "--";
 
         let allOk = true;
-        for (const id of ["D1", "D2"]) {
+        for (const id of duckSlots) {
           const data = status[id] || {};
           if (!data.health || !data.health.startsWith("ok")) allOk = false;
           setHealth(id, data.health);
@@ -1419,6 +1434,7 @@ final class StageServer: @unchecked Sendable {
       min-height: 100svh;
       display: grid;
       place-items: center;
+      margin-inline: auto;
       padding: 6vh 4vw;
     }
     .subtitle {
@@ -1718,6 +1734,7 @@ final class StageServer: @unchecked Sendable {
       min-height: 100svh;
       display: grid;
       place-items: center;
+      margin-inline: auto;
       padding: 6vh 4vw;
     }
     .subtitle {

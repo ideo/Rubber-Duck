@@ -62,6 +62,14 @@ struct Args {
     /// Runtime slot aliases for reduced hardware. Example: D3=D1 routes
     /// generated Pintail lines to physical D1.
     var duckAliases: [DuckID: DuckID] = [:]
+    /// Per-duck digital gain applied after decode/resample. This is for
+    /// matching ElevenLabs voice loudness and individual speaker variance.
+    var duckGains: [DuckID: Double] = [
+        .D1: 0.56,  // Classic: balanced set multiplied for room volume.
+        .D2: 1.24,  // Mallard keeps a relative lift after Loud firmware.
+        .D3: 0.78,  // Pintail gets extra presence in the room.
+        .D4: 2.47,  // Pekin is backed off relative to the earlier loud pass.
+    ]
     /// Audio transport for file/turn playback. WebSocket remains the default
     /// unless --usb-map is supplied, in which case USB is the assumed test path.
     var transport: AudioTransportMode = .ws
@@ -169,6 +177,13 @@ func parseArgs() -> Args {
                 exit(2)
             }
             args.duckAliases[from] = to
+        case "--duck-gain":
+            i += 1
+            guard i < argv.count else {
+                fputs("error: --duck-gain requires DUCK=GAIN, e.g. D4=2.6\n", stderr)
+                exit(2)
+            }
+            applyDuckGainSpec(argv[i], to: &args.duckGains)
         case "-h", "--help":
             printHelp(); exit(0)
         default:
@@ -227,6 +242,8 @@ func printHelp() {
       --turn-manifest FILE Preload gen-play-stems.py manifest; /play streams
                            one speaker utterance at a time.
       --duck-alias FROM=TO Route one manifest duck to another, e.g. D3=D1.
+      --duck-gain DUCK=N   Per-duck digital gain, repeatable. DUCK may be
+                           D1..D4 or ALL. Example: --duck-gain D4=3.0
       --usb-map FILE       Open ducks over USB Serial/JTAG from local map.
       --transport MODE     ws, usb, or auto for file/turn playback.
       --loop               With --play: loop the file instead of one pass
@@ -241,6 +258,24 @@ func printHelp() {
     then <repo>/boyband/duck-map.local.json.
     """
     print(help)
+}
+
+func applyDuckGainSpec(_ spec: String, to gains: inout [DuckID: Double]) {
+    let parts = spec.split(separator: "=", maxSplits: 1)
+    guard parts.count == 2, let gain = Double(parts[1]), gain >= 0.0, gain <= 8.0 else {
+        fputs("error: --duck-gain must look like D4=2.6, gain range 0...8\n", stderr)
+        exit(2)
+    }
+    let key = parts[0].uppercased()
+    if key == "ALL" {
+        for duck in DuckID.allCases { gains[duck] = gain }
+        return
+    }
+    guard let duck = DuckID.parse(key) else {
+        fputs("error: --duck-gain duck must be D1..D4 or ALL\n", stderr)
+        exit(2)
+    }
+    gains[duck] = gain
 }
 
 /// Try the default map locations in order. Returns nil if none exist.
@@ -579,6 +614,11 @@ func label(_ duck: DuckID) -> String {
     return duck.rawValue
 }
 
+let gainSummary = DuckID.allCases
+    .map { "\(label($0))=\(String(format: "%.2f", args.duckGains[$0] ?? 1.0))x" }
+    .joined(separator: ", ")
+log("gain        \(gainSummary)")
+
 let duckStats = DuckStatsTracker()
 
 let callbacks = StageCallbacks(
@@ -713,9 +753,14 @@ let usbStage: USBStage? = {
     }
 }
 
+func duckGain(_ duck: DuckID) -> Double {
+    args.duckGains[duck] ?? 1.0
+}
+
 func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
     FilePlayer(duck: duck,
                loop: loop,
+               gain: duckGain(duck),
                isConnected: transportIsConnected,
                sendPCM: transportSendPCM)
 }

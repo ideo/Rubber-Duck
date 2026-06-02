@@ -34,6 +34,7 @@ private let kChunkBytes = 1280                // 40 ms @ 16 kHz mono int16
 final class FilePlayer: @unchecked Sendable {
     private let duck: DuckID
     private let loop: Bool
+    private let gain: Double
     private let isConnected: @Sendable (DuckID) -> Bool
     private let sendPCM: @Sendable (DuckID, Data) -> Void
     private var timer: DispatchSourceTimer?
@@ -44,19 +45,22 @@ final class FilePlayer: @unchecked Sendable {
     /// Read cursor into `pcm`, in bytes. Always a multiple of 2.
     private var cursor: Int = 0
 
-    init(server: StageServer, duck: DuckID, loop: Bool) {
+    init(server: StageServer, duck: DuckID, loop: Bool, gain: Double = 1.0) {
         self.duck = duck
         self.loop = loop
+        self.gain = gain
         self.isConnected = { server.connection(for: $0) != nil }
         self.sendPCM = { duck, pcm in server.connection(for: duck)?.sendPCM(pcm) }
     }
 
     init(duck: DuckID,
          loop: Bool,
+         gain: Double = 1.0,
          isConnected: @escaping @Sendable (DuckID) -> Bool,
          sendPCM: @escaping @Sendable (DuckID, Data) -> Void) {
         self.duck = duck
         self.loop = loop
+        self.gain = gain
         self.isConnected = isConnected
         self.sendPCM = sendPCM
     }
@@ -126,7 +130,7 @@ final class FilePlayer: @unchecked Sendable {
             bytes.append(UInt8(truncatingIfNeeded: s))
             bytes.append(UInt8(truncatingIfNeeded: Int(s) >> 8))
         }
-        self.pcm = bytes
+        self.pcm = Self.applyGain(bytes, gain: gain)
         return Double(outFrames) / kSampleRate
     }
 
@@ -191,5 +195,22 @@ final class FilePlayer: @unchecked Sendable {
     private func err(_ msg: String) -> NSError {
         NSError(domain: "FilePlayer", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: msg])
+    }
+
+    private static func applyGain(_ bytes: [UInt8], gain: Double) -> [UInt8] {
+        guard gain != 1.0 else { return bytes }
+        var out = bytes
+        var i = 0
+        while i + 1 < out.count {
+            let raw = UInt16(out[i]) | (UInt16(out[i + 1]) << 8)
+            let sample = Int16(bitPattern: raw)
+            let scaled = Double(sample) * gain
+            let clamped = max(Double(Int16.min), min(Double(Int16.max), scaled.rounded()))
+            let value = UInt16(bitPattern: Int16(clamped))
+            out[i] = UInt8(value & 0xFF)
+            out[i + 1] = UInt8((value >> 8) & 0xFF)
+            i += 2
+        }
+        return out
     }
 }

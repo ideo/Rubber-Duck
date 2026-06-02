@@ -130,6 +130,35 @@ curl -sS http://localhost:3334/status
 
 Only click Play/Start when the room is ready for the ducks to speak.
 
+## Tuning Duck Volume
+
+Stage applies per-duck digital gain after each clip is decoded to 16 kHz mono
+PCM. The current defaults compensate for the June 2 ElevenLabs voices:
+
+```text
+D1 Classic  0.56x
+D2 Mallard  1.24x
+D3 Pintail  0.78x
+D4 Pekin    2.47x
+```
+
+To override these during rehearsal, restart Stage with repeatable
+`--duck-gain` flags:
+
+```sh
+swift run BoyBandStage --port 3334 \
+  --usb-map ../duck-usb-map.local.json \
+  --transport usb \
+  --turn-manifest '/Users/jfizel/Duck Tales/outputs/new-play/new-play_manifest.json' \
+  --duck-gain D2=1.6 \
+  --duck-gain D4=3.0
+```
+
+`--duck-gain ALL=1.1` is also supported. Use it carefully: Classic's current
+script clips already peak near full scale, so a large global boost can sound
+crunchy. These defaults assume ducks are flashed with USB boy-band firmware at
+`VOL_STEP=0` (Loud); if they are flashed quieter, raise the multipliers.
+
 ## Updating the Handoff Video
 
 `/show` currently serves a hardcoded local file from
