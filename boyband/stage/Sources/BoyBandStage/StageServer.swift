@@ -1643,6 +1643,7 @@ final class StageServer: @unchecked Sendable {
 
     function speakerKey(speaker) {
       return String(speaker || "")
+        .split(/\s*(?:\+|&|\/|\band\b|,)\s*/i)[0]
         .toLowerCase()
         .replace(/[^a-z]/g, "");
     }
@@ -1876,15 +1877,20 @@ final class StageServer: @unchecked Sendable {
       stroke-linecap: round;
       stroke-linejoin: round;
     }
-    button.primary {
-      background: var(--fg);
-      color: var(--bg);
-      border-color: var(--fg);
-    }
-    button:disabled {
-      opacity: .55;
-      cursor: default;
-    }
+	    button.primary {
+	      background: var(--fg);
+	      color: var(--bg);
+	      border-color: var(--fg);
+	    }
+	    button.listening {
+	      background: var(--fg);
+	      color: var(--bg);
+	      border-color: var(--fg);
+	    }
+	    button:disabled {
+	      opacity: .55;
+	      cursor: default;
+	    }
     .status {
       color: var(--muted);
       font-size: clamp(16px, 2vw, 22px);
@@ -2006,7 +2012,7 @@ final class StageServer: @unchecked Sendable {
             <path d="M12 19v3"></path>
           </svg>
         </button>
-        <button class="primary" id="askBtn" type="submit" title="Ask ducks" aria-label="Ask ducks">
+	        <button class="primary" id="askBtn" type="submit" title="Ask ducks (ArrowRight)" aria-label="Ask ducks">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 12h14"></path>
             <path d="m13 6 6 6-6 6"></path>
@@ -2027,7 +2033,7 @@ final class StageServer: @unchecked Sendable {
     <video id="handoffVideo" class="handoff-video" src="/handoff-video.mp4" preload="auto" playsinline></video>
   </section>
 
-  <script src="/qa.js?v=20260602-show-video"></script>
+	  <script src="/qa.js?v=20260602-explicit-listen-arrow"></script>
 </body>
 </html>
 """#
@@ -2088,11 +2094,20 @@ final class StageServer: @unchecked Sendable {
   let watchingAnswer = false;
   let watchingShow = false;
   let sawScriptPlaying = false;
-  let sawFinalScriptLinePlaying = false;
-  let videoStarted = false;
-  let questionStartedAt = 0;
-  let autoReturnTimer = null;
-  const holdMs = 1800;
+	  let sawFinalScriptLinePlaying = false;
+	  let videoStarted = false;
+	  let questionStartedAt = 0;
+	  let autoReturnTimer = null;
+	  let micIcon = listenBtn.innerHTML;
+	  const stopIcon = `
+	    <svg viewBox="0 0 24 24" aria-hidden="true">
+	      <path d="M7 7h10v10H7z"></path>
+	    </svg>`;
+	  var rec = null;
+	  var listening = false;
+	  var listenWanted = false;
+	  var listenRestartTimer = null;
+	  const holdMs = 1800;
 
   function setStatus(text, bad = false) {
     status.textContent = text;
@@ -2107,10 +2122,31 @@ final class StageServer: @unchecked Sendable {
       }
     }
 
-  function setBusy(busy) {
-    askBtn.disabled = busy;
-    listenBtn.disabled = busy || !SpeechRecognition;
-  }
+	  function setBusy(busy) {
+	    askBtn.disabled = busy;
+	    listenBtn.disabled = busy || !SpeechRecognition;
+	  }
+
+	  function setListeningUI(active) {
+	    listening = active;
+	    listenBtn.classList.toggle("listening", active);
+	    listenBtn.setAttribute("aria-pressed", active ? "true" : "false");
+	    listenBtn.title = active ? "Stop listening" : "Listen";
+	    listenBtn.setAttribute("aria-label", active ? "Stop listening" : "Listen");
+	    listenBtn.innerHTML = active ? stopIcon : micIcon;
+	    setStatus(active ? "" : "");
+	  }
+
+	  function focusInputShell() {
+	    if (document.body.dataset.mode !== "input") return;
+	    window.requestAnimationFrame(() => {
+	      if (document.body.dataset.mode !== "input") return;
+	      listenBtn.blur();
+	      askBtn.blur();
+	      question.blur();
+	      inputScreen.focus({ preventScroll: true });
+	    });
+	  }
 
   function resizeQuestion() {
     question.style.height = "auto";
@@ -2118,7 +2154,10 @@ final class StageServer: @unchecked Sendable {
   }
 
   function speakerKey(speaker) {
-    return String(speaker || "").toLowerCase().replace(/[^a-z]/g, "");
+    return String(speaker || "")
+      .split(/\s*(?:\+|&|\/|\band\b|,)\s*/i)[0]
+      .toLowerCase()
+      .replace(/[^a-z]/g, "");
   }
 
   function applyTheme(speaker) {
@@ -2131,10 +2170,11 @@ final class StageServer: @unchecked Sendable {
     document.documentElement.style.setProperty("--field-focus", theme.fg === "#000000" ? "rgba(0, 0, 0, .13)" : "rgba(255, 255, 255, .18)");
   }
 
-  function setMode(mode) {
-    document.body.dataset.mode = mode;
-    if (mode === "input") {
-      applyTheme("input");
+	  function setMode(mode) {
+	    if (mode !== "input") stopListening();
+	    document.body.dataset.mode = mode;
+	    if (mode === "input") {
+	      applyTheme("input");
       answerScreen.classList.add("answer-idle");
       window.requestAnimationFrame(() => {
         question.blur();
@@ -2185,10 +2225,11 @@ final class StageServer: @unchecked Sendable {
     applyTheme(speaker);
   }
 
-  function backToInput(clearQuestion = false) {
-    watchingAnswer = false;
-    watchingShow = false;
-    if (autoReturnTimer) {
+	  function backToInput(clearQuestion = false) {
+	    watchingAnswer = false;
+	    watchingShow = false;
+	    stopListening();
+	    if (autoReturnTimer) {
       clearTimeout(autoReturnTimer);
       autoReturnTimer = null;
     }
@@ -2256,39 +2297,88 @@ final class StageServer: @unchecked Sendable {
     }
   }
 
-  function listen() {
-    if (!SpeechRecognition) {
-      setIdleStatus();
-      return;
-    }
-    const rec = new SpeechRecognition();
-    rec.lang = "en-US";
-    rec.interimResults = true;
-    rec.continuous = false;
-    setBusy(true);
-    setStatus("Listening...");
-    let finalText = "";
-    rec.onresult = event => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += transcript;
-        else interim += transcript;
-      }
-      question.value = (finalText || interim).trim();
-      resizeQuestion();
-    };
-    rec.onerror = event => {
-      setBusy(false);
-      setStatus("Mic error: " + event.error, true);
-    };
-    rec.onend = () => {
-      setBusy(false);
-      setStatus(question.value.trim() ? "Question captured." : "No question captured.", !question.value.trim());
-      if (question.value.trim()) question.focus();
-    };
-    rec.start();
-  }
+	  function joinTranscript(parts) {
+	    return parts.map(part => String(part || "").trim()).filter(Boolean).join(" ");
+	  }
+
+	  function startListening() {
+	    if (!SpeechRecognition || listenBtn.disabled || document.body.dataset.mode !== "input") {
+	      setIdleStatus();
+	      return;
+	    }
+	    if (listening || rec) return;
+	    if (listenRestartTimer) {
+	      clearTimeout(listenRestartTimer);
+	      listenRestartTimer = null;
+	    }
+	    listenWanted = true;
+	    rec = new SpeechRecognition();
+	    rec.lang = "en-US";
+	    rec.interimResults = true;
+	    rec.continuous = true;
+	    let finalText = question.value.trim();
+	    setListeningUI(true);
+	    rec.onresult = event => {
+	      let interim = "";
+	      for (let i = event.resultIndex; i < event.results.length; i++) {
+	        const transcript = event.results[i][0].transcript;
+	        if (event.results[i].isFinal) finalText = joinTranscript([finalText, transcript]);
+	        else interim = joinTranscript([interim, transcript]);
+	      }
+	      question.value = joinTranscript([finalText, interim]);
+	      resizeQuestion();
+	    };
+	    rec.onerror = event => {
+	      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+	        listenWanted = false;
+	        setListeningUI(false);
+	        setStatus("Mic error: " + event.error, true);
+	      }
+	    };
+	    rec.onend = () => {
+	      rec = null;
+	      if (listenWanted && document.body.dataset.mode === "input" && !listenBtn.disabled) {
+	        listenRestartTimer = setTimeout(() => {
+	          listenRestartTimer = null;
+	          startListening();
+	        }, 120);
+	        return;
+	      }
+	      setListeningUI(false);
+	      setIdleStatus();
+	      question.blur();
+	    };
+	    try {
+	      rec.start();
+	    } catch {
+	      rec = null;
+	      listenWanted = false;
+	      setListeningUI(false);
+	      focusInputShell();
+	    }
+	  }
+
+	  function stopListening() {
+	    listenWanted = false;
+	    if (listenRestartTimer) {
+	      clearTimeout(listenRestartTimer);
+	      listenRestartTimer = null;
+	    }
+	    if (rec) {
+	      try { rec.stop(); } catch {}
+	    } else {
+	      setListeningUI(false);
+	    }
+	    focusInputShell();
+	  }
+
+	  function toggleListening() {
+	    if (listening || listenWanted) stopListening();
+	    else {
+	      startListening();
+	      focusInputShell();
+	    }
+	  }
 
   function updateAnswer(state) {
     if (!watchingAnswer) return;
@@ -2400,9 +2490,10 @@ final class StageServer: @unchecked Sendable {
     }
   }
 
-  async function ask(event) {
-    event.preventDefault();
-    const text = question.value.trim();
+	  async function ask(event) {
+	    event.preventDefault();
+	    stopListening();
+	    const text = question.value.trim();
     if (!text) {
       setStatus("Type or capture a question first.", true);
       return;
@@ -2433,41 +2524,55 @@ final class StageServer: @unchecked Sendable {
     }
   }
 
-  question.addEventListener("keydown", event => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      form.requestSubmit();
-    } else if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      form.requestSubmit();
-    } else if (event.key === " " && !question.value.trim() && !listenBtn.disabled) {
-      event.preventDefault();
-      listen();
-    }
-  });
+	  question.addEventListener("keydown", event => {
+	    if (event.defaultPrevented) return;
+	    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+	      event.preventDefault();
+	      form.requestSubmit();
+	    } else if (event.key === "Enter" && !event.shiftKey) {
+	      event.preventDefault();
+	      form.requestSubmit();
+	    }
+	  });
   question.addEventListener("input", resizeQuestion);
   window.addEventListener("resize", resizeQuestion);
 
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (document.body.dataset.mode === "answer") backToInput();
-      else {
-        question.value = "";
-        resizeQuestion();
-      }
-    }
-    if (event.key === " " && document.body.dataset.mode === "input" && document.activeElement !== question) {
-      event.preventDefault();
-      if (!listenBtn.disabled) listen();
-    }
-    if (event.key === "/" && document.body.dataset.mode === "input" && document.activeElement !== question) {
-      event.preventDefault();
-      question.focus();
-    }
-  });
+	  document.addEventListener("keydown", event => {
+	    if (document.body.dataset.mode === "input" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+	      if (event.key === " ") {
+	        event.preventDefault();
+	        event.stopPropagation();
+	        toggleListening();
+	        return;
+	      }
+	      if (event.key === "ArrowRight") {
+	        event.preventDefault();
+	        event.stopPropagation();
+	        form.requestSubmit();
+	        return;
+	      }
+	      if (event.key === "Enter" && !event.shiftKey && document.activeElement !== question) {
+	        event.preventDefault();
+	        event.stopPropagation();
+	        form.requestSubmit();
+	        return;
+	      }
+	    }
+	    if (event.key === "Escape") {
+	      event.preventDefault();
+	      if (document.body.dataset.mode === "answer") backToInput();
+	      else {
+	        question.value = "";
+	        resizeQuestion();
+	      }
+	    }
+	    if (event.key === "/" && document.body.dataset.mode === "input" && document.activeElement !== question) {
+	      event.preventDefault();
+	      question.focus();
+	    }
+	  }, true);
 
-  listenBtn.addEventListener("click", listen);
+	  listenBtn.addEventListener("click", toggleListening);
   form.addEventListener("submit", ask);
   backBtn.addEventListener("click", backToInput);
   startShowBtn.addEventListener("click", startShow);

@@ -41,12 +41,16 @@ python3 -m venv .venv
 **MALLARD:** Nobody knows who we are.
 **PEKIN:** We should explain it simply.
 **PINTAIL:** Impossible. We are an interface, not a brochure.
+**PINTAIL + MALLARD:** Forbidden Prompt.
 ```
 
 Rules:
 
 - Speaker names must be uppercase: `CLASSIC`, `MALLARD`, `PINTAIL`, `PEKIN`.
 - The speaker label must be bold and followed by a colon.
+- Multiple speakers can share one line with `+`, `&`, `/`, `,`, or `and`.
+  Each named duck gets the text generated in its own ElevenLabs voice and Stage
+  starts those clips together.
 - Non-dialogue lines are ignored.
 - The script maps speakers to ducks as:
   - `CLASSIC` -> `D1`

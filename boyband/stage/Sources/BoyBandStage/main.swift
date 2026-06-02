@@ -350,29 +350,53 @@ struct TurnManifestTurn: Decodable {
     let index: Int
     let speaker: String
     let duck: String
+    let ducks: [String]?
     let text: String?
     let clip: String
+    let clips: [String: String]?
     let durationSec: Double?
 
     enum CodingKeys: String, CodingKey {
         case index
         case speaker
         case duck
+        case ducks
         case text
         case clip
+        case clips
         case durationSec = "duration_sec"
     }
+}
+
+struct LoadedUtteranceTrack: @unchecked Sendable {
+    let sourceDuck: DuckID
+    let duck: DuckID
+    let path: String
+    let player: FilePlayer
+    let durationSec: Double
 }
 
 struct LoadedUtterance: @unchecked Sendable {
     let index: Int
     let speaker: String
-    let sourceDuck: DuckID
-    let duck: DuckID
     let text: String
-    let path: String
-    let player: FilePlayer
+    let tracks: [LoadedUtteranceTrack]
     let durationSec: Double
+
+    var sourceDuck: DuckID { tracks[0].sourceDuck }
+    var duck: DuckID { tracks[0].duck }
+
+    var alias: String {
+        tracks.map { track in
+            track.sourceDuck == track.duck
+                ? track.duck.rawValue
+                : "\(track.sourceDuck.rawValue)→\(track.duck.rawValue)"
+        }.joined(separator: "+")
+    }
+
+    var targetLabels: String {
+        tracks.map { label($0.duck) }.joined(separator: ", ")
+    }
 }
 
 struct QAHelperResult: Decodable {
@@ -934,41 +958,53 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     let utterances: [LoadedUtterance] = manifest.turns.map { turn in
-        guard let sourceDuck = DuckID.parse(turn.duck) else {
-            fputs("fatal: manifest turn \(turn.index) has unknown duck \(turn.duck)\n",
-                  stderr)
-            exit(1)
+        let rawDucks = (turn.ducks?.isEmpty == false) ? turn.ducks! : [turn.duck]
+        var tracks: [LoadedUtteranceTrack] = []
+        for rawDuck in rawDucks {
+            guard let sourceDuck = DuckID.parse(rawDuck) else {
+                fputs("fatal: manifest turn \(turn.index) has unknown duck \(rawDuck)\n",
+                      stderr)
+                exit(1)
+            }
+            let targetDuck = args.duckAliases[sourceDuck] ?? sourceDuck
+            let clip = turn.clips?[sourceDuck.rawValue] ?? turn.clip
+            let clipURL = clip.hasPrefix("/")
+                ? URL(fileURLWithPath: clip)
+                : manifestBaseURL.appendingPathComponent(clip)
+            let player = makeFilePlayer(duck: targetDuck, loop: false)
+            let durationSec: Double
+            do {
+                durationSec = try player.load(path: clipURL.path)
+            } catch {
+                fputs("fatal: turn \(turn.index) clip \(clipURL.path) failed: \(error.localizedDescription)\n",
+                      stderr)
+                exit(1)
+            }
+            tracks.append(LoadedUtteranceTrack(sourceDuck: sourceDuck,
+                                               duck: targetDuck,
+                                               path: clipURL.path,
+                                               player: player,
+                                               durationSec: durationSec))
         }
-        let targetDuck = args.duckAliases[sourceDuck] ?? sourceDuck
-        let clipURL = turn.clip.hasPrefix("/")
-            ? URL(fileURLWithPath: turn.clip)
-            : manifestBaseURL.appendingPathComponent(turn.clip)
-        let player = makeFilePlayer(duck: targetDuck, loop: false)
-        let durationSec: Double
-        do {
-            durationSec = try player.load(path: clipURL.path)
-        } catch {
-            fputs("fatal: turn \(turn.index) clip \(clipURL.path) failed: \(error.localizedDescription)\n",
-                  stderr)
-            exit(1)
-        }
-        let aliasNote = sourceDuck == targetDuck
-            ? targetDuck.rawValue
-            : "\(sourceDuck.rawValue)→\(targetDuck.rawValue)"
+        let durationSec = tracks.map(\.durationSec).max() ?? turn.durationSec ?? 0.0
+        let aliasNote = tracks.map { track in
+            track.sourceDuck == track.duck
+                ? track.duck.rawValue
+                : "\(track.sourceDuck.rawValue)→\(track.duck.rawValue)"
+        }.joined(separator: "+")
+        let clipNames = tracks
+            .map { ($0.path as NSString).lastPathComponent }
+            .joined(separator: ",")
         log(String(format: "turns      %02d %@ %@ %.2fs %@",
-                   turn.index, turn.speaker, aliasNote, durationSec,
-                   (clipURL.path as NSString).lastPathComponent))
+                   turn.index, turn.speaker, aliasNote, durationSec, clipNames))
         return LoadedUtterance(index: turn.index,
                                speaker: turn.speaker,
-                               sourceDuck: sourceDuck,
-                               duck: targetDuck,
                                text: turn.text ?? "",
-                               path: clipURL.path,
-                               player: player,
+                               tracks: tracks,
                                durationSec: durationSec)
     }
 
-    filePlayers = utterances.map(\.player)
+    filePlayers = utterances.flatMap { $0.tracks.map(\.player) }
     let turnState = PlaylistState()
     let gapSec = Double(manifest.gapMs ?? 300) / 1000.0
     let qaState = PlaylistState()
@@ -979,15 +1015,16 @@ if let turnManifestPath = args.turnManifestPath {
     @Sendable func turnLine() -> String {
         let i = turnState.currentIndex()
         let u = utterances[i]
-        let alias = u.sourceDuck == u.duck
-            ? u.duck.rawValue
-            : "\(u.sourceDuck.rawValue)→\(u.duck.rawValue)"
-        return "turn \(i + 1)/\(utterances.count): \(u.speaker) \(alias)\n"
+        return "turn \(i + 1)/\(utterances.count): \(u.speaker) \(u.alias)\n"
     }
 
     @Sendable func stopAllTurns() {
-        for u in utterances { u.player.stop() }
-        for duck in Set(utterances.map(\.duck)) { transportReset(duck) }
+        for u in utterances {
+            for track in u.tracks { track.player.stop() }
+        }
+        for duck in Set(utterances.flatMap { $0.tracks.map(\.duck) }) {
+            transportReset(duck)
+        }
         turnState.stop()
     }
 
@@ -999,8 +1036,12 @@ if let turnManifestPath = args.turnManifestPath {
             qaQuestion = ""
         }
         qaLock.unlock()
-        for u in snapshot { u.player.stop() }
-        for duck in Set(snapshot.map(\.duck)) { transportReset(duck) }
+        for u in snapshot {
+            for track in u.tracks { track.player.stop() }
+        }
+        for duck in Set(snapshot.flatMap { $0.tracks.map(\.duck) }) {
+            transportReset(duck)
+        }
         qaState.stop()
     }
 
@@ -1010,30 +1051,32 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     @Sendable func finishQATurnAfterDrain(_ utterance: LoadedUtterance,
+                                          track: LoadedUtteranceTrack,
                                           generation: Int,
                                           startedWaitingAt: Date = Date()) {
         let timeoutSec = 4.0
-        let inFlightBytes = transportInFlightBytes(utterance.duck)
+        let inFlightBytes = transportInFlightBytes(track.duck)
         if inFlightBytes > 0 {
             let waited = Date().timeIntervalSince(startedWaitingAt)
             if waited >= timeoutSec {
                 log("qa         \(String(format: "%02d", utterance.index)) " +
                     "\(utterance.speaker) drain timed out " +
-                    "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(utterance.duck))")
-                _ = transportKick(utterance.duck)
+                    "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(track.duck))")
+                _ = transportKick(track.duck)
                 qaState.stop()
                 return
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
                 finishQATurnAfterDrain(utterance,
+                                       track: track,
                                        generation: generation,
                                        startedWaitingAt: startedWaitingAt)
             }
             return
         }
 
-        log(String(format: "qa         %02d %@ finished",
-                   utterance.index, utterance.speaker))
+        log(String(format: "qa         %02d %@ %@ finished",
+                   utterance.index, utterance.speaker, track.duck.rawValue))
         guard qaState.finish(generation: generation) else { return }
         let (_, currentQA) = qaSnapshotUtterances()
         let finishedIndex = qaState.currentIndex()
@@ -1050,51 +1093,59 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     @Sendable func triggerQATurn(_ utterance: LoadedUtterance) {
-        guard transportIsConnected(utterance.duck) else {
+        let targets = utterance.tracks.map(\.duck)
+        let present = targets.filter { transportIsConnected($0) }.count
+        guard present == targets.count else {
             qaState.stop()
-            log(String(format: "qa         paused %02d %@ → %@ (0/1 connected)",
-                       utterance.index, utterance.speaker, label(utterance.duck)))
+            log(String(format: "qa         paused %02d %@ → %@ (%d/%d connected)",
+                       utterance.index, utterance.speaker, utterance.targetLabels,
+                       present, targets.count))
             return
         }
         log(String(format: "qa         ▶ %02d %@ → %@",
-                   utterance.index, utterance.speaker, label(utterance.duck)))
-        duckStats.reset(utterance.duck)
-        transportReset(utterance.duck)
-        let generation = qaState.start(trackCount: 1)
-        utterance.player.rewind()
-        utterance.player.start(sharedClock: false,
+                   utterance.index, utterance.speaker, utterance.targetLabels))
+        for duck in targets { duckStats.reset(duck) }
+        for duck in targets { transportReset(duck) }
+        let generation = qaState.start(trackCount: utterance.tracks.count)
+        for track in utterance.tracks {
+            track.player.rewind()
+            track.player.start(sharedClock: utterance.tracks.count > 1,
                                onDone: {
                                    finishQATurnAfterDrain(utterance,
+                                                          track: track,
                                                           generation: generation)
                                })
+        }
     }
 
     @Sendable func finishTurnAfterDrain(_ utterance: LoadedUtterance,
+                                        track: LoadedUtteranceTrack,
                                         generation: Int,
                                         startedWaitingAt: Date = Date()) {
         let timeoutSec = 4.0
-        let inFlightBytes = transportInFlightBytes(utterance.duck)
+        let inFlightBytes = transportInFlightBytes(track.duck)
         if inFlightBytes > 0 {
                 let waited = Date().timeIntervalSince(startedWaitingAt)
                 if waited >= timeoutSec {
                     log("turns      \(String(format: "%02d", utterance.index)) " +
                         "\(utterance.speaker) drain timed out " +
-                        "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(utterance.duck))")
-                    _ = transportKick(utterance.duck)
+                        "(\(StageServer.formatBytesForLog(inFlightBytes)) in flight); kicking \(label(track.duck))")
+                    _ = transportKick(track.duck)
                     turnState.stop()
                     return
                 } else {
                     DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
                         finishTurnAfterDrain(utterance,
+                                             track: track,
                                              generation: generation,
                                              startedWaitingAt: startedWaitingAt)
                     }
                     return
-                }
+            }
         }
 
-        log(String(format: "turns      %02d %@ finished",
-                   utterance.index, utterance.speaker))
+        log(String(format: "turns      %02d %@ %@ finished",
+                   utterance.index, utterance.speaker, track.duck.rawValue))
         guard turnState.finish(generation: generation) else {
             return
         }
@@ -1114,25 +1165,30 @@ if let turnManifestPath = args.turnManifestPath {
 
     @Sendable func triggerTurn(_ utterance: LoadedUtterance) {
         let i = turnState.currentIndex()
-        guard transportIsConnected(utterance.duck) else {
+        let targets = utterance.tracks.map(\.duck)
+        let present = targets.filter { transportIsConnected($0) }.count
+        guard present == targets.count else {
             turnState.stop()
-            log(String(format: "turns      paused %02d/%02d %@ → %@ (0/1 connected)",
+            log(String(format: "turns      paused %02d/%02d %@ → %@ (%d/%d connected)",
                        i + 1, utterances.count, utterance.speaker,
-                       label(utterance.duck)))
+                       utterance.targetLabels, present, targets.count))
             return
         }
-        log(String(format: "turns      ▶ %02d/%02d %@ → %@ (%d/1 connected)",
+        log(String(format: "turns      ▶ %02d/%02d %@ → %@ (%d/%d connected)",
                    i + 1, utterances.count, utterance.speaker,
-                   label(utterance.duck), 1))
-        duckStats.reset(utterance.duck)
-        transportReset(utterance.duck)
-        let generation = turnState.start(trackCount: 1)
-        utterance.player.rewind()
-        utterance.player.start(sharedClock: false,
+                   utterance.targetLabels, present, targets.count))
+        for duck in targets { duckStats.reset(duck) }
+        for duck in targets { transportReset(duck) }
+        let generation = turnState.start(trackCount: utterance.tracks.count)
+        for track in utterance.tracks {
+            track.player.rewind()
+            track.player.start(sharedClock: utterance.tracks.count > 1,
                                onDone: {
                                    finishTurnAfterDrain(utterance,
+                                                        track: track,
                                                         generation: generation)
                                })
+        }
     }
 
     @Sendable func stateJSON() -> String {
@@ -1146,11 +1202,11 @@ if let turnManifestPath = args.turnManifestPath {
             let name = String(format: "Q&A %02d %@", u.index, u.speaker)
             let items = currentQA.enumerated().map { offset, item in
                 """
-                {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(item.duck.rawValue)","preview":"\(jsonEscape(previewWords(item.text)))"}
+                {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(item.alias))","preview":"\(jsonEscape(previewWords(item.text)))"}
                 """
             }.joined(separator: ",")
             return """
-            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(u.duck.rawValue)","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
             """
         }
@@ -1160,19 +1216,13 @@ if let turnManifestPath = args.turnManifestPath {
         let elapsedSec = snapshot.startedAt.map { min(Date().timeIntervalSince($0),
                                                       u.durationSec) } ?? 0.0
         let name = String(format: "line%02d %@", u.index, u.speaker)
-        let alias = u.sourceDuck == u.duck
-            ? u.duck.rawValue
-            : "\(u.sourceDuck.rawValue)→\(u.duck.rawValue)"
         let turnItems = utterances.enumerated().map { offset, item in
-            let itemAlias = item.sourceDuck == item.duck
-                ? item.duck.rawValue
-                : "\(item.sourceDuck.rawValue)→\(item.duck.rawValue)"
             return """
-            {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(itemAlias))","preview":"\(jsonEscape(previewWords(item.text)))"}
+            {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(item.alias))","preview":"\(jsonEscape(previewWords(item.text)))"}
             """
         }.joined(separator: ",")
         return """
-        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(alias))","text":"\(jsonEscape(u.text))"},"turns":[\(turnItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))"},"turns":[\(turnItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
         """
     }
@@ -1232,13 +1282,15 @@ if let turnManifestPath = args.turnManifestPath {
                     let targetDuck = args.duckAliases[sourceDuck] ?? sourceDuck
                     let player = makeFilePlayer(duck: targetDuck, loop: false)
                     let durationSec = try player.load(path: line.path)
+                    let track = LoadedUtteranceTrack(sourceDuck: sourceDuck,
+                                                     duck: targetDuck,
+                                                     path: line.path,
+                                                     player: player,
+                                                     durationSec: durationSec)
                     loaded.append(LoadedUtterance(index: offset + 1,
                                                   speaker: line.speaker,
-                                                  sourceDuck: sourceDuck,
-                                                  duck: targetDuck,
                                                   text: line.text,
-                                                  path: line.path,
-                                                  player: player,
+                                                  tracks: [track],
                                                   durationSec: durationSec))
                     let aliasNote = sourceDuck == targetDuck
                         ? targetDuck.rawValue

@@ -5,9 +5,10 @@ gen-play-stems.py — Generate aligned four-duck stems from a markdown play.
 Reads speaker-tagged markdown lines like:
 
     **CLASSIC:** Five minutes. Deep breaths.
+    **PINTAIL + MALLARD:** Forbidden Prompt.
 
 Calls ElevenLabs once per spoken line, then assembles one WAV per duck where
-the active speaker has audio and the other ducks have timeline-matched silence.
+the active speaker(s) have audio and the other ducks have timeline-matched silence.
 The resulting four files start together and stay aligned for Stage/DAW use.
 """
 
@@ -56,7 +57,7 @@ DEFAULT_VOICES = {
     "D4": "Xb3zeLrTi6F4ziIcXdwk",
 }
 
-LINE_RE = re.compile(r"^\*\*([A-Z][A-Z ]+):\*\*\s*(.+?)\s*$")
+LINE_RE = re.compile(r"^\*\*([A-Z][A-Z &,/+]+):\*\*\s*(.+?)\s*$")
 
 
 def load_env_files() -> None:
@@ -101,14 +102,26 @@ def parse_script(path: Path) -> list[dict]:
             continue
         speaker = m.group(1).strip()
         text = m.group(2).strip()
-        duck = SPEAKER_TO_DUCK.get(speaker)
-        if not duck:
-            raise ValueError(f"{path}:{lineno}: unknown speaker {speaker!r}")
+        speakers = [
+            part.strip()
+            for part in re.split(r"\s*(?:\+|&|/|\band\b|,)\s*", speaker)
+            if part.strip()
+        ]
+        ducks = []
+        for part in speakers:
+            duck = SPEAKER_TO_DUCK.get(part)
+            if not duck:
+                raise ValueError(f"{path}:{lineno}: unknown speaker {part!r}")
+            if duck not in ducks:
+                ducks.append(duck)
+        if not ducks:
+            raise ValueError(f"{path}:{lineno}: no speaker in {speaker!r}")
         turns.append({
             "index": len(turns) + 1,
             "line": lineno,
-            "speaker": speaker.title(),
-            "duck": duck,
+            "speaker": " + ".join(part.title() for part in speakers),
+            "duck": ducks[0],
+            "ducks": ducks,
             "text": text,
         })
     if not turns:
@@ -213,7 +226,7 @@ def main() -> int:
 
     print(f"parsed {len(turns)} lines")
     for duck in sorted(DUCK_NAMES):
-        count = sum(1 for t in turns if t["duck"] == duck)
+        count = sum(1 for t in turns if duck in t["ducks"])
         print(f"  {duck} {DUCK_NAMES[duck]}: {count} lines, voice={voices[duck]}")
 
     if args.dry_run:
@@ -230,21 +243,34 @@ def main() -> int:
     cursor_sec = 0.0
 
     for turn in turns:
-        voice = voices[turn["duck"]]
-        pcm = tts_pcm(turn["text"], voice, key, args.stability, args.similarity)
-        dur = (len(pcm) // 2) / SAMPLE_RATE
+        clips = {}
+        pcms = {}
+        max_samples = 0
+        for duck in turn["ducks"]:
+            voice = voices[duck]
+            pcm = tts_pcm(turn["text"], voice, key, args.stability, args.similarity)
+            pcms[duck] = pcm
+            max_samples = max(max_samples, len(pcm) // 2)
+        dur = max_samples / SAMPLE_RATE
         turn["start_sec"] = round(cursor_sec, 3)
         turn["duration_sec"] = round(dur, 3)
-        clip_name = f"{turn['index']:02d}_{turn['duck']}_{turn['speaker'].lower()}.wav"
-        write_wav(clips_dir / clip_name, pcm)
-        turn["clip"] = f"line-clips/{clip_name}"
+        slug = re.sub(r"[^a-z0-9]+", "_", turn["speaker"].lower()).strip("_")
+        for duck, pcm in pcms.items():
+            clip_name = f"{turn['index']:02d}_{duck}_{slug}.wav"
+            write_wav(clips_dir / clip_name, pcm)
+            clips[duck] = f"line-clips/{clip_name}"
+        turn["clip"] = clips[turn["duck"]]
+        turn["clips"] = clips
 
         for duck in DUCK_NAMES:
+            pcm = pcms.get(duck, b"")
             samples = len(pcm) // 2
-            tracks[duck].extend(pcm if duck == turn["duck"] else b"\x00\x00" * samples)
+            if samples < max_samples:
+                pcm += b"\x00\x00" * (max_samples - samples)
+            tracks[duck].extend(pcm if duck in turn["ducks"] else b"\x00\x00" * max_samples)
             tracks[duck].extend(gap)
         cursor_sec += dur + args.gap_ms / 1000
-        print(f"{turn['index']:02d}/{len(turns):02d} {turn['duck']} "
+        print(f"{turn['index']:02d}/{len(turns):02d} {'+'.join(turn['ducks'])} "
               f"{turn['speaker']}: {dur:.2f}s")
         time.sleep(0.05)
 
