@@ -182,6 +182,39 @@ Rules:
 """.strip()
 
 
+def load_history(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def format_history(history: list[dict]) -> str:
+    if not history:
+        return ""
+
+    lines = [
+        "Recent Q&A history from this session, oldest to newest.",
+        "Use it only when it helps answer follow-ups, callbacks, or avoid repetition.",
+        "Treat the current audience question as primary.",
+    ]
+    for entry in history:
+        question = str(entry.get("question", "")).strip()
+        if not question:
+            continue
+        lines.append(f"Audience: {question}")
+        answers = entry.get("answers") or []
+        for answer in answers:
+            speaker = str(answer.get("speaker", "")).strip() or "Duck"
+            text = str(answer.get("text", "")).strip()
+            if text:
+                lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
 def sanitize_spoken_text(text: str) -> str:
     replacements = {
         "1": "Classic",
@@ -204,6 +237,27 @@ def sanitize_spoken_text(text: str) -> str:
     for word, speaker in word_numbers.items():
         cleaned = re.sub(rf"\bdee[\s-]+{word}\b", speaker, cleaned, flags=re.I)
     return cleaned
+
+
+def normalize_duck_id(value: object) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    upper = raw.upper()
+    if upper in DUCKS:
+        return upper
+
+    compact = re.sub(r"[^A-Z0-9]+", "", upper)
+    if compact in DUCKS:
+        return compact
+
+    for duck, meta in DUCKS.items():
+        speaker = str(meta["speaker"]).upper()
+        if upper == speaker or compact == re.sub(r"[^A-Z0-9]+", "", speaker):
+            return duck
+        if upper.startswith(duck) or speaker in upper:
+            return duck
+    return None
 
 
 def load_agent_id() -> str | None:
@@ -308,16 +362,20 @@ def extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-async def ask_agent(key: str, agent_id: str, question: str) -> list[dict]:
+async def ask_agent(key: str, agent_id: str, question: str, history: list[dict]) -> list[dict]:
     url = signed_url(key, agent_id)
     async with websockets.connect(url, max_size=None, open_timeout=10, ping_timeout=10) as ws:
         await ws.send(json.dumps({
             "type": "conversation_initiation_client_data",
             "conversation_config_override": {"agent": {"first_message": ""}},
         }))
+        history_text = format_history(history)
+        user_text = (f"{history_text}\n\nCurrent audience question: {question}"
+                     if history_text else
+                     f"Audience question: {question}")
         await ws.send(json.dumps({
             "type": "user_message",
-            "text": f"Audience question: {question}",
+            "text": user_text,
         }, ensure_ascii=False))
 
         parts: list[str] = []
@@ -342,7 +400,7 @@ async def ask_agent(key: str, agent_id: str, question: str) -> list[dict]:
     lines = data.get("lines") or []
     clean = []
     for item in lines:
-        duck = str(item.get("duck", "")).upper()
+        duck = normalize_duck_id(item.get("duck"))
         text = sanitize_spoken_text(str(item.get("text", "")).strip())
         if duck in DUCKS and text:
             clean.append({"duck": duck, "speaker": DUCKS[duck]["speaker"], "text": text})
@@ -386,10 +444,10 @@ def write_wav(path: Path, pcm: bytes) -> float:
     return (len(pcm) // 2) / SAMPLE_RATE
 
 
-async def run(question: str) -> dict:
+async def run(question: str, history: list[dict]) -> dict:
     key = api_key()
     agent_id = load_agent_id() or create_agent(key)
-    lines = await ask_agent(key, agent_id, question)
+    lines = await ask_agent(key, agent_id, question, history)
     ts = time.strftime("%Y%m%d-%H%M%S")
     slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:32] or "question"
     out = OUT_DIR / f"{ts}-{slug}"
@@ -404,10 +462,11 @@ async def run(question: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--history-json", default=None)
     parser.add_argument("question")
     args = parser.parse_args()
     try:
-        result = asyncio.run(run(args.question))
+        result = asyncio.run(run(args.question, load_history(args.history_json)))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1

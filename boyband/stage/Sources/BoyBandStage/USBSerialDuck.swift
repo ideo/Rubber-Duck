@@ -202,8 +202,14 @@ private enum USBDeviceResolver {
     }
 
     private static func pathForLocationID(_ locationID: Int) -> String? {
-        let suffix = String(locationID >> 16, radix: 16) + "1"
-        return "/dev/cu.usbmodem\(suffix)"
+        let hex = String(locationID >> 16, radix: 16)
+        for suffix in [hex + "01", hex + "101", hex + "1"] {
+            let path = "/dev/cu.usbmodem\(suffix)"
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
     }
 
     private static func locationIDForUSBSerial(_ serial: String) -> Int? {

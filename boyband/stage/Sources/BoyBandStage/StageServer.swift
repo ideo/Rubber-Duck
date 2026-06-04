@@ -645,6 +645,14 @@ final class StageServer: @unchecked Sendable {
                                       contentType: "application/json",
                                       body: body)
                     return
+                case "/qa-history":
+                    let mode = Self.queryValue("mode", in: parsed.path) ?? ""
+                    let command = mode.isEmpty ? "qa-history" : "qa-history:\(mode)"
+                    let body = self.onControl?(command) ?? "{}\n"
+                    self.sendResponse(connection, status: 200,
+                                      contentType: "application/json",
+                                      body: body)
+                    return
                 case "/cue":
                     let body = self.onControl?("cue") ?? "cue unavailable\n"
                     self.sendError(connection, status: 200, body: body)
@@ -1083,6 +1091,19 @@ final class StageServer: @unchecked Sendable {
     .jump-control button {
       min-width: 74px;
     }
+    .qa-memory-control {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+    .qa-memory-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
     .ducks {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -1228,6 +1249,13 @@ final class StageServer: @unchecked Sendable {
 	            <option value="">Jump to line...</option>
 	          </select>
 	          <button id="jumpButton" onclick="jumpToSelected()">Jump</button>
+	        </div>
+	        <div class="qa-memory-control">
+	          <div id="qaMemoryLabel" class="qa-memory-label">Q&A memory</div>
+	          <select id="qaMemorySelect" aria-labelledby="qaMemoryLabel" onchange="setQAMemoryMode(this.value)">
+	            <option value="off">Stateless fallback</option>
+	            <option value="on">History mode</option>
+	          </select>
 	        </div>
       </div>
     </section>
@@ -1449,6 +1477,34 @@ final class StageServer: @unchecked Sendable {
 	      refresh();
 	    }
 
+    function updateQAMemoryUI(state) {
+      const select = document.getElementById("qaMemorySelect");
+      if (!select) return;
+      const enabled = Boolean(state.qa?.historyEnabled);
+      const desired = enabled ? "on" : "off";
+      if (select.value !== desired) select.value = desired;
+      const count = Number(state.qa?.historyCount ?? 0);
+      const label = document.getElementById("qaMemoryLabel");
+      if (label) {
+        label.textContent = enabled ? `Q&A memory (${count})` : `Q&A memory`;
+      }
+      select.title = enabled
+        ? "History mode: recent successful Q&A is sent to Eleven"
+        : "Stateless fallback: only the current question is sent";
+    }
+
+    async function setQAMemoryMode(mode) {
+      try {
+        const desired = mode === "on" ? "on" : "off";
+        const r = await fetch(`/qa-history?mode=${encodeURIComponent(desired)}`, { cache: "no-store" });
+        const body = await r.json();
+        logLine(`qa memory: ${body.historyMode || desired}`);
+        await refresh();
+      } catch (e) {
+        logLine(`qa memory: ${e}`);
+      }
+    }
+
 	    async function control(cmd) {
 	      try {
 	        const r = await fetch("/" + cmd, { cache: "no-store" });
@@ -1548,6 +1604,7 @@ final class StageServer: @unchecked Sendable {
         const cue = state.cue || {};
         const status = parseStatus(state.status || "");
         updateLineSelect(state);
+        updateQAMemoryUI(state);
         const cueText = cue.name ? `${cue.name}` : "No cue";
         const cueKey = `${cue.index}:${cue.name}:${cue.generation || 0}`;
         if (cueKey !== lastCue) {
@@ -2544,11 +2601,16 @@ final class StageServer: @unchecked Sendable {
     try {
       const r = await fetch("/qa/ask?question=" + encodeURIComponent(text), { cache: "no-store" });
       const body = await r.text();
-      if (!body.trim().startsWith("answering:")) {
-        paintAnswer(body.trim() || "Q&A failed", "pintail", true);
+      const bodyText = body.trim();
+      if (!bodyText.startsWith("answering:")) {
+        watchingAnswer = false;
+        paintAnswer(bodyText || "Q&A failed", "pintail", true);
+        setStatus(bodyText || "Q&A failed", true);
+        return;
       }
       await refreshAnswer();
     } catch (e) {
+      watchingAnswer = false;
       paintAnswer("Q&A failed", "pintail", true);
       setStatus("Q&A failed: " + e, true);
     } finally {

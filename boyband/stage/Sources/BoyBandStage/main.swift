@@ -420,6 +420,122 @@ struct QAHelperLine: Decodable {
     }
 }
 
+struct QAHistoryAnswer: Encodable {
+    let duck: String
+    let speaker: String
+    let text: String
+}
+
+struct QAHistoryEntryPayload: Encodable {
+    let askedAtUnix: Double
+    let question: String
+    let answers: [QAHistoryAnswer]
+}
+
+final class QAHistoryStore: @unchecked Sendable {
+    private struct Entry {
+        let askedAt: Date
+        let question: String
+        let answers: [QAHistoryAnswer]
+    }
+
+    private let lock = NSLock()
+    private let maxAgeSec: TimeInterval
+    private let maxTokens: Int
+    private var enabled = false
+    private var entries: [Entry] = []
+
+    init(maxAgeSec: TimeInterval = 15 * 60, maxTokens: Int = 1800) {
+        self.maxAgeSec = maxAgeSec
+        self.maxTokens = maxTokens
+    }
+
+    func setEnabled(_ value: Bool) {
+        lock.lock()
+        enabled = value
+        pruneLocked(now: Date())
+        lock.unlock()
+    }
+
+    func add(question: String, lines: [QAHelperLine]) {
+        let answers = lines.map {
+            QAHistoryAnswer(duck: $0.duck, speaker: $0.speaker, text: $0.text)
+        }
+        guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !answers.isEmpty else { return }
+        lock.lock()
+        entries.append(Entry(askedAt: Date(), question: question, answers: answers))
+        pruneLocked(now: Date())
+        lock.unlock()
+    }
+
+    func historyJSONForRequest() -> String? {
+        lock.lock()
+        guard enabled else {
+            lock.unlock()
+            return nil
+        }
+        let selected = selectedEntriesLocked(now: Date())
+        lock.unlock()
+        return payloadJSON(for: selected)
+    }
+
+    func settingsJSON() -> String {
+        lock.lock()
+        pruneLocked(now: Date())
+        let isEnabled = enabled
+        let count = entries.count
+        lock.unlock()
+        let mode = isEnabled ? "history" : "stateless"
+        return """
+        {"historyEnabled":\(isEnabled ? "true" : "false"),"historyMode":"\(mode)","historyCount":\(count),"historyWindowSec":\(Int(maxAgeSec)),"historyTokenBudget":\(maxTokens)}
+        """
+    }
+
+    private func selectedEntriesLocked(now: Date) -> [Entry] {
+        pruneLocked(now: now)
+        var selected: [Entry] = []
+        var tokens = 0
+        for entry in entries.reversed() {
+            let cost = approximateTokenCount(entry)
+            if selected.isEmpty || tokens + cost <= maxTokens {
+                selected.append(entry)
+                tokens += cost
+            } else {
+                break
+            }
+        }
+        return selected.reversed()
+    }
+
+    private func payloadJSON(for selected: [Entry]) -> String? {
+        guard !selected.isEmpty else { return nil }
+        let payload = selected.map {
+            QAHistoryEntryPayload(askedAtUnix: $0.askedAt.timeIntervalSince1970,
+                                  question: $0.question,
+                                  answers: $0.answers)
+        }
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return json
+    }
+
+    private func pruneLocked(now: Date) {
+        entries = entries.filter { now.timeIntervalSince($0.askedAt) <= maxAgeSec }
+    }
+
+    private func approximateTokenCount(_ entry: Entry) -> Int {
+        let answerText = entry.answers
+            .map { "\($0.speaker): \($0.text)" }
+            .joined(separator: "\n")
+        let text = "Audience: \(entry.question)\n\(answerText)"
+        return max(1, (text.count + 3) / 4) + 16
+    }
+}
+
 final class PlaylistState: @unchecked Sendable {
     private let lock = NSLock()
     private var index: Int = 0
@@ -872,7 +988,7 @@ func makeFilePlayer(duck: DuckID, loop: Bool) -> FilePlayer {
                sendPCM: transportSendPCM)
 }
 
-func runQAHelper(question: String) throws -> QAHelperResult {
+func runQAHelper(question: String, historyJSON: String? = nil) throws -> QAHelperResult {
     let timeoutSec: TimeInterval = 90
     let stageDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let boybandDir = stageDir.deletingLastPathComponent()
@@ -882,7 +998,13 @@ func runQAHelper(question: String) throws -> QAHelperResult {
 
     let p = Process()
     p.executableURL = URL(fileURLWithPath: executable)
-    p.arguments = [script, question]
+    var arguments = [script]
+    if let historyJSON {
+        arguments.append("--history-json")
+        arguments.append(historyJSON)
+    }
+    arguments.append(question)
+    p.arguments = arguments
     p.currentDirectoryURL = boybandDir.deletingLastPathComponent()
     let outPipe = Pipe()
     let errPipe = Pipe()
@@ -1023,6 +1145,7 @@ if let turnManifestPath = args.turnManifestPath {
     let turnState = PlaylistState()
     let gapSec = Double(manifest.gapMs ?? 300) / 1000.0
     let qaState = PlaylistState()
+    let qaHistory = QAHistoryStore()
     let qaLock = NSLock()
     var qaUtterances: [LoadedUtterance] = []
     var qaQuestion: String = ""
@@ -1207,6 +1330,7 @@ if let turnManifestPath = args.turnManifestPath {
     }
 
     @Sendable func stateJSON() -> String {
+        let qaSettings = qaHistory.settingsJSON()
         let scriptItems = utterances.enumerated().map { offset, item in
             return """
             {"index":\(offset),"line":\(item.index),"speaker":"\(jsonEscape(item.speaker))","duck":"\(item.duck.rawValue)","sourceDuck":"\(item.sourceDuck.rawValue)","alias":"\(jsonEscape(item.alias))","preview":"\(jsonEscape(previewWords(item.text)))"}
@@ -1226,7 +1350,7 @@ if let turnManifestPath = args.turnManifestPath {
                 """
             }.joined(separator: ",")
             return """
-            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"qaTurns":[\(items)],"scriptTurns":[\(scriptItems)],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+            {"cue":{"index":\(idx),"count":\(currentQA.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(qaSnapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(qaSnapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))","question":"\(jsonEscape(question))"},"turns":[\(items)],"qaTurns":[\(items)],"scriptTurns":[\(scriptItems)],"qa":\(qaSettings),"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
             """
         }
@@ -1237,7 +1361,7 @@ if let turnManifestPath = args.turnManifestPath {
                                                       u.durationSec) } ?? 0.0
         let name = String(format: "line%02d %@", u.index, u.speaker)
         return """
-        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))"},"turns":[\(scriptItems)],"scriptTurns":[\(scriptItems)],"qaTurns":[],"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
+        {"cue":{"index":\(snapshot.index),"count":\(utterances.count),"name":"\(jsonEscape(name))","durationSec":\(String(format: "%.3f", u.durationSec)),"generation":\(snapshot.generation),"elapsedSec":\(String(format: "%.3f", elapsedSec))},"playing":\(snapshot.playing ? "true" : "false"),"turn":{"speaker":"\(jsonEscape(u.speaker))","duck":"\(u.duck.rawValue)","sourceDuck":"\(u.sourceDuck.rawValue)","alias":"\(jsonEscape(u.alias))","text":"\(jsonEscape(u.text))"},"turns":[\(scriptItems)],"scriptTurns":[\(scriptItems)],"qaTurns":[],"qa":\(qaSettings),"status":"\(jsonEscape(transportStatusReport()))","health":"\(jsonEscape(transportHealthReport()))"}
 
         """
     }
@@ -1277,6 +1401,16 @@ if let turnManifestPath = args.turnManifestPath {
             _ = turnState.jump(to: requestedIndex, maxIndex: utterances.count - 1)
             log("turns      armed \(turnLine().trimmingCharacters(in: .whitespacesAndNewlines))")
             return turnLine()
+        case "qa-history":
+            return qaHistory.settingsJSON() + "\n"
+        case let history where history.hasPrefix("qa-history:"):
+            let raw = String(history.dropFirst("qa-history:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let enabled = raw == "on" || raw == "history" || raw == "true" || raw == "1"
+            qaHistory.setEnabled(enabled)
+            log("qa         history \(enabled ? "on" : "off")")
+            return qaHistory.settingsJSON() + "\n"
         case let qa where qa.hasPrefix("qa:"):
             let raw = String(qa.dropFirst("qa:".count))
             let question = raw.removingPercentEncoding?
@@ -1288,7 +1422,12 @@ if let turnManifestPath = args.turnManifestPath {
             stopQA(clear: true)
             log("qa         question: \(question)")
             do {
-                let result = try runQAHelper(question: question)
+                let historyJSON = qaHistory.historyJSONForRequest()
+                log("qa         mode: \(historyJSON == nil ? "stateless" : "history")")
+                let startedAt = Date()
+                let result = try runQAHelper(question: question, historyJSON: historyJSON)
+                log(String(format: "qa         generated in %.1fs",
+                           Date().timeIntervalSince(startedAt)))
                 var loaded: [LoadedUtterance] = []
                 for (offset, line) in result.lines.enumerated() {
                     guard let sourceDuck = DuckID.parse(line.duck) else {
@@ -1317,6 +1456,7 @@ if let turnManifestPath = args.turnManifestPath {
                 guard !loaded.isEmpty else {
                     return "Q&A generated no playable lines\n"
                 }
+                qaHistory.add(question: result.question, lines: result.lines)
                 qaLock.lock()
                 qaQuestion = result.question
                 qaUtterances = loaded
