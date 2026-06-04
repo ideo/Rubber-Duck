@@ -943,71 +943,97 @@ final class StageServer: @unchecked Sendable {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Boy Band Stage</title>
   <style>
+    @import url("https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap");
+
     :root {
-      color-scheme: dark;
-      --bg: #101316;
-      --panel: #1a2024;
-      --panel-2: #20272d;
-      --text: #eef3f1;
-      --muted: #a8b4b0;
-      --line: #344047;
-      --ok: #52d273;
-      --warn: #ffcc66;
-      --bad: #ff6b66;
-      --accent: #65c7d3;
-      --accent-2: #e7a84e;
+      color-scheme: light;
+      --color-black: #000;
+      --color-white: #fff;
+      --color-green: #527f16;
+      --color-yellow: #ecea6e;
+      --color-orange: #e69f24;
+      --color-grey: #efefef;
+      --color-hotpink: #d93a6f;
+      --color-pintail: #2a2824;
+      --bg: var(--color-white);
+      --panel: var(--color-white);
+      --panel-2: var(--color-grey);
+      --text: var(--color-black);
+      --muted: color-mix(in srgb, var(--color-black), transparent 42%);
+      --line: var(--color-black);
+      --ok: var(--color-green);
+      --warn: var(--color-orange);
+      --bad: var(--color-hotpink);
+      --accent: var(--color-orange);
+      --accent-2: var(--color-green);
+      --offset: 3px 3px 0 var(--color-yellow);
     }
     * { box-sizing: border-box; }
+    html {
+      background: var(--bg);
+    }
     body {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 15px/1.45 "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
     main {
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 20px;
+      padding: 22px;
       display: grid;
-      gap: 16px;
+      gap: 18px;
     }
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      min-height: 52px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 14px;
+      min-height: 78px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px 18px;
+      background: var(--color-yellow);
+      box-shadow: 3px 3px 0 var(--color-orange);
     }
     h1 {
       margin: 0;
-      font-size: 22px;
-      font-weight: 700;
+      font-size: clamp(28px, 4.5vw, 54px);
+      line-height: .95;
+      font-weight: 800;
       letter-spacing: 0;
     }
     .status-pill {
       min-width: 130px;
       text-align: center;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 7px 10px;
-      color: var(--muted);
-      background: var(--panel);
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: var(--text);
+      background: transparent;
+      box-shadow: 3px 3px 0 var(--color-grey);
       white-space: nowrap;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
     }
-    .status-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok), var(--line) 55%); }
-    .status-pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad), var(--line) 55%); }
+    .status-pill.ok { box-shadow: 3px 3px 0 var(--color-green); }
+    .status-pill.bad { box-shadow: 3px 3px 0 var(--color-hotpink); }
     section {
-      background: var(--panel);
+      background: transparent;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--offset);
     }
     .cue-grid {
+      --offset: 3px 3px 0 var(--color-green);
       display: grid;
       grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr);
-      gap: 14px;
+      gap: 18px;
       align-items: stretch;
     }
     .cue-title {
@@ -1019,25 +1045,28 @@ final class StageServer: @unchecked Sendable {
     }
     .cue-title h2 {
       margin: 0;
-      font-size: 18px;
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1;
+      font-weight: 800;
       letter-spacing: 0;
     }
     .cue-meta {
       color: var(--muted);
       white-space: nowrap;
+      font-weight: 700;
     }
     .progress-shell {
-      height: 22px;
+      height: 28px;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #0d1012;
+      border-radius: 999px;
+      background: var(--color-grey);
       overflow: hidden;
       position: relative;
     }
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      background: linear-gradient(90deg, var(--color-orange), var(--color-yellow), var(--color-green));
       transition: width .25s ease;
     }
     .progress-label {
@@ -1045,43 +1074,59 @@ final class StageServer: @unchecked Sendable {
       inset: 0;
       display: grid;
       place-items: center;
-      font-size: 12px;
+      font-size: 13px;
+      font-weight: 800;
       color: var(--text);
-      text-shadow: 0 1px 2px #000;
     }
 	    .controls {
 	      display: grid;
 	      grid-template-columns: repeat(5, minmax(0, 1fr));
-	      gap: 8px;
+	      gap: 10px;
 	      align-content: start;
 	    }
 	    button {
 	      min-height: 42px;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel-2);
+      border-radius: 999px;
+      background: transparent;
       color: var(--text);
       font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
       cursor: pointer;
+      box-shadow: 3px 3px 0 var(--button-fill, var(--color-yellow));
+      transition: transform .12s ease, box-shadow .12s ease, background-color .12s ease;
     }
-    button:hover { border-color: var(--accent); }
+    button:hover { --button-fill: var(--color-orange); }
+    button:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 var(--button-fill, var(--color-yellow));
+    }
     button.primary {
-      color: #081113;
-      background: var(--accent);
-      border-color: var(--accent);
-      font-weight: 700;
+      --button-fill: var(--color-green);
+      background: transparent;
     }
     select {
       min-height: 42px;
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel-2);
+      border-radius: 999px;
+      background: transparent;
       color: var(--text);
       font: inherit;
-      padding: 0 10px;
+      font-weight: 700;
+      padding: 0 14px;
+      box-shadow: 3px 3px 0 var(--color-grey);
     }
-    select:hover { border-color: var(--accent); }
+    select:hover { box-shadow: 3px 3px 0 var(--color-orange); }
+    button:focus-visible,
+    select:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--color-orange);
+      outline-offset: 2px;
+    }
 	    .jump-control {
 	      grid-column: 1 / -1;
 	      display: grid;
@@ -1109,23 +1154,41 @@ final class StageServer: @unchecked Sendable {
       color: var(--muted);
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: .06em;
+      letter-spacing: 0;
+      font-weight: 800;
     }
     .ducks {
+      --offset: 3px 3px 0 var(--color-yellow);
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 14px;
     }
+    .ducks > div {
+      --duck-fill: var(--color-yellow);
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: transparent;
+      box-shadow: 3px 3px 0 var(--duck-fill);
+    }
+    .ducks > div:nth-child(2) { --duck-fill: var(--color-green); }
+    .ducks > div:nth-child(3) { --duck-fill: var(--color-pintail); }
+    .ducks > div:nth-child(4) { --duck-fill: var(--color-grey); }
     .gain-grid {
+      --offset: 3px 3px 0 var(--color-orange);
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
     }
     .gain-global {
-      grid-template-columns: minmax(130px, auto) minmax(180px, 1fr) 74px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 12px;
-      margin-bottom: 2px;
+      --gain-color: var(--color-orange);
+      grid-column: 1 / -1;
+      grid-template-columns: minmax(140px, auto) minmax(180px, 1fr) 86px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 3px 3px 0 var(--color-yellow);
     }
     .gain-row {
       display: grid;
@@ -1134,29 +1197,96 @@ final class StageServer: @unchecked Sendable {
       gap: 10px;
       min-height: 42px;
     }
+    .gain-row:not(.gain-global) {
+      --gain-color: var(--color-yellow);
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "label effective"
+        "range range"
+        "number number";
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: transparent;
+      box-shadow: 3px 3px 0 var(--gain-color);
+    }
+    .gain-row:nth-child(3) { --gain-color: var(--color-green); }
+    .gain-row:nth-child(4) { --gain-color: var(--color-pintail); }
+    .gain-row:nth-child(5) { --gain-color: var(--color-grey); }
     .gain-row label {
-      color: var(--muted);
+      grid-area: label;
+      color: var(--text);
       white-space: nowrap;
+      font-weight: 800;
     }
     .gain-row input[type="range"] {
+      grid-area: range;
       width: 100%;
-      accent-color: var(--accent);
+      height: 24px;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg,
+          var(--gain-color, var(--color-orange)) 0%,
+          var(--gain-color, var(--color-orange)) var(--gain-pct, 0%),
+          transparent var(--gain-pct, 0%),
+          transparent 100%);
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+    .gain-row input[type="range"]::-webkit-slider-thumb {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--color-black);
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .gain-row input[type="range"]::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--color-black);
     }
     .gain-row input[type="number"], .gain-effective {
-      width: 74px;
+      width: 86px;
       min-height: 34px;
       border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #12171a;
+      border-radius: 999px;
+      background: transparent;
       color: var(--text);
       font: inherit;
       padding: 0 8px;
       font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+    .gain-row:not(.gain-global) input[type="number"] {
+      grid-area: number;
+      width: 100%;
+    }
+    .gain-global input[type="number"] {
+      justify-self: end;
     }
     .gain-effective {
-      display: grid;
-      place-items: center;
+      grid-area: effective;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: var(--text);
+      background: transparent;
+      font-weight: 800;
+    }
+    .gain-effective::before {
+      content: "total ";
       color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
     .duck-head {
       display: flex;
@@ -1167,19 +1297,24 @@ final class StageServer: @unchecked Sendable {
     }
     .duck-head h3 {
       margin: 0;
-      font-size: 16px;
+      font-size: 18px;
+      font-weight: 800;
       letter-spacing: 0;
     }
     .health {
-      border-radius: 6px;
-      padding: 4px 8px;
-      background: #0d1012;
-      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: var(--color-white);
+      color: var(--text);
       min-width: 56px;
       text-align: center;
+      font-size: 12px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
     }
-    .health.ok { color: var(--ok); }
-    .health.bad { color: var(--bad); }
+    .health.ok { background: var(--color-green); color: var(--color-white); }
+    .health.bad { background: var(--color-hotpink); color: var(--color-white); }
     dl {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1189,18 +1324,20 @@ final class StageServer: @unchecked Sendable {
     .metric {
       min-height: 58px;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 10px;
       padding: 8px;
-      background: #12171a;
+      background: var(--color-grey);
     }
     dt {
       margin: 0;
       color: var(--muted);
       font-size: 12px;
+      font-weight: 700;
     }
     dd {
       margin: 3px 0 0;
       font-size: 16px;
+      font-weight: 800;
       font-variant-numeric: tabular-nums;
       overflow-wrap: anywhere;
     }
@@ -1209,16 +1346,32 @@ final class StageServer: @unchecked Sendable {
       max-height: 170px;
       overflow: auto;
       white-space: pre-wrap;
-      color: var(--muted);
+      color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
       margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--color-grey);
+      padding: 12px;
     }
     @media (max-width: 760px) {
       main { padding: 12px; }
       header, .cue-title { align-items: flex-start; flex-direction: column; }
+      header { min-height: auto; }
       .cue-grid, .ducks { grid-template-columns: 1fr; }
       .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .jump-control,
+      .qa-memory-control,
+      .show-mode-control {
+        grid-template-columns: 1fr;
+      }
+      .gain-grid {
+        grid-template-columns: 1fr;
+      }
+      .gain-global {
+        grid-template-columns: 1fr;
+      }
       dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
@@ -1559,6 +1712,7 @@ final class StageServer: @unchecked Sendable {
       const globalNumber = document.getElementById("GlobalGainNumber");
       if (globalRange && activeId !== "GlobalGainRange") globalRange.value = globalText;
       if (globalNumber && activeId !== "GlobalGainNumber") globalNumber.value = globalText;
+      updateRangeFill(globalRange);
       const ducks = gains?.ducks || gains || {};
       for (const id of duckSlots) {
         const balance = Number(ducks?.[id]?.balance ?? ducks?.[id]?.gain ?? 1);
@@ -1569,8 +1723,18 @@ final class StageServer: @unchecked Sendable {
         const output = document.getElementById(id + "GainEffective");
         if (range && activeId !== id + "GainRange") range.value = text;
         if (number && activeId !== id + "GainNumber") number.value = text;
+        updateRangeFill(range);
         if (output) output.textContent = effective.toFixed(2);
       }
+    }
+
+    function updateRangeFill(range) {
+      if (!range) return;
+      const min = Number(range.min || 0);
+      const max = Number(range.max || 1);
+      const value = Number(range.value || 0);
+      const pct = max > min ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100)) : 0;
+      range.style.setProperty("--gain-pct", `${pct}%`);
     }
 
     async function refreshGains() {
@@ -1589,6 +1753,7 @@ final class StageServer: @unchecked Sendable {
       const number = document.getElementById(id + "GainNumber");
       if (range && range !== el) range.value = text;
       if (number && number !== el) number.value = text;
+      updateRangeFill(range);
       clearTimeout(gainTimers[id]);
       gainTimers[id] = setTimeout(async () => {
         try {
@@ -1609,6 +1774,7 @@ final class StageServer: @unchecked Sendable {
       const number = document.getElementById("GlobalGainNumber");
       if (range && range !== el) range.value = text;
       if (number && number !== el) number.value = text;
+      updateRangeFill(range);
       clearTimeout(gainTimers.GLOBAL);
       gainTimers.GLOBAL = setTimeout(async () => {
         try {
