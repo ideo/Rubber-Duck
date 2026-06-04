@@ -1098,6 +1098,13 @@ final class StageServer: @unchecked Sendable {
       gap: 8px;
       align-items: center;
     }
+    .show-mode-control {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
     .qa-memory-label {
       color: var(--muted);
       font-size: 12px;
@@ -1255,6 +1262,13 @@ final class StageServer: @unchecked Sendable {
 	          <select id="qaMemorySelect" aria-labelledby="qaMemoryLabel" onchange="setQAMemoryMode(this.value)">
 	            <option value="off">Stateless fallback</option>
 	            <option value="on">History mode</option>
+	          </select>
+	        </div>
+	        <div class="show-mode-control">
+	          <div class="qa-memory-label">/show view</div>
+	          <select id="showModeSelect" aria-label="Show page mode" onchange="setShowMode(this.value)">
+	            <option value="show">Show subtitles</option>
+	            <option value="qa">Q&A interface</option>
 	          </select>
 	        </div>
       </div>
@@ -1503,6 +1517,17 @@ final class StageServer: @unchecked Sendable {
       } catch (e) {
         logLine(`qa memory: ${e}`);
       }
+    }
+
+    function setShowMode(mode) {
+      const desired = mode === "qa" ? "qa" : "show";
+      const select = document.getElementById("showModeSelect");
+      if (select && select.value !== desired) select.value = desired;
+      localStorage.setItem("boyband.showModeCommand", JSON.stringify({
+        mode: desired,
+        at: Date.now()
+      }));
+      logLine(`/show view: ${desired === "qa" ? "Q&A" : "show"}`);
     }
 
 	    async function control(cmd) {
@@ -2259,7 +2284,7 @@ final class StageServer: @unchecked Sendable {
     document.documentElement.style.setProperty("--field-focus", theme.fg === "#000000" ? "rgba(0, 0, 0, .13)" : "rgba(255, 255, 255, .18)");
   }
 
-	  function setMode(mode) {
+  function setMode(mode) {
 	    if (mode !== "input") stopListening();
 	    document.body.dataset.mode = mode;
 	    if (mode === "input") {
@@ -2270,6 +2295,35 @@ final class StageServer: @unchecked Sendable {
         inputScreen.focus({ preventScroll: true });
       });
     }
+  }
+
+  function setShowViewMode(mode) {
+    if (!showMode) return;
+    if (mode === "qa") {
+      watchingShow = false;
+      videoStarted = false;
+      if (handoffVideo) {
+        handoffVideo.pause();
+        handoffVideo.currentTime = 0;
+      }
+      backToInput(false);
+      return;
+    }
+    watchingAnswer = false;
+    watchingShow = true;
+    videoStarted = false;
+    lastKey = "";
+    lastLive = null;
+    setMode("answer");
+    paintAnswer(" ", "input", true);
+  }
+
+  function handleShowModeCommand(raw) {
+    if (!raw) return;
+    try {
+      const command = JSON.parse(raw);
+      setShowViewMode(command.mode);
+    } catch {}
   }
 
   function subtitleChunks(text) {
@@ -2671,10 +2725,21 @@ final class StageServer: @unchecked Sendable {
   backBtn.addEventListener("click", backToInput);
   startShowBtn.addEventListener("click", startShow);
   handoffVideo.addEventListener("ended", () => backToInput(true));
+  window.addEventListener("storage", event => {
+    if (event.key === "boyband.showModeCommand") {
+      handleShowModeCommand(event.newValue);
+    }
+  });
   setIdleStatus();
   setBusy(false);
   if (showMode) {
-    setMode("start");
+    try {
+      const stored = JSON.parse(localStorage.getItem("boyband.showModeCommand") || "null");
+      if (stored?.mode === "qa") setMode("input");
+      else setMode("start");
+    } catch {
+      setMode("start");
+    }
   } else {
     setMode("input");
   }

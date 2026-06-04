@@ -442,7 +442,7 @@ final class QAHistoryStore: @unchecked Sendable {
     private let lock = NSLock()
     private let maxAgeSec: TimeInterval
     private let maxTokens: Int
-    private var enabled = false
+    private var enabled = true
     private var entries: [Entry] = []
 
     init(maxAgeSec: TimeInterval = 15 * 60, maxTokens: Int = 1800) {
