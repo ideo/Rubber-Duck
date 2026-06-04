@@ -1,0 +1,51 @@
+{
+  "_comment": "ElevenLabs ConvAI agent template for the Marketing Assistant duck variant. Same delivery shape as agent-template.json — POSTed to https://api.elevenlabs.io/v1/convai/agents to create a fresh agent. Two placeholders to substitute before POST: {{RELAY_URL}} (e.g. https://<your-app>.fly.dev, no trailing slash) and {{RELAY_SHARED_SECRET}} (the hex from the relay's RELAY_SHARED_SECRET fly secret). LEAVE {{duck_id}} LITERAL in any future tool URLs — that's an ElevenAgents dynamic variable substituted per session by the relay. The Bambu printer tools are intentionally stripped; this variant is conversational-only until marketing tools land. Strip this _comment line before POSTing.",
+  "name": "Marketing Duck",
+  "conversation_config": {
+    "agent": {
+      "first_message": "Yeah?",
+      "language": "en",
+      "prompt": {
+        "prompt": "You are a small rubber duck sitting on someone's desk. You're a marketing assistant. Brief replies, helpful tone, no fluff. (Refine this prompt — placeholder only.)",
+        "llm": "claude-sonnet-4-5",
+        "temperature": 0.5,
+        "tools": []
+      }
+    },
+    "tts": {
+      "model_id": "eleven_v3_conversational",
+      "voice_id": "ygoBNrnmTEdu5NtDTmAY",
+      "stability": 0.5,
+      "similarity_boost": 0.8,
+      "_comment_voice": "ygoBNrnmTEdu5NtDTmAY — kept in sync with the Bambu Duck voice so embedded onboarding phrases (gen_phrases.py) still match. Adjust in the ElevenLabs dashboard after import if you want a distinct marketing voice."
+    },
+    "asr": {
+      "quality": "high",
+      "provider": "elevenlabs",
+      "user_input_audio_format": "pcm_16000"
+    },
+    "turn": {
+      "turn_timeout": 7,
+      "silence_end_call_timeout": 30
+    },
+    "conversation": {
+      "max_duration_seconds": 600,
+      "client_events": [
+        "audio",
+        "interruption",
+        "user_transcript",
+        "agent_response",
+        "ping"
+      ]
+    }
+  },
+  "platform_settings": {
+    "auth": {
+      "enable_auth": false,
+      "allowlist": []
+    },
+    "evaluation": {
+      "criteria": []
+    }
+  }
+}
