@@ -2313,7 +2313,7 @@ final class StageServer: @unchecked Sendable {
     <video id="handoffVideo" class="handoff-video" src="/handoff-video.mp4" preload="auto" playsinline></video>
   </section>
 
-	  <script src="/qa.js?v=20260602-explicit-listen-arrow"></script>
+	  <script src="/qa.js?v=20260604-show-start-key"></script>
 </body>
 </html>
 """#
@@ -2376,6 +2376,7 @@ final class StageServer: @unchecked Sendable {
   let sawScriptPlaying = false;
 	  let sawFinalScriptLinePlaying = false;
 	  let videoStarted = false;
+	  let showStarting = false;
 	  let questionStartedAt = 0;
 	  let autoReturnTimer = null;
 	  let micIcon = listenBtn.innerHTML;
@@ -2564,6 +2565,8 @@ final class StageServer: @unchecked Sendable {
   }
 
   async function startShow() {
+    if (showStarting) return;
+    showStarting = true;
     watchingAnswer = false;
     watchingShow = true;
     sawScriptPlaying = false;
@@ -2584,6 +2587,8 @@ final class StageServer: @unchecked Sendable {
     } catch {
       watchingShow = false;
       paintAnswer("Show failed", "pintail", true);
+    } finally {
+      showStarting = false;
     }
   }
 
@@ -2852,6 +2857,14 @@ final class StageServer: @unchecked Sendable {
   window.addEventListener("resize", resizeQuestion);
 
 	  document.addEventListener("keydown", event => {
+	    if (showMode && document.body.dataset.mode === "start" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+	      if (event.key === " " || event.key === "Enter" || event.key === "ArrowRight") {
+	        event.preventDefault();
+	        event.stopPropagation();
+	        if (!event.repeat) startShow();
+	        return;
+	      }
+	    }
 	    if (document.body.dataset.mode === "input" && !event.metaKey && !event.ctrlKey && !event.altKey) {
 	      if (event.key === " ") {
 	        event.preventDefault();
