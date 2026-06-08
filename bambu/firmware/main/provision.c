@@ -394,14 +394,10 @@ static void render_collect_wifi(httpd_req_t *req) {
         "<label for=pw>WiFi password</label>"
         "<input type=password id=pw name=pw autocomplete=off"
         " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
-        "<h2>Bambu account</h2>"
-        "<p class=sub>So I can talk to your printer through Bambu's cloud.</p>"
-        "<label for=bemail>Email</label>"
-        "<input type=email id=bemail name=bemail required autocomplete=off "
-        "autocapitalize=off>"
-        "<label for=bpw>Password</label>"
-        "<input type=password id=bpw name=bpw required autocomplete=off"
-        " autocorrect=off autocapitalize=off spellcheck=false passwordrules=\"\">"
+        // marketing-assistant branch: Bambu account section stripped.
+        // The worker's empty-email short-circuit handles the absent fields
+        // (provision_worker_task skips bambu cloud login when s_bambu_email
+        // is "") so we go straight from WIFI_UP → WIZ_DONE.
 #ifndef BAMBU_DUCK_TURNKEY
         // Turnkey builds (idf.py -DBAMBU_DUCK_TURNKEY=1) skip the
         // ElevenLabs section — the relay being used already has shared

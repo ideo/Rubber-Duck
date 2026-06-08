@@ -302,6 +302,30 @@ wake_trigger_t wake_wait_for_trigger(void) {
                     return WAKE_LONG_PRESS;
                 }
             }
+            // First press released. Wait briefly for a second press —
+            // if one lands within WAKE_DOUBLE_PRESS_WINDOW_MS,
+            // promote to WAKE_BUTTON_DOUBLE. Otherwise commit to the
+            // single-press WAKE_BUTTON event. The wait introduces a
+            // small (~WAKE_DOUBLE_PRESS_WINDOW_MS) latency on every
+            // single press before it fires; keep the window tight.
+            int64_t released_at = now_ms();
+            while ((now_ms() - released_at) < WAKE_DOUBLE_PRESS_WINDOW_MS) {
+                if (gpio_get_level(BUTTON_PIN) == 0) {
+                    // Second press detected. Wait for its release so
+                    // main.c doesn't see a stale "still pressed" gpio
+                    // immediately after returning. Long-press during
+                    // the second press still promotes to LONG_PRESS.
+                    int64_t second_pressed_at = now_ms();
+                    while (gpio_get_level(BUTTON_PIN) == 0) {
+                        vTaskDelay(pdMS_TO_TICKS(20));
+                        if ((now_ms() - second_pressed_at) >= WAKE_LONG_PRESS_MS) {
+                            return WAKE_LONG_PRESS;
+                        }
+                    }
+                    return WAKE_BUTTON_DOUBLE;
+                }
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
             return WAKE_BUTTON;
         }
         // Tap check: short timeout doubles as the polling cadence.

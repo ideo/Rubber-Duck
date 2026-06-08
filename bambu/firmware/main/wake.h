@@ -3,18 +3,26 @@
 
 // Wake-source enum returned by wake_wait_for_trigger.
 typedef enum {
-    WAKE_BUTTON     = 0,  // physical S3 button — short press
-    WAKE_TAP        = 1,  // tap-on-shell transient detected on the mic
-    WAKE_LONG_PRESS = 2,  // physical S3 button held >= WAKE_LONG_PRESS_MS
-                          //   main.c handles this by setting an NVS
-                          //   "reprov" flag and rebooting into SoftAP
-                          //   onboarding mode (re-do WiFi setup).
+    WAKE_BUTTON        = 0,  // physical S3 button — single short press
+    WAKE_TAP           = 1,  // tap-on-shell transient detected on the mic
+    WAKE_LONG_PRESS    = 2,  // physical S3 button held >= WAKE_LONG_PRESS_MS
+                             //   main.c handles this by setting an NVS
+                             //   "reprov" flag and rebooting into SoftAP
+                             //   onboarding mode (re-do WiFi setup).
+    WAKE_BUTTON_DOUBLE = 3,  // two short button presses within
+                             //   WAKE_DOUBLE_PRESS_WINDOW_MS of each other.
 } wake_trigger_t;
 
 // Hold duration that turns a button press into WAKE_LONG_PRESS instead of
 // WAKE_BUTTON. ~3 seconds is the standard "you really mean it" hold time
 // across consumer electronics (factory reset, paired-mode entry).
 #define WAKE_LONG_PRESS_MS 3000
+
+// Max gap between two button releases that counts as a double-press.
+// The single-press path waits this long after release before committing
+// to WAKE_BUTTON, so single presses get this much added latency before
+// firing — keep it short.
+#define WAKE_DOUBLE_PRESS_WINDOW_MS 400
 
 // Spawn the tap-monitor task and configure the button GPIO. Call once at
 // boot, AFTER audio_init() so the I2S RX channel exists. Internally:

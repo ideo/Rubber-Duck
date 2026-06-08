@@ -338,14 +338,17 @@ void app_main(void) {
         }
 
         // Routing for non-provision wakes:
-        //   WAKE_BUTTON (short press) → volume cycle. Audible chirp at
-        //     the new level, persisted to NVS. Skip session entirely.
-        //   WAKE_TAP (double-tap)     → conversation. Shake-off animation
-        //     first, then session.
+        //   WAKE_BUTTON        (single short press) → conversation.
+        //     Used to be volume — swapped because the tap-on-shell
+        //     detector was unreliable and users want the primary
+        //     gesture on the dedicated button.
+        //   WAKE_BUTTON_DOUBLE (two quick presses) → volume cycle.
+        //   WAKE_TAP           (double-tap on shell) → conversation
+        //     (kept as a fallback path; can still trigger sessions).
         // Long-press is handled in the need_provision branch above
         // (re-onboard / settings mode).
-        if (trigger == WAKE_BUTTON) {
-            ESP_LOGI(TAG, "button: cycling volume");
+        if (trigger == WAKE_BUTTON_DOUBLE) {
+            ESP_LOGI(TAG, "button: cycling volume (double-press)");
             audio_cycle_volume();
             // User just touched the duck — reset the idle-hop taper so
             // the head perks up to "alert" cadence again.
