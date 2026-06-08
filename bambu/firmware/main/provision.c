@@ -105,6 +105,13 @@ static volatile wiz_state_t s_state = WIZ_COLLECT_WIFI;
 static char s_bambu_email[65] = {0};
 static char s_bambu_password[97] = {0};
 static char s_bambu_user_id[40] = {0};
+// Gates the STA disconnect handler's auto-reconnect. Off by default so a
+// stale STA config left over from a previous session doesn't spin the STA
+// in a perpetual connect-retry loop while the user is still on the form —
+// that loop leaves the interface "connecting", which makes esp_wifi_set_config
+// abort with ESP_ERR_WIFI_STATE when /save reconfigures the STA. Set true
+// once we've applied real creds and genuinely want transient drops retried.
+static volatile bool s_sta_autoconnect = false;
 // ElevenLabs creds collected by the captive portal, forwarded to the
 // relay over the same /ws/notify channel as bambu_login. Chip stores
 // them in RAM only (relay holds the source-of-truth in its DB row);
@@ -227,12 +234,35 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         xEventGroupSetBits(s_wifi_event_group, BIT_STA_GOT_IP);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         // STA can disconnect for benign reasons (roaming, brief noise).
-        // Only flag failure if we never connected. For our wizard, the
-        // first disconnect when we're trying to authenticate is the bad
-        // case — bumping the failed bit lets the worker handle it.
-        ESP_LOGW(TAG, "STA disconnected; will retry");
-        esp_wifi_connect();
+        // Only retry when we're actually trying to hold a connection
+        // (real creds applied via /save). Retrying unconditionally spins
+        // the STA in a connect loop against stale/empty config and keeps
+        // the interface in the "connecting" state, which makes a later
+        // esp_wifi_set_config() abort with ESP_ERR_WIFI_STATE.
+        if (s_sta_autoconnect) {
+            ESP_LOGW(TAG, "STA disconnected; will retry");
+            esp_wifi_connect();
+        }
     }
+}
+
+// Apply a STA config that may be requested while the interface is still in
+// the "connecting" state (the disconnect handler above can leave it there).
+// esp_wifi_set_config() returns ESP_ERR_WIFI_STATE in that case and the
+// callers ESP_ERROR_CHECK it — an abort/reboot. Disconnect first (with the
+// auto-reconnect gated off so the disconnect doesn't immediately re-arm a
+// connect), then retry briefly until the interface leaves the connecting
+// state. Leaves s_sta_autoconnect off; the caller flips it on right before
+// esp_wifi_connect() once the new creds are in place.
+static esp_err_t sta_set_config_settled(wifi_config_t *cfg) {
+    s_sta_autoconnect = false;
+    esp_wifi_disconnect();  // may return "not started" — fine, we just want idle
+    esp_err_t err = ESP_ERR_WIFI_STATE;
+    for (int i = 0; i < 10 && err == ESP_ERR_WIFI_STATE; i++) {
+        err = esp_wifi_set_config(WIFI_IF_STA, cfg);
+        if (err == ESP_ERR_WIFI_STATE) vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return err;
 }
 
 // ---- HTML rendering per state ----
@@ -806,7 +836,8 @@ static esp_err_t save_handler(httpd_req_t *req) {
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
     sta_cfg.sta.pmf_cfg.capable = true;
     sta_cfg.sta.pmf_cfg.required = false;
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+    ESP_ERROR_CHECK(sta_set_config_settled(&sta_cfg));
+    s_sta_autoconnect = true;  // real creds applied — retry transient drops now
     ESP_ERROR_CHECK(esp_wifi_connect());
 
     s_state = WIZ_CONNECTING_WIFI;
@@ -1414,7 +1445,8 @@ esp_err_t wifi_provision_run(void) {
             sta_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
             sta_cfg.sta.pmf_cfg.capable = true;
             sta_cfg.sta.pmf_cfg.required = false;
-            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
+            ESP_ERROR_CHECK(sta_set_config_settled(&sta_cfg));
+            s_sta_autoconnect = true;  // saved creds applied — retries OK now
             ESP_ERROR_CHECK(esp_wifi_connect());
             s_state = WIZ_FAST_LOADING;
             xTaskCreate(fast_path_worker_task, "fast_path",
