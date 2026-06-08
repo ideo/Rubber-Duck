@@ -271,19 +271,30 @@ void app_main(void) {
         // from inside the wizard with the "forget WiFi" checkbox active.
         bool need_provision = !wifi_connected || (trigger == WAKE_LONG_PRESS);
         if (need_provision) {
-            if (wifi_connected) {
-                // Long-press while connected: enter the wizard on next
-                // boot WITHOUT wiping anything. The wizard's form lets
-                // the user update WiFi / Bambu / ElevenLabs piecemeal,
-                // and POST /restart from inside the wizard wipes only
-                // what the user explicitly checks.
+            // Reboot-into-clean-wizard whenever the boot path already brought
+            // up the STA network stack. Two cases hit this:
+            //   - wifi_connected: long-press while connected (settings).
+            //   - !wifi_connected but wifi_has_creds(): creds existed so boot
+            //     ran wifi_connect_blocking() — which created the default STA
+            //     netif — and then failed to join (e.g. duck moved to a new
+            //     location). Running wifi_provision_run() in-place here would
+            //     call esp_netif_create_default_wifi_sta() a SECOND time and
+            //     abort on a duplicate-netif assert (wifi_default.c:422),
+            //     leaving the duck in a reboot loop that never reaches the
+            //     wizard. See bambu/docs/reonboard-netif-crash.md.
+            // Rebooting through the provision_pending flag makes the next boot
+            // skip STA init (main.c force_provision guard) so the wizard runs
+            // from a clean stack.
+            if (wifi_connected || wifi_has_creds()) {
+                // The wizard's form lets the user update WiFi / Bambu /
+                // ElevenLabs piecemeal without wiping anything; POST /restart
+                // from inside the wizard wipes only what the user checks.
                 //
                 // Reboot is the simplest way to get back into APSTA mode
-                // without unwinding the netif/event-loop singletons that
-                // wifi_provision_run created on first boot. Cheap (~3s)
-                // and the user has triggered the action so a brief drop-
-                // out is expected.
-                ESP_LOGI(TAG, "long-press: setting provision_pending and restarting");
+                // without unwinding the netif/event-loop singletons that the
+                // boot path created. Cheap (~3s) and the user triggered the
+                // action so a brief drop-out is expected.
+                ESP_LOGI(TAG, "re-onboard: setting provision_pending and restarting");
                 // "Settings mode" bend — same shape as the
                 // force_provision branch up top, since this is the
                 // same user intent ("take me to settings").
@@ -292,7 +303,8 @@ void app_main(void) {
                 vTaskDelay(pdMS_TO_TICKS(600));  // let chirp finish
                 esp_restart();
             }
-            // No wifi: enter the APSTA wizard now. It blocks until the
+            // No creds were ever stored → boot never created a STA netif →
+            // safe to run the APSTA wizard in-place. It blocks until the
             // user has finished onboarding (WiFi connected + optionally
             // Bambu signed in). Returns ESP_OK with WiFi STA up and
             // notify_task running. We then drop into the normal idle
