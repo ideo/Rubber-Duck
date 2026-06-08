@@ -138,7 +138,14 @@ void app_main(void) {
     // via a button press. Keeps the duck from broadcasting an AP
     // unprompted and keeps the boot quiet.
     bool wifi_connected = false;
+    // True once this boot has called wifi_connect_blocking(), i.e. brought up
+    // the default STA netif + wifi stack. The re-onboard path keys off this
+    // (not wifi_has_creds()) to decide whether the wizard can run in-place or
+    // must reboot first: on the clean force_provision boot below we skip the
+    // connect, so this stays false and the wizard's netif creation is safe.
+    bool boot_initialized_sta = false;
     if (!force_provision && wifi_has_creds()) {
+        boot_initialized_sta = true;
         ESP_LOGI(TAG, "connecting to wifi...");
         if (wifi_connect_blocking(20000) == ESP_OK) {
             wifi_connected = true;
@@ -271,21 +278,24 @@ void app_main(void) {
         // from inside the wizard with the "forget WiFi" checkbox active.
         bool need_provision = !wifi_connected || (trigger == WAKE_LONG_PRESS);
         if (need_provision) {
-            // Reboot-into-clean-wizard whenever the boot path already brought
-            // up the STA network stack. Two cases hit this:
+            // Reboot-into-clean-wizard whenever THIS boot already brought up
+            // the STA network stack. Two cases hit this:
             //   - wifi_connected: long-press while connected (settings).
-            //   - !wifi_connected but wifi_has_creds(): creds existed so boot
-            //     ran wifi_connect_blocking() — which created the default STA
-            //     netif — and then failed to join (e.g. duck moved to a new
-            //     location). Running wifi_provision_run() in-place here would
-            //     call esp_netif_create_default_wifi_sta() a SECOND time and
-            //     abort on a duplicate-netif assert (wifi_default.c:422),
-            //     leaving the duck in a reboot loop that never reaches the
-            //     wizard. See bambu/docs/reonboard-netif-crash.md.
-            // Rebooting through the provision_pending flag makes the next boot
-            // skip STA init (main.c force_provision guard) so the wizard runs
-            // from a clean stack.
-            if (wifi_connected || wifi_has_creds()) {
+            //   - boot_initialized_sta && !wifi_connected: creds existed so
+            //     boot ran wifi_connect_blocking() — which created the default
+            //     STA netif — and then failed to join (e.g. duck moved to a
+            //     new location). Running wifi_provision_run() in-place here
+            //     would call esp_netif_create_default_wifi_sta() a SECOND time
+            //     and abort on a duplicate-netif assert (wifi_default.c:422).
+            //     See bambu/docs/reonboard-netif-crash.md.
+            // Rebooting through provision_pending makes the next boot skip STA
+            // init (force_provision guard) so the wizard runs from a clean
+            // stack. We gate on boot_initialized_sta, NOT wifi_has_creds():
+            // creds persist across the reboot, so keying off them here would
+            // re-trigger the reboot on the force_provision boot and loop
+            // forever. boot_initialized_sta is false on that clean boot, so we
+            // correctly fall through to the in-place wizard instead.
+            if (wifi_connected || boot_initialized_sta) {
                 // The wizard's form lets the user update WiFi / Bambu /
                 // ElevenLabs piecemeal without wiping anything; POST /restart
                 // from inside the wizard wipes only what the user checks.

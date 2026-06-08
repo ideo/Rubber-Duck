@@ -1,6 +1,15 @@
 # Re-onboard crash: duplicate default STA netif
 
-**Status:** fix applied on branch — pending flash + test
+**Status:** RESOLVED — flashed to the ducky PCB (turnkey) and verified. After
+moving to a new network the duck now reaches the setup AP, accepts new WiFi,
+and connects. No `esp_netif_create_default_wifi_sta` assert, no reboot loop.
+
+> Follow-up (separate bug, found while testing this one): submitting the WiFi
+> form can abort in `save_handler` — `esp_wifi_set_config(WIFI_IF_STA)` returns
+> `ESP_ERR_WIFI_STATE` ("sta is connecting") under `ESP_ERROR_CHECK`
+> (`provision.c:809`) when the wizard's STA is mid-reconnect. Creds are saved
+> to NVS just before, so a reboot self-recovers and the duck connects — but it
+> crashes to get there. Tracked separately.
 **Branch:** `marketing-assistant`
 **Affected:** all Bambu duck builds (not marketing-specific; latent on `main` too)
 
@@ -53,28 +62,44 @@ omission is the bug.
 
 ## Fix
 
-Route the no-wifi provision case through the same clean-boot reboot whenever
-the boot path already initialized the STA stack. In the `need_provision`
-block (`main.c:273`), broaden the existing reboot branch:
+Route the no-wifi provision case through the same clean-boot reboot **only
+when this boot actually brought up the STA stack**. Track that with a
+`boot_initialized_sta` flag set when boot enters the `wifi_connect_blocking()`
+branch (`main.c`), and gate the reboot on it in the `need_provision` block:
 
 ```c
-// was: if (wifi_connected)
-if (wifi_connected || wifi_has_creds()) {
-    // Boot already brought up the STA netif (creds existed, connect may
-    // have failed). Running the wizard in-place would duplicate the
-    // default STA netif and abort. Reboot through provision_pending so
-    // the wizard starts from a clean boot that skips STA init.
-    set_provision_pending(true);
-    vTaskDelay(pdMS_TO_TICKS(600));   // let the settings-mode chirp finish
-    esp_restart();
+bool boot_initialized_sta = false;
+if (!force_provision && wifi_has_creds()) {
+    boot_initialized_sta = true;     // boot created the default STA netif
+    ... wifi_connect_blocking() ...
 }
-// No creds ever stored → boot never made a STA netif → safe in-place.
+...
+if (need_provision) {
+    if (wifi_connected || boot_initialized_sta) {
+        // Boot brought up the STA netif; running the wizard in-place would
+        // duplicate it and abort. Reboot through provision_pending so the
+        // next boot skips STA init and the wizard runs on a clean stack.
+        set_provision_pending(true);
+        vTaskDelay(pdMS_TO_TICKS(600));
+        esp_restart();
+    }
+    // STA netif was never created this boot → safe to run wizard in-place.
+}
 ```
 
-After a failed connect, `wifi_has_creds()` is still true (creds are in NVS,
-just wrong for this location), so this routes the reported scenario into the
-clean-boot wizard instead of the in-place crash. Fresh ducks (no creds) keep
-the in-place wizard path unchanged.
+### Why not `wifi_has_creds()` (a wrong first attempt)
+
+The first fix gated on `wifi_has_creds()`. That **caused an infinite reboot
+loop**: after the `provision_pending` reboot, `force_provision` makes boot
+skip the connect (so no STA netif), but the creds are *still in NVS*, so
+`wifi_has_creds()` stays true → the synthesized re-onboard press hits the
+reboot branch again → reboot forever, never opening the AP.
+
+`boot_initialized_sta` is the correct signal: it is **false** on the clean
+`force_provision` boot (we skipped the connect), so that boot falls through to
+the safe in-place wizard. It is **true** only when boot genuinely created the
+STA netif (creds present, not force_provision), which is exactly when the
+in-place wizard would double-create and crash.
 
 ## Immediate workarounds (no firmware change)
 
