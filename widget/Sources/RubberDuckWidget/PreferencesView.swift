@@ -11,6 +11,7 @@ struct PreferencesView: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case intelligence = "Intelligence"
+        case tools = "Coding Tools"
         case behavior = "Behavior"
         case about = "About"
 
@@ -19,6 +20,7 @@ struct PreferencesView: View {
         var icon: String {
             switch self {
             case .intelligence: return "brain.fill"
+            case .tools: return "puzzlepiece.extension.fill"
             case .behavior: return "slider.horizontal.3"
             case .about: return "info.circle"
             }
@@ -64,6 +66,8 @@ struct PreferencesView: View {
                 switch selectedTab {
                 case .intelligence:
                     IntelligencePane()
+                case .tools:
+                    ToolsPane()
                 case .behavior:
                     BehaviorPane()
                 case .about:
@@ -286,6 +290,146 @@ private struct IntelligencePane: View {
 }
 
 // MARK: - Behavior Pane
+
+// MARK: - Coding Tools Pane
+
+/// Cached state for one integration row. Detection (`which claude`, Launch
+/// Services, filesystem scans) is BLOCKING, so it never runs in the view body —
+/// it's computed on a background queue by ToolsModel and published here. Reading
+/// it during a SwiftUI render would spin the main runloop and crash AttributeGraph.
+private struct ToolRow: Identifiable {
+    let id: String
+    let displayName: String
+    let iconSystemName: String
+    let installed: Bool
+    let connected: Bool
+    let fidelityLabel: String
+    let capabilityNote: String?
+    let installToolURL: URL?
+}
+
+@MainActor
+private final class ToolsModel: ObservableObject {
+    @Published private(set) var rows: [ToolRow] = []
+    private let tools = DuckIntegrations.all
+
+    /// Recompute detection OFF the main thread, then publish on main. Mirrors
+    /// MenuStateModel's pattern — keeps all blocking probes out of view rendering.
+    func refresh() {
+        let tools = self.tools
+        DispatchQueue.global(qos: .userInitiated).async {
+            let rows = tools.map { t -> ToolRow in
+                let installed = t.isToolInstalled
+                return ToolRow(
+                    id: t.id, displayName: t.displayName, iconSystemName: t.iconSystemName,
+                    installed: installed, connected: installed && t.isConnected,
+                    fidelityLabel: t.fidelityLabel, capabilityNote: t.capabilityNote,
+                    installToolURL: t.installToolURL
+                )
+            }
+            DispatchQueue.main.async { self.rows = rows }
+        }
+    }
+
+    private func tool(_ id: String) -> (any DuckIntegration)? { tools.first { $0.id == id } }
+
+    func connect(_ id: String) { tool(id)?.connect(); scheduleRefresh() }
+    func disconnect(_ id: String) { tool(id)?.disconnect(); scheduleRefresh() }
+
+    /// connect/disconnect do async work (CLI, file writes) — re-probe a few
+    /// times so the row settles to the real result without reopening the pane.
+    private func scheduleRefresh() {
+        for delay in [0.5, 1.5, 3.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refresh() }
+        }
+    }
+}
+
+/// Lists every tool the duck can watch and lets the user connect/disconnect each
+/// independently. They're not mutually exclusive — the eval server is shared, so
+/// any number can be wired up at once.
+private struct ToolsPane: View {
+    @StateObject private var model = ToolsModel()
+    private var accent: Color { DuckTheme.accent }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Coding Tools")
+                        .font(.title2.bold())
+                    Text("The duck watches every connected tool at once. Check off whichever you use.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                    integrationRow(row)
+                    if index < model.rows.count - 1 {
+                        Divider()
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+        }
+        .onAppear { model.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PluginInstaller.pluginDidInstallNotification)) { _ in
+            model.refresh()
+        }
+    }
+
+    @ViewBuilder
+    private func integrationRow(_ row: ToolRow) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: row.connected ? "checkmark.circle.fill"
+                              : row.installed ? "circle" : "minus.circle")
+                .foregroundStyle(row.connected ? Color.green : row.installed ? Color.secondary : Color(nsColor: .tertiaryLabelColor))
+                .font(.title3)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: row.iconSystemName)
+                        .foregroundStyle(accent)
+                    Text(row.displayName)
+                        .font(.headline)
+                }
+                Text(row.connected ? "Connected · \(row.fidelityLabel)"
+                     : row.installed ? "Installed, not connected"
+                     : "Not installed on this Mac")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if let note = row.capabilityNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                if !row.installed {
+                    if let url = row.installToolURL {
+                        Button("Get \(row.displayName)") { NSWorkspace.shared.open(url) }
+                    }
+                } else if row.connected {
+                    Button("Disconnect") { model.disconnect(row.id) }
+                } else {
+                    Button("Connect") { model.connect(row.id) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(accent)
+                }
+            }
+        }
+    }
+}
 
 private struct BehaviorPane: View {
     @EnvironmentObject var speechService: SpeechService

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      { "command": "__HOOKS_DIR__/on-before-submit-prompt.sh" }
+    ],
+    "afterAgentResponse": [
+      { "command": "__HOOKS_DIR__/on-after-agent-response.sh" }
+    ],
+    "beforeShellExecution": [
+      { "command": "__HOOKS_DIR__/on-permission.sh" }
+    ],
+    "beforeMCPExecution": [
+      { "command": "__HOOKS_DIR__/on-permission.sh" }
+    ],
+    "afterShellExecution": [
+      { "command": "__HOOKS_DIR__/on-after-shell.sh" }
+    ]
+  }
+}

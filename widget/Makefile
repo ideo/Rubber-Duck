@@ -44,6 +44,13 @@ bundle: build icon
 	@PLUGIN_V=$$(python3 -c 'import json; print(json.load(open("../plugin/.claude-plugin/plugin.json"))["version"])'); \
 		APP_V=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Info.plist); \
 		echo "📦 Bundled plugin v$$PLUGIN_V in app v$$APP_V"
+	@# Cursor adapter hooks — copied alongside the plugin so CursorInstaller
+	@# can find them in Resources/cursor/ and wire them into ~/.cursor/hooks.json.
+	@rm -rf $(RESOURCES_DIR)/cursor
+	@cp -R ../cursor $(RESOURCES_DIR)/cursor
+	@test -f $(RESOURCES_DIR)/cursor/hooks/on-permission.sh \
+		|| (echo "❌ Bundled cursor hooks missing — build aborted"; exit 1)
+	@echo "📦 Bundled Cursor adapter hooks"
 	@codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ Built $(APP_BUNDLE)"
 

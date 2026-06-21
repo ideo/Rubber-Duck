@@ -11,6 +11,9 @@ LAST_MESSAGE=$(json_get "$INPUT" "last_assistant_message")
 SESSION_ID=$(json_get "$INPUT" "session_id")
 TRANSCRIPT_PATH=$(json_get "$INPUT" "transcript_path")
 STOP_HOOK_ACTIVE=$(json_get "$INPUT" "stop_hook_active" "false")
+CWD=$(json_get "$INPUT" "cwd")
+REPO=$(basename "$CWD" 2>/dev/null)
+[ "$REPO" = "/" ] && REPO=""
 
 # Prevent infinite loop if Stop hook re-triggers
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
@@ -71,6 +74,8 @@ PAYLOAD=$(json_build \
   session_id "$SESSION_ID" \
   timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   source "claude" \
+  app "claude-code" \
+  repo "$REPO" \
   text "$LAST_MESSAGE" \
   user_context "$LAST_USER")
 
