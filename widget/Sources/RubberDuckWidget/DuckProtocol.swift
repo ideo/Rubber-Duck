@@ -145,9 +145,14 @@ struct EvalResult: Codable {
     let textPreview: String?
     let sessionId: String?
     let scores: EvalScores?
+    // Which tool produced this event, for attribution when multiple run at once.
+    // Optional + default nil → absent in old payloads decodes fine; encoder omits
+    // when nil so the broadcast schema (dashboard.html) stays back-compatible.
+    var app: String? = nil   // "claude-code" | "cursor"
+    var repo: String? = nil  // repo folder basename (may be empty)
 
     enum CodingKeys: String, CodingKey {
-        case type, timestamp, source, scores
+        case type, timestamp, source, scores, app, repo
         case textPreview = "text_preview"
         case sessionId = "session_id"
     }

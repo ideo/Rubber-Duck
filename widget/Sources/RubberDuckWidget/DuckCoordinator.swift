@@ -46,6 +46,22 @@ class DuckCoordinator: ObservableObject {
     private var lastShyReactionAt: Date?
     private var lastShyAckAt: Date?
 
+    // Multi-tool attribution. We name the program ONLY for agent output (you
+    // already know what you did), ONLY on a real switch from the last agent
+    // reaction, and ONLY after a gap (so ping-ponging between tools doesn't
+    // label every line). Never names the repo in a reaction.
+    private var lastAgentReactionApp: String?
+    private var lastAgentReactionAt: Date?
+    private let attributionGap: TimeInterval = 45
+
+    private static func appDisplayName(_ app: String) -> String? {
+        switch app {
+        case "cursor": return "Cursor"
+        case "claude-code": return "Claude"
+        default: return nil
+        }
+    }
+
     init(evalService: EvalService, speechService: SpeechService, serialManager: SerialManager) {
         self.evalService = evalService
         self.speechService = speechService
@@ -134,6 +150,22 @@ class DuckCoordinator: ObservableObject {
         case .walkieTalkie:
             textToSpeak = isUserEval ? "" : evalService.summary
         }
+
+        // Attribution: name the program only for the AGENT's output, only on a
+        // real switch from the last agent reaction, and only after a gap. User
+        // prompts are never named (you know what you typed). See properties above.
+        if !isUserEval && !textToSpeak.isEmpty {
+            let app = evalService.app
+            let now = Date()
+            let switched = lastAgentReactionApp != nil && app != lastAgentReactionApp
+            let gapPassed = lastAgentReactionAt.map { now.timeIntervalSince($0) > attributionGap } ?? true
+            if switched && gapPassed, let name = Self.appDisplayName(app) {
+                textToSpeak = "Over in \(name): \(textToSpeak)"
+            }
+            lastAgentReactionApp = app
+            lastAgentReactionAt = now
+        }
+
         // Track whether the upcoming utterance is a shy ack — if so, we'll
         // bypass wildcard voice selection (slow/musical voices butcher
         // ultra-short text like "ah" or "ooh" into silence).

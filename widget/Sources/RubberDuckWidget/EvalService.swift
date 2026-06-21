@@ -14,6 +14,9 @@ class EvalService: ObservableObject {
     @Published var reaction: String = ""
     @Published var summary: String = ""
     @Published var source: String = ""
+    /// Which tool produced the latest eval ("claude-code" | "cursor"). Used by
+    /// the coordinator to attribute agent reactions when more than one is active.
+    @Published var app: String = "claude-code"
     @Published var isConnected: Bool = false
 
     // Permission state
@@ -59,6 +62,7 @@ class EvalService: ObservableObject {
             reaction = newScores.reaction ?? ""
             summary = newScores.summary ?? ""
             source = result.source ?? ""
+            app = result.app ?? "claude-code"
             evalCount += 1
             sentiment = newScores.sentiment
 

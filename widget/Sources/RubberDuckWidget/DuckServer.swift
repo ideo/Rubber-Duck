@@ -35,6 +35,10 @@ class DuckServer: ObservableObject {
     let tmuxBridge: TmuxBridge
     let localTransport: LocalEvalTransport
 
+    /// Derives "Cursor is parked waiting for the user" from /activity pings and
+    /// chirps once. Separate from PermissionGate — it never gates anything.
+    let activityMonitor = CursorActivityMonitor()
+
     /// True when Foundation Models is available on this device.
     let foundationModelsAvailable: Bool
     /// Detailed status for guiding users toward enabling Foundation Models.
@@ -111,7 +115,7 @@ class DuckServer: ObservableObject {
         let sessionContext = SessionContext()
 
         // Shared evaluation logic for /evaluate and /hook/* endpoints
-        let runEval: @Sendable (_ text: String, _ source: String, _ userContext: String, _ sessionId: String) async -> HTTPResponse = { text, source, userContext, sessionId in
+        let runEval: @Sendable (_ text: String, _ source: String, _ userContext: String, _ sessionId: String, _ app: String, _ repo: String) async -> HTTPResponse = { text, source, userContext, sessionId, app, repo in
             guard !text.isEmpty else {
                 return .badRequest("no text")
             }
@@ -191,7 +195,9 @@ class DuckServer: ObservableObject {
                 source: source,
                 textPreview: textPreview,
                 sessionId: sessionId,
-                scores: scores
+                scores: scores,
+                app: app,
+                repo: repo
             )
 
             await broadcaster.broadcast(result)
@@ -239,7 +245,9 @@ class DuckServer: ObservableObject {
                 source: source,
                 textPreview: textPreview,
                 sessionId: "demo",
-                scores: scores
+                scores: scores,
+                app: "claude-code",
+                repo: ""
             )
 
             await broadcaster.broadcast(result)
@@ -263,7 +271,39 @@ class DuckServer: ObservableObject {
             let source = json["source"] as? String ?? "unknown"
             let userContext = json["user_context"] as? String ?? ""
             let sessionId = json["session_id"] as? String ?? ""
-            return await runEval(text, source, userContext, sessionId)
+            // app/repo are optional — absent => Claude Code, the original caller.
+            let app = json["app"] as? String ?? "claude-code"
+            let repo = json["repo"] as? String ?? ""
+            return await runEval(text, source, userContext, sessionId, app, repo)
+        }
+
+        // POST /activity — Cursor non-blocking notifier (pending/resolved).
+        // Pure observation: never returns a permission decision, never blocks.
+        // Drives CursorActivityMonitor, which chirps only if a command stays
+        // unresolved long enough to mean Cursor is parked on its approve prompt.
+        let activityMonitor = self.activityMonitor
+        srv.post("/activity") { request in
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any] else {
+                return .badRequest("invalid json")
+            }
+            let state = json["state"] as? String ?? ""
+            let kind = json["kind"] as? String ?? "shell"
+            let conversationId = json["conversation_id"] as? String ?? ""
+            let command = json["command"] as? String ?? ""
+            let repo = json["repo"] as? String ?? ""
+            let app = json["app"] as? String ?? "cursor"
+            await MainActor.run {
+                switch state {
+                case "pending":
+                    activityMonitor.handlePending(kind: kind, conversationId: conversationId,
+                                                  command: command, repo: repo, app: app)
+                case "resolved":
+                    activityMonitor.handleResolved(conversationId: conversationId, command: command)
+                default:
+                    break
+                }
+            }
+            return .json(Data("{\"ok\":true}".utf8))
         }
 
         // POST /permission
@@ -576,6 +616,7 @@ class DuckServer: ObservableObject {
         server?.stop()
         server = nil
         isRunning = false
+        activityMonitor.clearAll()  // cancel any armed parked-timers
         DuckLog.log("[server] Stopped")
     }
 }

@@ -297,6 +297,22 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
         claudeSession.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
         menu.addItem(claudeSession)
 
+        // --- Cursor integration (only shown if Cursor is installed) ---
+        if CursorInstaller.isCursorInstalled() {
+            if CursorInstaller.areHooksInstalled() {
+                let item = NSMenuItem(title: "Cursor Hooks Installed ✓", action: nil, keyEquivalent: "")
+                item.image = NSImage(systemSymbolName: "cursorarrow.rays", accessibilityDescription: "Cursor")
+                item.isEnabled = false
+                menu.addItem(item)
+            } else {
+                let item = NSMenuItem(title: "Connect to Cursor", action: #selector(connectCursor), keyEquivalent: "")
+                item.target = self
+                item.image = NSImage(systemSymbolName: "cursorarrow.rays", accessibilityDescription: "Cursor")
+                item.subtitle = "Wire the duck into Cursor's agent"
+                menu.addItem(item)
+            }
+        }
+
         // --- Permission warnings (only if something is wrong) ---
         let micOK = speechService.micPermissionGranted
         let speechOK = speechService.speechPermissionGranted
@@ -476,6 +492,10 @@ final class StatusBarManager: NSObject, NSMenuDelegate {
 
     @objc private func startClaudeSession() {
         CLISession.launch()
+    }
+
+    @objc private func connectCursor() {
+        CursorInstaller.install()
     }
 
     @objc private func openUpdatePage() {
@@ -793,6 +813,59 @@ enum PluginInstaller {
                 onSpeak?("Claude Code isn't installed yet. I'll show you how.")
                 showSetupChecklist(hasClaude: hasDesktop, hasPlugin: DuckConfig.lastInstalledPluginVersion != nil)
             }
+        }
+    }
+
+    /// Is the duck plugin actually installed for Claude? Mirrors the check in
+    /// AppDelegate.checkSetup / SetupChecklistView — the plugin cache dir exists
+    /// and holds at least one version. Centralized here so the integrations
+    /// list and the setup UI agree.
+    static func isPluginInstalled() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let pluginDir = "\(home)/.claude/plugins/cache/duck-duck-duck-marketplace/duck-duck-duck"
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: pluginDir, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+        return (try? FileManager.default.contentsOfDirectory(atPath: pluginDir))?.isEmpty == false
+    }
+
+    /// Is Claude (CLI or Desktop) present on this Mac?
+    static func isClaudeAvailable() -> Bool {
+        findClaude() != nil || isClaudeDesktopInstalled()
+    }
+
+    /// Remove the plugin. CLI uninstall when available (properly de-registers);
+    /// otherwise best-effort disable in settings.json so Claude stops loading it.
+    static func uninstall() {
+        if let claude = findClaude() {
+            Task { @MainActor in onSpeak?("Disconnecting from Claude Code.") }
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = run(claude, args: ["plugin", "uninstall", "duck-duck-duck"])
+                Task { @MainActor in
+                    onSpeak?("Disconnected from Claude Code.")
+                    NotificationCenter.default.post(name: pluginDidInstallNotification, object: nil)
+                }
+            }
+            return
+        }
+        // No CLI — flip enabledPlugins[...] = false in settings.json.
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let settingsFile = "\(home)/.claude/settings.json"
+        let fm = FileManager.default
+        if let data = fm.contents(atPath: settingsFile),
+           var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let key = "duck-duck-duck@duck-duck-duck-marketplace"
+            var enabled = settings["enabledPlugins"] as? [String: Any] ?? [:]
+            enabled[key] = false
+            settings["enabledPlugins"] = enabled
+            if let out = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
+                try? out.write(to: URL(fileURLWithPath: settingsFile), options: .atomic)
+            }
+        }
+        Task { @MainActor in
+            onSpeak?("Disabled the plugin. Restart Claude to apply.")
+            NotificationCenter.default.post(name: pluginDidInstallNotification, object: nil)
         }
     }
 
@@ -1276,6 +1349,42 @@ enum GeminiExtensionInstaller {
             automaticInstall(gemini: gemini)
         } else {
             Task { @MainActor in clipboardInstall() }
+        }
+    }
+
+    /// Is the Gemini CLI present?
+    static func isGeminiAvailable() -> Bool {
+        findTool("gemini") != nil
+    }
+
+    /// Best-effort detection of our installed Gemini extension. The CLI drops
+    /// extensions under ~/.gemini/extensions/<name>; we match any folder whose
+    /// name mentions the duck. Experimental tool — detection is heuristic.
+    static func isInstalled() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extDir = "\(home)/.gemini/extensions"
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: extDir) else {
+            return false
+        }
+        let needles = ["rubber-duck", "rubber_duck", "duck-duck-duck", "duckduckduck"]
+        return entries.contains { name in
+            let lower = name.lowercased()
+            return needles.contains { lower.contains($0) }
+        }
+    }
+
+    /// Remove the Gemini extension (best-effort; CLI required).
+    static func uninstall() {
+        guard let gemini = findTool("gemini") else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: gemini)
+            // The CLI accepts the source repo for uninstall as well as install.
+            proc.arguments = ["extensions", "uninstall", "ideo/Rubber-Duck"]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            try? proc.run()
+            proc.waitUntilExit()
         }
     }
 

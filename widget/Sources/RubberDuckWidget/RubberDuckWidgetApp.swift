@@ -393,6 +393,17 @@ struct RubberDuckWidgetApp: App {
             )
         }
 
+        // Cursor installer voice feedback (same lane/policy as the plugin).
+        CursorInstaller.onSpeak = { [weak speech] text in
+            speech?.scheduleSpeech(
+                text,
+                kind: .system,
+                lane: .manual,
+                policy: .latestWins,
+                interruptibility: .freelyInterruptible
+            )
+        }
+
         // Store service refs so AppDelegate can turn off the companion
         AppDelegate.speechService = speech
         AppDelegate.coordinator = coordinator
@@ -466,6 +477,18 @@ struct RubberDuckWidgetApp: App {
             )
         }
         transport.onClearThinking = { [weak coordinator] in coordinator?.clearThinking() }
+
+        // Cursor "parked waiting on you" chirp — single short ambient line that
+        // drops if the duck is busy. Never gates anything (Cursor owns approval).
+        server.activityMonitor.onChirp = { [weak speech] text in
+            speech?.scheduleSpeech(
+                text,
+                kind: .system,
+                lane: .ambient,
+                policy: .dropIfBusy,
+                interruptibility: .freelyInterruptible
+            )
+        }
         transport.onPermissionResolved = { [weak coordinator] hadPassthrough in coordinator?.handlePermissionResolved(hadPassthrough: hadPassthrough) }
         transport.onMelodyStart = { [weak coordinator] in coordinator?.startMelody() }
         transport.onMelodyStop = { [weak coordinator] in coordinator?.stopMelody() }
@@ -505,6 +528,12 @@ struct RubberDuckWidgetApp: App {
                 // Setup checklist — non-blocking SwiftUI window, after greeting starts
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     AppDelegate.checkSetup()
+                }
+                // If Cursor is installed but not yet wired up, the duck offers
+                // to connect itself — out loud, once per version. Deferred well
+                // past the greeting so it doesn't talk over it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) {
+                    CursorInstaller.offerIfAppropriate()
                 }
             }
 
@@ -869,6 +898,7 @@ class DraggableView: NSView {
 @MainActor
 final class MenuStateModel: ObservableObject {
     @Published private(set) var isClaudeInstalled: Bool = false
+    @Published private(set) var isCursorReady: Bool = false
     @Published private(set) var launchAtLogin: Bool = false
     @Published var experimentalEnabled: Bool {
         didSet { UserDefaults.standard.set(experimentalEnabled, forKey: "experimentalEnabled") }
@@ -891,6 +921,7 @@ final class MenuStateModel: ObservableObject {
 
     func refresh() {
         isClaudeInstalled = PluginInstaller.findClaude() != nil
+        isCursorReady = CursorInstaller.isCursorInstalled() && CursorInstaller.areHooksInstalled()
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
@@ -939,6 +970,12 @@ struct SetupCommands: Commands {
             Button("Export Plugin Zip...") {
                 PluginInstaller.exportPluginZip()
             }
+
+            Button(model.isCursorReady ? "Cursor Hooks Installed ✓" : "Connect to Cursor") {
+                CursorInstaller.install()
+                model.refresh()
+            }
+            .disabled(model.isCursorReady)
 
             Divider()
 
